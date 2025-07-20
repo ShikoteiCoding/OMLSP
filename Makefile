@@ -4,3 +4,6 @@ format:
 
 sync:
 	uv sync --active
+
+run:
+	PYTHONPATH=src/ uv run --active src/main.py

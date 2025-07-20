@@ -35,6 +35,5 @@ async def main():
 
 if __name__ == "__main__":
     print("OMLSP starting")
-    loop = asyncio.get_event_loop()
-    res = loop.run_until_complete(main())
+    res = asyncio.run(main())
     print(res)
