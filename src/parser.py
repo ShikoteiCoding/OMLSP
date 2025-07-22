@@ -4,54 +4,59 @@ import logging
 
 def parse_query_to_dict(query):
     """
-    Parse a SQL query into a dictionary containing table schema and connector properties.
+    Parse a SQL query into a dictionary
     
     Returns:
         dict: Dictionary containing table schema and properties
     """
+
+    result = {
+        'table_name': None,
+        'columns': [],
+        'properties': {}
+    }
     try:
         parsed = parse_one(query, dialect=None)
-        
-        result = {
-            'table_name': None,
-            'columns': [],
-            'properties': {}
-        }
-        
         # Extract Query
         if isinstance(parsed, exp.Create):
             table = parsed.this
-            parsed = parse_one(query, dialect=None)
-
             if isinstance(parsed.this, exp.Schema):
                 result['table_name'] = table.this.name if isinstance(table.this, exp.Table) else str(table.this)
                 for column in parsed.this.expressions:
                     if isinstance(column, exp.ColumnDef):
-                        col_name = column.this.name
-                        col_type = column.kind.this.name if column.kind and hasattr(column.kind, 'this') and hasattr(column.kind.this, 'name') else str(column.kind) if column.kind else None
+                        # Check if column has a name
+                        if hasattr(column, 'this') and hasattr(column.this, 'name'):
+                            col_name = column.this.name
+                        else:
+                            raise ValueError(f"Column name not found in {column}")
+                        # Check if column has a type
+                        if column.kind and hasattr(column.kind, 'this') and hasattr(column.kind.this, 'name'):
+                             col_type = column.kind.this.name
+                        else:
+                            raise ValueError(f"Column type not found for column {col_name}")
+                        
                         result['columns'].append({
                             'name': col_name,
                             'type': col_type
                         })
+            elif isinstance(table, exp.Table):
+                result['table_name'] = table.name
             else:
-                result['table_name'] = table.name if isinstance(table, exp.Table) else str(table)
-            
+                raise ValueError(f"Expected exp.Schema or exp.Table, got {type(table)}: {table}")
             # Extract WITH properties
             for prop in parsed.args.get('properties', []):
                 if not isinstance(prop, exp.Property):
-                    logging.error(f"Expected exp.Property, got {type(prop)}: {prop}")
-                    continue
+                    raise ValueError(f"Expected exp.Property, got {type(prop)}: {prop}")
                 try:
                     key = prop.this.name if isinstance(prop.this, exp.Identifier) else str(prop.this)
                     value = prop.args.get('value')
                     if value is None:
-                        logging.warning(f"Property {key} has no value")
-                        result['properties'][key] = None
-                        continue
-                    if isinstance(value, exp.Literal):
+                        logging.error(f"Property {key} has no value")
+                        raise ValueError(f"Invalid property: {key} has no value")
+                    elif isinstance(value, exp.Literal):
                         result['properties'][key] = value.this
                     else:
-                        result['properties'][key] = str(value)
+                        raise ValueError(f"Invalid property: {value} is not a lieral")
                 except AttributeError as e:
                     logging.error(f"Error processing property {prop}: {e}")
                     continue
@@ -94,4 +99,34 @@ result = """
 
 invalid_query = """
 SELECT * FROM example;
+"""
+
+invalid_query_2 = """
+CREATE TABLE example (
+    url STRING
+)
+WITH (
+    'connector' = 'http',
+    'timestamp' = CURRENT_TIMESTAMP
+);
+"""
+
+invalid_query_3 = """
+CREATE TABLE example (
+    url STRING
+)
+WITH (
+    'connector' = 'http',
+    'novalue' = NULL,
+    'time' = CURRENT_TIMESTAMP
+);
+"""
+
+invalid_query_4 = """
+CREATE TABLE example (
+    STRING
+)
+WITH (
+    'connector' = 'http'
+);
 """
