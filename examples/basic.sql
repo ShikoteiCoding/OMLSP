@@ -5,6 +5,6 @@ WITH (
     'connector' = 'http',
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
-    'scan.interval' = '60s',
+    'schedule' = '*/1 * * * *',
     'json.jsonpath' = '$.url'
 );
