@@ -21,7 +21,10 @@ def parse_query_to_dict(query):
         if isinstance(parsed, exp.Create):
             table = parsed.this
             if isinstance(parsed.this, exp.Schema):
-                result['table_name'] = table.this.name if isinstance(table.this, exp.Table) else str(table.this)
+                if isinstance(table.this, exp.Table):
+                    result['table_name'] = table.this.name 
+                else:
+                    raise ValueError(f"Table name not found in query: {query}")
                 for column in parsed.this.expressions:
                     if isinstance(column, exp.ColumnDef):
                         # Check if column has a name
