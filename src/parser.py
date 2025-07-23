@@ -2,6 +2,61 @@ from sqlglot import parse_one, exp
 import sqlglot.errors
 import logging
 
+MAPPING_TYPES = {
+    'BOOLEAN': bool,
+    'SMALLINT': int,
+    'INTEGER': int,
+    'BIGINT': int,
+    'FLOAT': float,
+    'DOUBLE': float,
+    'VARCHAR': str,
+}
+
+RESULT = {
+        'table_name': None,
+        'columns': [],
+        'properties': {}
+    }
+
+def parse_table(table):
+    columns = []
+    if isinstance(table.this, exp.Table):
+        table_name = table.this.name
+        for column in table.this.expressions:
+            if isinstance(column, exp.ColumnDef):
+                col_name = column.this.name if column.this else None
+                col_type = column.kind.this.name if column.kind and column.kind.this else None
+                
+                if not col_name:
+                    raise ValueError(f"Column name not found in {column}")
+                if not col_type:
+                    raise ValueError(f"Column type not found for column {col_name}")
+                
+                columns.append({'name': col_name, 'type': col_type})
+    elif isinstance(table, exp.Table):
+        table_name = table.name
+    else:
+        raise ValueError(f"Expected exp.Schema or exp.Table, got {type(table)}")
+    return table_name, columns
+
+def parse_with_properties(with_properties):
+    properties = {}
+    for prop in with_properties.args.get('properties', []):
+        if not isinstance(prop, exp.Property):
+            raise ValueError(f"Expected exp.Property, got {type(prop)}")
+        
+        key = prop.this.name if isinstance(prop.this, exp.Identifier) else str(prop.this)
+        value = prop.args.get('value')
+        
+        if value is None:
+            raise ValueError(f"Property {key} has no value")
+        if not isinstance(value, exp.Literal):
+            raise ValueError(f"Property {key} value is not a literal: {value}")
+        
+        properties[key] = value.this
+    
+    return properties
+
 def parse_query_to_dict(query):
     """
     Parse a SQL query into a dictionary
@@ -10,65 +65,19 @@ def parse_query_to_dict(query):
         dict: Dictionary containing table schema and properties
     """
 
-    result = {
-        'table_name': None,
-        'columns': [],
-        'properties': {}
-    }
     try:
         parsed = parse_one(query, dialect=None)
         # Extract Query
         if isinstance(parsed, exp.Create):
             table = parsed.this
-            if isinstance(parsed.this, exp.Schema):
-                if isinstance(table.this, exp.Table):
-                    result['table_name'] = table.this.name 
-                else:
-                    raise ValueError(f"Table name not found in query: {query}")
-                for column in parsed.this.expressions:
-                    if isinstance(column, exp.ColumnDef):
-                        # Check if column has a name
-                        if hasattr(column, 'this') and hasattr(column.this, 'name'):
-                            col_name = column.this.name
-                        else:
-                            raise ValueError(f"Column name not found in {column}")
-                        # Check if column has a type
-                        if column.kind and hasattr(column.kind, 'this') and hasattr(column.kind.this, 'name'):
-                             col_type = column.kind.this.name
-                        else:
-                            raise ValueError(f"Column type not found for column {col_name}")
-                        
-                        result['columns'].append({
-                            'name': col_name,
-                            'type': col_type
-                        })
-            elif isinstance(table, exp.Table):
-                result['table_name'] = table.name
-            else:
-                raise ValueError(f"Expected exp.Schema or exp.Table, got {type(table)}: {table}")
+            RESULT['table_name'], RESULT['columns'] = parse_table(table)
             # Extract WITH properties
-            for prop in parsed.args.get('properties', []):
-                if not isinstance(prop, exp.Property):
-                    raise ValueError(f"Expected exp.Property, got {type(prop)}: {prop}")
-                try:
-                    key = prop.this.name if isinstance(prop.this, exp.Identifier) else str(prop.this)
-                    value = prop.args.get('value')
-                    if value is None:
-                        logging.error(f"Property {key} has no value")
-                        raise ValueError(f"Invalid property: {key} has no value")
-                    elif isinstance(value, exp.Literal):
-                        result['properties'][key] = value.this
-                    else:
-                        raise ValueError(f"Invalid property: {value} is not a lieral")
-                except AttributeError as e:
-                    logging.error(f"Error processing property {prop}: {e}")
-                    continue
+            RESULT['properties'] = parse_with_properties(parsed)
         else:
             logging.error(f"Expected CREATE TABLE query, got {type(parsed)}: {str(parsed)}")
             print(f"Error: Query is not a CREATE TABLE statement: {str(parsed)}")
-            return result
-    
-        return result
+            return RESULT
+        return RESULT
     
     except sqlglot.errors.ParseError as e:
         logging.error(f"Failed to parse SQL query: {e}")
