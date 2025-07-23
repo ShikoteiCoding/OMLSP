@@ -1,6 +1,9 @@
 # Python development
+check:
+	uv run --active ruff check --fix src/
+
 format:
-	uv run --active ruff check --fix
+	uv run --active ruff format src/
 
 sync:
 	uv sync --active
