@@ -1,17 +1,18 @@
 from sqlglot import parse_one, exp
+from typing import Dict, List, Union, Optional
 import sqlglot.errors
 import logging
 
-def get_name(expression):
+def get_name(expression: exp.Expression) -> str:
     return getattr(expression, 'this', expression).name
 
-def get_type(expression):
+def get_type(expression: exp.ColumnDef) -> Optional[str]:
     return getattr(getattr(expression, 'kind', None), 'this', None).name if expression.kind else None
 
-def get_property(expression):
+def get_property(expression: exp.Property) -> Optional[exp.Expression]:
     return expression.args.get('value')
 
-def parse_table(table):
+def parse_table(table: Union[exp.Schema, exp.Table]) -> tuple[str, List[Dict[str, str]]]:
     columns = []
     if isinstance(table, exp.Schema):
         table_name = get_name(table)
@@ -31,7 +32,7 @@ def parse_table(table):
         raise ValueError(f"Expected exp.Schema or exp.Table, got {type(table)}")
     return table_name, columns
 
-def parse_with_properties(with_properties):
+def parse_with_properties(with_properties: exp.Create) -> Dict[str, Optional[Union[str, None]]]:
     properties = {}
     for prop in with_properties.args.get('properties', []):
         if not isinstance(prop, exp.Property):
@@ -47,7 +48,7 @@ def parse_with_properties(with_properties):
         properties[key] = value.this
     return properties
 
-def parse_query_to_dict(query):
+def parse_query_to_dict(query: str) -> Dict[str, Union[str, List[Dict[str, str]], Dict[str, Optional[Union[str, None]]]]]:
     """
     Parse a SQL CREATE TABLE query into a dictionary.
 
