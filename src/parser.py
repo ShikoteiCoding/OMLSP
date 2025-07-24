@@ -1,5 +1,5 @@
 from sqlglot import parse_one, exp
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Union, Optional, Tuple
 import sqlglot.errors
 import logging
 
@@ -18,7 +18,7 @@ TYPE_MAPPING  = {
 def get_name(expression: exp.Expression) -> str:
     return getattr(expression, 'this', expression).name
 
-def get_type(expression: exp.ColumnDef) -> Union[str, str, str]:
+def get_type(expression: exp.ColumnDef) -> Tuple[str, str, str]:
     type_name = getattr(getattr(expression, 'kind', None), 'this', None).name
     python_type, duckdb_type = TYPE_MAPPING[type_name]
     return python_type, duckdb_type, type_name
