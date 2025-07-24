@@ -3,12 +3,26 @@ from typing import Dict, List, Union, Optional
 import sqlglot.errors
 import logging
 
+TYPE_MAPPING  = {
+    "TEXT": ("str", "VARCHAR"),
+    "VARCHAR": ("str", "VARCHAR"),
+    "CHAR": ("str", "CHAR"),
+    "INT": ("int", "INTEGER"),
+    "BIGINT": ("int", "BIGINT"),
+    "SMALLINT": ("int", "SMALLINT"),
+    "FLOAT": ("float", "FLOAT"),
+    "DOUBLE": ("float", "DOUBLE"),
+    "BOOLEAN": ("bool", "BOOLEAN")
+}
+
 def get_name(expression: exp.Expression) -> str:
     return getattr(expression, 'this', expression).name
 
-def get_type(expression: exp.ColumnDef) -> Optional[str]:
-    return getattr(getattr(expression, 'kind', None), 'this', None).name if expression.kind else None
-
+def get_type(expression: exp.ColumnDef) -> Union[str, str, str]:
+    type_name = getattr(getattr(expression, 'kind', None), 'this', None).name
+    python_type, duckdb_type = TYPE_MAPPING[type_name]
+    return python_type, duckdb_type, type_name
+    
 def get_property(expression: exp.Property) -> Optional[exp.Expression]:
     return expression.args.get('value')
 
@@ -22,10 +36,10 @@ def parse_table(table: Union[exp.Schema, exp.Table]) -> tuple[str, List[Dict[str
             col_name = get_name(column)
             if not col_name:
                 raise ValueError(f"Missing column name in {column}")
-            col_type = get_type(column)
-            if not col_type:
-                raise ValueError(f"Missing or invalid type for column {col_name}")
-            columns.append({'name': col_name, 'type': col_type})
+            python_type, duckdb_type, type_name = get_type(column)
+            if python_type == "" or duckdb_type == "":
+                raise ValueError(f"Unsupported or missing type {type_name}")
+            columns.append({'name': col_name, 'python_type': python_type, 'duckdb_type': duckdb_type})
     elif isinstance(table, exp.Table):
         table_name = get_name(table)
     else:
@@ -95,7 +109,7 @@ WITH (
 
 result = """
 {'table_name': 'example', 
-    'columns': [{'name': 'url', 'type': 'TEXT'}], 
+    'columns': [{'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}], 
         'properties': {'connector': 'http', 'url': 'https://httpbin.org/get', 
         'method': 'GET', 'scan.interval': '60s', 'json.jsonpath': '$.url'
     }
