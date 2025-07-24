@@ -9,4 +9,4 @@ sync:
 	uv sync --active
 
 run:
-	PYTHONPATH=src/ uv run --active src/main.py
+	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
