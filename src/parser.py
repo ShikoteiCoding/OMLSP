@@ -2,39 +2,31 @@ from sqlglot import parse_one, exp
 import sqlglot.errors
 import logging
 
-MAPPING_TYPES = {
-    'BOOLEAN': bool,
-    'SMALLINT': int,
-    'INTEGER': int,
-    'BIGINT': int,
-    'FLOAT': float,
-    'DOUBLE': float,
-    'VARCHAR': str,
-}
+def get_name(expression):
+    return getattr(expression, 'this', expression).name
 
-RESULT = {
-        'table_name': None,
-        'columns': [],
-        'properties': {}
-    }
+def get_type(expression):
+    return getattr(getattr(expression, 'kind', None), 'this', None).name if expression.kind else None
+
+def get_property(expression):
+    return expression.args.get('value')
 
 def parse_table(table):
     columns = []
-    if isinstance(table.this, exp.Table):
-        table_name = table.this.name
-        for column in table.this.expressions:
-            if isinstance(column, exp.ColumnDef):
-                col_name = column.this.name if column.this else None
-                col_type = column.kind.this.name if column.kind and column.kind.this else None
-                
-                if not col_name:
-                    raise ValueError(f"Column name not found in {column}")
-                if not col_type:
-                    raise ValueError(f"Column type not found for column {col_name}")
-                
-                columns.append({'name': col_name, 'type': col_type})
+    if isinstance(table, exp.Schema):
+        table_name = get_name(table)
+        for column in table.expressions:
+            if not isinstance(column, exp.ColumnDef):
+                raise ValueError(f"Expected exp.ColumnDef, got {type(column)}")
+            col_name = get_name(column)
+            if not col_name:
+                raise ValueError(f"Missing column name in {column}")
+            col_type = get_type(column)
+            if not col_type:
+                raise ValueError(f"Missing or invalid type for column {col_name}")
+            columns.append({'name': col_name, 'type': col_type})
     elif isinstance(table, exp.Table):
-        table_name = table.name
+        table_name = get_name(table)
     else:
         raise ValueError(f"Expected exp.Schema or exp.Table, got {type(table)}")
     return table_name, columns
@@ -44,48 +36,48 @@ def parse_with_properties(with_properties):
     for prop in with_properties.args.get('properties', []):
         if not isinstance(prop, exp.Property):
             raise ValueError(f"Expected exp.Property, got {type(prop)}")
-        
-        key = prop.this.name if isinstance(prop.this, exp.Identifier) else str(prop.this)
-        value = prop.args.get('value')
-        
-        if value is None:
-            raise ValueError(f"Property {key} has no value")
+        key = get_name(prop)
+        if not key:
+            raise ValueError(f"Missing key in {prop}")
+        value = get_property(prop)
+        if not value:
+            raise ValueError(f"Missing value in {prop}")
         if not isinstance(value, exp.Literal):
-            raise ValueError(f"Property {key} value is not a literal: {value}")
-        
+            raise ValueError(f"Expected exp.Literal, got {type(value)}: {value}")
         properties[key] = value.this
-    
     return properties
 
 def parse_query_to_dict(query):
     """
-    Parse a SQL query into a dictionary
-    
-    Returns:
-        dict: Dictionary containing table schema and properties
-    """
+    Parse a SQL CREATE TABLE query into a dictionary.
 
+    Args:
+        query (str): SQL query string (expected to be a CREATE TABLE statement)
+
+    Returns:
+        dict: Dictionary with table name, columns, and properties
+
+    Raises:
+        sqlglot.errors.ParseError: If the query cannot be parsed
+        ValueError: If the query structure is invalid
+    """
+    result = {'table_name': None, 'columns': [], 'properties': {}}
+    
     try:
         parsed = parse_one(query, dialect=None)
-        # Extract Query
-        if isinstance(parsed, exp.Create):
-            table = parsed.this
-            RESULT['table_name'], RESULT['columns'] = parse_table(table)
-            # Extract WITH properties
-            RESULT['properties'] = parse_with_properties(parsed)
-        else:
-            logging.error(f"Expected CREATE TABLE query, got {type(parsed)}: {str(parsed)}")
-            print(f"Error: Query is not a CREATE TABLE statement: {str(parsed)}")
-            return RESULT
-        return RESULT
+        if not isinstance(parsed, exp.Create):
+            ValueError(f"Expected CREATE TABLE query, got {type(parsed)}")
+        
+        result['table_name'], result['columns'] = parse_table(parsed.this)
+        result['properties'] = parse_with_properties(parsed)
+        return result
     
     except sqlglot.errors.ParseError as e:
-        logging.error(f"Failed to parse SQL query: {e}")
+        logging.error(f"Failed to parse query: {e}")
         raise
-    except Exception as e:
-        logging.error(f"Unexpected error while parsing query: {e}")
+    except ValueError as e:
+        logging.error(f"Invalid query structure: {e}")
         raise
-
 
 query = """
 CREATE TABLE example (
