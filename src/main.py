@@ -50,5 +50,5 @@ if __name__ == "__main__":
 
     parsed_query = parse_query_to_dict(sql_content)
 
-    fn = build_executable(parsed_query["properties"])
+    fn = build_executable(parsed_query["table"]["properties"])
     asyncio.run(fn())
