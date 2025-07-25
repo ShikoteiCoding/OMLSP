@@ -17,12 +17,14 @@ TYPE_MAPPING = {
 
 
 def get_name(expression: exp.Expression) -> str:
-    return getattr(expression, "this", expression).name
+    return getattr(getattr(expression, "this", expression), "name", "")
 
 
 def get_type(expression: exp.ColumnDef) -> Tuple[str, str, str]:
-    type_name = getattr(getattr(expression, "kind", None), "this", None).name
-    python_type, duckdb_type = TYPE_MAPPING[type_name]
+    type_name = getattr(
+        getattr(getattr(expression, "kind", None), "this", None), "name", ""
+    )
+    python_type, duckdb_type = TYPE_MAPPING.get(type_name, ("", ""))
     return python_type, duckdb_type, type_name
 
 
@@ -188,63 +190,3 @@ def parse_query_to_dict(
     except ValueError as e:
         logging.error(f"Invalid query structure: {e}")
         raise
-
-
-query = """
-CREATE TABLE example (
-    url STRING
-)
-WITH (
-    'connector' = 'http',
-    'url' = 'https://httpbin.org/get',
-    'method' = 'GET',
-    'scan.interval' = '60s',
-    'json.jsonpath' = '$.url'
-);
-"""
-
-result = """
-{'table': 
-    {'name': 'example', 
-    'columns': [
-        {'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}], 
-    'properties': {
-        'connector': 'http', 'url': 'https://httpbin.org/get', 
-        'method': 'GET', 'scan.interval': '60s', 'json.jsonpath': '$.url'}
-    }
-}
-"""
-
-invalid_query = """
-SELECT * FROM example;
-"""
-
-invalid_query_2 = """
-CREATE TABLE example (
-    url STRING
-)
-WITH (
-    'connector' = 'http',
-    'timestamp' = CURRENT_TIMESTAMP
-);
-"""
-
-invalid_query_3 = """
-CREATE TABLE example (
-    url STRING
-)
-WITH (
-    'connector' = 'http',
-    'novalue' = NULL,
-    'time' = CURRENT_TIMESTAMP
-);
-"""
-
-invalid_query_4 = """
-CREATE TABLE example (
-    STRING
-)
-WITH (
-    'connector' = 'http'
-);
-"""

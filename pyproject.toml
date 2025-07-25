@@ -11,6 +11,7 @@ dependencies = [
   "jsonpath-ng>=1.7.0",
   "loguru==0.7.3",
   "sqlglot==27.1.0",
+  "pytest==8.4.1",
 ]
 
 [dependency-groups]
