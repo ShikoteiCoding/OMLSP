@@ -7,7 +7,6 @@ requires-python = ">=3.13"
 dependencies = [
   "aiohttp==3.12.14",
   "apscheduler>=3.11.0",
-  "croniter>=6.0.0",
   "jsonpath-ng>=1.7.0",
   "loguru==0.7.3",
   "sqlglot==27.1.0",

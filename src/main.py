@@ -1,37 +1,68 @@
 import argparse
 import asyncio
+import time
 
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Coroutine, NoReturn
+from typing import Any, Callable, Coroutine
 from loguru import logger
 
 from parser import parse_query_to_dict
 from requester import http_requester_builder
+from inout import persist
+
+STORE_LOCATION = "local-store"
 
 
-def build_executable(properties: dict) -> Callable[[], Coroutine[Any, Any, NoReturn]]:
-    cron_expr = properties.get("schedule")
+def build_executable(
+    properties: dict, table_name: str
+) -> Callable[[], Coroutine[Any, Any, None]]:
+    cron_expr = str(properties.get("schedule"))
     trigger = CronTrigger.from_crontab(cron_expr)
     requester = http_requester_builder(properties)
+    scheduler = AsyncIOScheduler()
+    fire_time = trigger.get_next_fire_time(
+        datetime.now(tz=timezone.utc), datetime.now(tz=timezone.utc)
+    )
+
+    # TODO:  keep batch_id in metastore
+    batch_id = 0
 
     async def job_func():
-        logger.info(f"{datetime.now(timezone.utc)}")
+        nonlocal batch_id
+        nonlocal trigger
+        nonlocal fire_time
+
+        start_interval_dt = trigger.get_next_fire_time(
+            fire_time, datetime.now(timezone.utc)
+        )
+        if start_interval_dt:
+            start_interval_dt = start_interval_dt.astimezone(timezone.utc)
+            fire_time = start_interval_dt
+        logger.info(
+            f"running scheduled batch for table: {table_name} - {start_interval_dt}"
+        )
+
         res = await requester()
         logger.info(f"http response: {res}")
+
+        epoch = int(time.time() * 1_000)
+        res = await persist(res, batch_id, epoch, STORE_LOCATION, table_name)
+        batch_id += 1
         return res
 
+    job = scheduler.add_job(job_func, trigger, name=table_name)
+
     async def _execute():
-        scheduler = AsyncIOScheduler()
-        scheduler.add_job(job_func, trigger)
         scheduler.start()
+        logger.info(f"next run time for schedule: {job.next_run_time}")
 
         # TODO: Dirty
         while True:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(5)
 
     return _execute
 
@@ -50,5 +81,7 @@ if __name__ == "__main__":
 
     parsed_query = parse_query_to_dict(sql_content)
 
-    fn = build_executable(parsed_query["table"]["properties"])
+    fn = build_executable(
+        parsed_query["table"]["properties"], parsed_query["table"]["name"]
+    )
     asyncio.run(fn())

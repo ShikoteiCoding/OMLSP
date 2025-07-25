@@ -1,5 +1,5 @@
 from sqlglot import parse_one, exp
-from typing import Dict, List, Union, Optional, Tuple
+from typing import Any
 import sqlglot.errors
 import logging
 
@@ -20,7 +20,7 @@ def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
 
 
-def get_type(expression: exp.ColumnDef) -> Tuple[str, str, str]:
+def get_type(expression: exp.ColumnDef) -> tuple[str, str, str]:
     type_name = getattr(
         getattr(getattr(expression, "kind", None), "this", None), "name", ""
     )
@@ -28,13 +28,13 @@ def get_type(expression: exp.ColumnDef) -> Tuple[str, str, str]:
     return python_type, duckdb_type, type_name
 
 
-def get_property(expression: exp.Property) -> Optional[exp.Expression]:
+def get_property(expression: exp.Property) -> exp.Expression | None:
     return expression.args.get("value")
 
 
 def parse_table(
-    table: Union[exp.Schema, exp.Table],
-) -> Tuple[str, List[Dict[str, str]]]:
+    table: exp.Schema | exp.Table,
+) -> tuple[str, list[dict[str, str]]]:
     """Parse table schema or table into name and columns"""
     columns = []
     table_name = get_name(table)
@@ -56,7 +56,7 @@ def parse_table(
 
 def parse_with_properties(
     with_properties: exp.Create,
-) -> Dict[str, Optional[Union[str, None]]]:
+) -> dict[str, str | None]:
     """Parse properties from a WITH statement"""
     properties = {}
     for prop in with_properties.args.get("properties", []):
@@ -67,7 +67,7 @@ def parse_with_properties(
 
 
 def validate_table(
-    table: Union[exp.Schema, exp.Table], name: str, parsed_columns: List[Dict[str, str]]
+    table: exp.Schema | exp.Table, name: str, parsed_columns: list[dict[str, str]]
 ) -> None:
     """Validate the table structure and its columns"""
     table_name = get_name(table)
@@ -109,7 +109,7 @@ def validate_table(
 
 
 def validate_properties(
-    with_properties: exp.Create, properties: Dict[str, Optional[Union[str, None]]]
+    with_properties: exp.Create, properties: dict[str, str | None]
 ) -> None:
     """Validate properties from a WITH statement, cross-checking with parsed properties"""
     raw_properties = with_properties.args.get("properties", []).expressions
@@ -150,7 +150,7 @@ def validate_properties(
 
 def parse_query_to_dict(
     query: str,
-) -> Dict[str, Union[str, List[Dict[str, str]], Dict[str, Optional[Union[str, None]]]]]:
+) -> dict[str, Any]:
     """
     Parse a SQL CREATE TABLE query into a dictionary.
 
