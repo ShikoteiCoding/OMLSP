@@ -65,22 +65,18 @@ WITH (
 """
 
 def test_valid_create_table_with_columns_and_properties():
-    """Test parsing a valid CREATE TABLE query with columns and properties."""
     result = parse_query_to_dict(VALID_QUERY)
     assert result == EXPECTED_RESULT
 
 def test_invalid_non_create_query():
-    """Test that a non-CREATE TABLE query raises ValueError."""
     with pytest.raises(ValueError, match="Expected CREATE TABLE query"):
         parse_query_to_dict(INVALID_QUERY)
 
 def test_invalid_property_not_literal_timestamp():
-    """Test that a non-literal property value (CURRENT_TIMESTAMP) raises ValueError."""
     with pytest.raises(ValueError, match="Expected exp.Literal at index 1"):
         parse_query_to_dict(INVALID_QUERY_2)
 
 def test_invalid_property_null_value():
-    """Test that a NULL property value raises ValueError."""
     with pytest.raises(ValueError, match="Expected exp.Literal at index 1"):
         parse_query_to_dict(INVALID_QUERY_3)
 
