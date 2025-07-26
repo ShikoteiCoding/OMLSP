@@ -79,9 +79,14 @@ if __name__ == "__main__":
     with open(filepath, "rb") as fo:
         sql_content = fo.read().decode("utf-8")
 
-    parsed_query = parse_query_to_dict(sql_content)
+    parsed_queries = parse_query_to_dict(sql_content)
 
-    fn = build_executable(
-        parsed_query["table"]["properties"], parsed_query["table"]["name"]
-    )
-    asyncio.run(fn())
+    executables = [
+        build_executable(query["table"]["properties"], query["table"]["name"])
+        for query in parsed_queries
+    ]
+
+    async def run_all():
+        await asyncio.gather(*[fn() for fn in executables])
+
+    asyncio.run(run_all())
