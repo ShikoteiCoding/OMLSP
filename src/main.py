@@ -67,6 +67,15 @@ def build_executable(
     return _execute
 
 
+async def run_all(parsed_queries):
+    for query in parsed_queries:
+        asyncio.create_task(
+            build_executable(query["table"]["properties"], query["table"]["name"])(),
+            name=query["table"]["name"],
+        )
+    await asyncio.Event().wait()
+
+
 if __name__ == "__main__":
     # TODO: decipher entrypoint
     parser = argparse.ArgumentParser("Run a SQL file")
@@ -81,12 +90,4 @@ if __name__ == "__main__":
 
     parsed_queries = parse_query_to_dict(sql_content)
 
-    executables = [
-        build_executable(query["table"]["properties"], query["table"]["name"])
-        for query in parsed_queries
-    ]
-
-    async def run_all():
-        await asyncio.gather(*[fn() for fn in executables])
-
-    asyncio.run(run_all())
+    asyncio.run(run_all(parsed_queries))
