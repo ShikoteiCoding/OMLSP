@@ -1,4 +1,4 @@
-from sqlglot import parse_one, exp
+from sqlglot import parse, exp
 from typing import Any
 import sqlglot.errors
 import logging
@@ -150,37 +150,45 @@ def validate_properties(
 
 def parse_query_to_dict(
     query: str,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """
-    Parse a SQL CREATE TABLE query into a dictionary.
+    Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries
 
     Args:
-        query (str): SQL query string (expected to be a CREATE TABLE statement)
+        query (str): SQL query string containing one or more CREATE TABLE statements
 
     Returns:
-        dict: Dictionary with table name, columns, and properties
+        list[dict]: list of dictionaries, each with table name, columns, and properties
 
     Raises:
-        sqlglot.errors.ParseError: If the query cannot be parsed
-        ValueError: If the query structure is invalid
+        sqlglot.errors.ParseError: If any query cannot be parsed
+        ValueError: If any query structure is invalid
     """
-    result = {"table": {"name": None, "columns": [], "properties": {}}}
+    result = []
 
     try:
-        parsed = parse_one(query, dialect=None)
+        parsed_statements = parse(query, dialect=None)
 
-        if not isinstance(parsed, exp.Create):
-            raise ValueError(f"Expected CREATE TABLE query, got {type(parsed)}")
+        for parsed in parsed_statements:
+            if not isinstance(parsed, exp.Create):
+                logging.warning(f"Skipping non-CREATE TABLE statement: {parsed}")
+                continue
 
-        table_name, columns = parse_table(parsed.this)
-        validate_table(parsed.this, table_name, columns)
+            table_dict = {"table": {"name": None, "columns": [], "properties": {}}}
+            table_name, columns = parse_table(parsed.this)
+            validate_table(parsed.this, table_name, columns)
 
-        properties = parse_with_properties(parsed)
-        validate_properties(parsed, properties)
+            properties = parse_with_properties(parsed)
+            validate_properties(parsed, properties)
 
-        result["table"]["name"] = table_name
-        result["table"]["columns"] = columns
-        result["table"]["properties"] = properties
+            table_dict["table"]["name"] = table_name
+            table_dict["table"]["columns"] = columns
+            table_dict["table"]["properties"] = properties
+
+            result.append(table_dict)
+
+        if not result:
+            raise ValueError("No valid CREATE TABLE statements found in the query")
 
         return result
 

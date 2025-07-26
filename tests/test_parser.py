@@ -14,7 +14,7 @@ WITH (
 );
 """
 
-EXPECTED_RESULT = {
+EXPECTED_RESULT = [{
     'table': {
         'name': 'example',
         'columns': [
@@ -28,7 +28,7 @@ EXPECTED_RESULT = {
             'json.jsonpath': '$.url'
         }
     }
-}
+}]
 
 INVALID_QUERY = """
 SELECT * FROM example;
@@ -69,7 +69,7 @@ def test_valid_create_table_with_columns_and_properties():
     assert result == EXPECTED_RESULT
 
 def test_invalid_non_create_query():
-    with pytest.raises(ValueError, match="Expected CREATE TABLE query"):
+    with pytest.raises(ValueError, match="No valid CREATE TABLE statements found in the query"):
         parse_query_to_dict(INVALID_QUERY)
 
 def test_invalid_property_not_literal_timestamp():

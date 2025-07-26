@@ -13,8 +13,7 @@ async def persist(
     path = Path(f"{store_location}/{table_name}/")
 
     # TODO: move initialisation when creating table
-    if not path.exists():
-        path.mkdir()
+    path.mkdir(parents=True, exist_ok=True)
 
     file_name = f"{epoch}-{txn_id}.pkl"
     with open(path / file_name, "wb") as f:
