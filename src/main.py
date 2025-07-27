@@ -60,7 +60,7 @@ def build_executable(properties: dict, table_name: str) -> Coroutine[Any, Any, N
 
         # TODO: Dirty
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(3600)
 
     return _execute()
 
