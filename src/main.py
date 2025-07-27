@@ -72,9 +72,6 @@ async def run_all(parsed_queries):
             name=query["table"]["name"],
         )
         for query in parsed_queries
-        if "table" in query
-        and "properties" in query["table"]
-        and "name" in query["table"]
     ]
     done, pending = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
