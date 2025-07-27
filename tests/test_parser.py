@@ -12,11 +12,37 @@ WITH (
     'scan.interval' = '60s',
     'json.jsonpath' = '$.url'
 );
+
+CREATE TABLE example_2 (
+    url STRING
+)
+WITH (
+    'connector' = 'http',
+    'url' = 'https://httpbin.org/get',
+    'method' = 'GET',
+    'scan.interval' = '60s',
+    'json.jsonpath' = '$.url'
+);
 """
 
 EXPECTED_RESULT = [{
     'table': {
         'name': 'example',
+        'columns': [
+            {'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}
+        ],
+        'properties': {
+            'connector': 'http',
+            'url': 'https://httpbin.org/get',
+            'method': 'GET',
+            'scan.interval': '60s',
+            'json.jsonpath': '$.url'
+        }
+    }
+},
+{
+    'table': {
+        'name': 'example_2',
         'columns': [
             {'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}
         ],
@@ -49,7 +75,6 @@ CREATE TABLE example (
     url STRING
 )
 WITH (
-    'connector' = 'http',
     'novalue' = NULL,
     'time' = CURRENT_TIMESTAMP
 );
@@ -73,11 +98,11 @@ def test_invalid_non_create_query():
         parse_query_to_dict(INVALID_QUERY)
 
 def test_invalid_property_not_literal_timestamp():
-    with pytest.raises(ValueError, match="Expected exp.Literal at index 1"):
+    with pytest.raises(ValueError, match="Expected exp.Literal at index 1, got <class 'sqlglot.expressions.CurrentTimestamp'>: CURRENT_TIMESTAMP()"):
         parse_query_to_dict(INVALID_QUERY_2)
 
 def test_invalid_property_null_value():
-    with pytest.raises(ValueError, match="Expected exp.Literal at index 1"):
+    with pytest.raises(ValueError, match="Expected exp.Literal at index 0, got <class 'sqlglot.expressions.Null'>: NULL"):
         parse_query_to_dict(INVALID_QUERY_3)
 
 def test_invalid_expression():

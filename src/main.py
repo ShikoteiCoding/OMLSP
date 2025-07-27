@@ -17,9 +17,7 @@ from inout import persist
 STORE_LOCATION = "local-store"
 
 
-def build_executable(
-    properties: dict, table_name: str
-) -> Callable[[], Coroutine[Any, Any, None]]:
+def build_executable(properties: dict, table_name: str) -> Coroutine[Any, Any, None]:
     cron_expr = str(properties.get("schedule"))
     trigger = CronTrigger.from_crontab(cron_expr)
     requester = http_requester_builder(properties)
@@ -64,16 +62,21 @@ def build_executable(
         while True:
             await asyncio.sleep(5)
 
-    return _execute
+    return _execute()
 
 
 async def run_all(parsed_queries):
-    for query in parsed_queries:
+    tasks = [
         asyncio.create_task(
-            build_executable(query["table"]["properties"], query["table"]["name"])(),
+            build_executable(query["table"]["properties"], query["table"]["name"]),
             name=query["table"]["name"],
         )
-    await asyncio.Event().wait()
+        for query in parsed_queries
+        if "table" in query
+        and "properties" in query["table"]
+        and "name" in query["table"]
+    ]
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
 
 if __name__ == "__main__":
