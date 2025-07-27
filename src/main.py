@@ -17,9 +17,7 @@ from inout import persist
 STORE_LOCATION = "local-store"
 
 
-def build_executable(
-    properties: dict, table_name: str
-) -> Callable[[], Coroutine[Any, Any, None]]:
+def build_executable(properties: dict, table_name: str) -> Coroutine[Any, Any, None]:
     cron_expr = str(properties.get("schedule"))
     trigger = CronTrigger.from_crontab(cron_expr)
     requester = http_requester_builder(properties)
@@ -62,9 +60,20 @@ def build_executable(
 
         # TODO: Dirty
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(3600)
 
-    return _execute
+    return _execute()
+
+
+async def run_all(parsed_queries):
+    tasks = [
+        asyncio.create_task(
+            build_executable(query["table"]["properties"], query["table"]["name"]),
+            name=query["table"]["name"],
+        )
+        for query in parsed_queries
+    ]
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
 
 if __name__ == "__main__":
@@ -79,9 +88,6 @@ if __name__ == "__main__":
     with open(filepath, "rb") as fo:
         sql_content = fo.read().decode("utf-8")
 
-    parsed_query = parse_query_to_dict(sql_content)
+    parsed_queries = parse_query_to_dict(sql_content)
 
-    fn = build_executable(
-        parsed_query["table"]["properties"], parsed_query["table"]["name"]
-    )
-    asyncio.run(fn())
+    asyncio.run(run_all(parsed_queries))
