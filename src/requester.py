@@ -65,7 +65,7 @@ async def http_requester(properties: dict) -> list[dict]:
     return res
 
 
-def http_requester_builder(
+def build_http_requester(
     properties: dict,
 ) -> Callable[[], Coroutine[Any, Any, list[dict]]]:
     http_properties = parse_http_properties(properties)
@@ -86,7 +86,7 @@ if __name__ == "__main__":
         "json.jsonpath": "$.url",
     }
 
-    _http_requester = http_requester_builder(properties)
+    _http_requester = build_http_requester(properties)
 
     res = asyncio.run(_http_requester())
     print(res)
