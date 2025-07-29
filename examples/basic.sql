@@ -19,3 +19,15 @@ WITH (
     'schedule' = '*/5 * * * *',
     'json.jsonpath' = '$.url'
 );
+
+
+CREATE TABLE example_3 (
+    url STRING
+)
+WITH (
+    'connector' = 'lookup_http',
+    'url' = 'https://httpbin.org/get',
+    'method' = 'GET',
+    'schedule' = '*/5 * * * *',
+    'json.jsonpath' = '$.url'
+);

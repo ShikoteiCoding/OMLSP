@@ -1,0 +1,36 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "HTTP Connector Configuration",
+    "type": "object",
+    "required": ["connector", "url", "method", "schedule", "json.jsonpath"],
+    "properties": {
+      "connector": {
+        "type": "string",
+        "enum": ["http", "lookup_http"],
+        "description": "Must be 'http'"
+      },
+      "url": {
+        "type": "string",
+        "format": "uri",
+        "pattern": "^https?://.+",
+        "description": "Must be a valid HTTP or HTTPS URL"
+      },
+      "method": {
+        "type": "string",
+        "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+        "description": "Standard HTTP methods"
+      },
+      "schedule": {
+        "type": "string",
+        "pattern": "^((\\*|[0-9]+|[0-9]+-[0-9]+|\\*/[0-9]+)(,)?\\s*){5}$",
+        "description": "Cron expression like */5 * * * *"
+      },
+      "json.jsonpath": {
+        "type": "string",
+        "pattern": "^\\$.*",
+        "description": "Must be a valid JSONPath expression starting with $"
+      }
+    },
+    "additionalProperties": false
+  }
+  

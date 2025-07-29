@@ -2,6 +2,7 @@ from sqlglot import parse, exp
 from typing import Any
 import sqlglot.errors
 import logging
+import jsonschema
 
 TYPE_MAPPING = {
     "TEXT": ("str", "VARCHAR"),
@@ -50,7 +51,6 @@ def parse_table(
                     "duckdb_type": duckdb_type,
                 }
             )
-
     return table_name, columns
 
 
@@ -108,49 +108,14 @@ def validate_table(
                 )
 
 
-def validate_properties(
-    with_properties: exp.Create, properties: dict[str, str | None]
+def validate_with_properties(
+    properties: dict[str, str | None], properties_schema: dict
 ) -> None:
-    """Validate properties from a WITH statement, cross-checking with parsed properties"""
-    raw_properties = with_properties.args.get("properties", []).expressions
-    parsed_properties = list(properties.items())  # Convert dict to list of (key, value)
-    if len(raw_properties) != len(parsed_properties):
-        raise ValueError(
-            f"Mismatch: {len(raw_properties)} raw properties but {len(parsed_properties)} parsed properties"
-        )
-
-    for i, (prop, (parsed_key, parsed_value)) in enumerate(
-        zip(raw_properties, parsed_properties)
-    ):
-        if not isinstance(prop, exp.Property):
-            raise ValueError(f"Expected exp.Property at index {i}, got {type(prop)}")
-
-        key = get_name(prop)
-        if not key:
-            raise ValueError(f"Missing key at index {i} in {prop}")
-        if key != parsed_key:
-            raise ValueError(
-                f"Property key mismatch at index {i}: {key} vs {parsed_key}"
-            )
-
-        value = get_property(prop)
-        if not value:
-            raise ValueError(f"Missing value at index {i} in {prop}")
-        if not isinstance(value, exp.Literal):
-            raise ValueError(
-                f"Expected exp.Literal at index {i}, got {type(value)}: {value}"
-            )
-
-        raw_value = value.this
-        if raw_value != parsed_value:
-            raise ValueError(
-                f"Property value mismatch at index {i} for key {key}: {raw_value} vs {parsed_value}"
-            )
+    """JSON Schema validation of properties extracted from WITH statement"""
+    jsonschema.validate(instance=properties, schema=properties_schema)
 
 
-def parse_query_to_dict(
-    query: str,
-) -> list[dict[str, Any]]:
+def parse_query_to_dict(query: str, properties_schema: dict) -> list[dict[str, Any]]:
     """
     Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries
 
@@ -168,37 +133,6 @@ def parse_query_to_dict(
 
     try:
         parsed_statements = parse(query, dialect=None)
-
-        for parsed in parsed_statements:
-            if not isinstance(parsed, exp.Create):
-                logging.warning(f"Skipping non-CREATE TABLE statement: {parsed}")
-                continue
-
-            table_dict = {
-                "table": {
-                    "name": None,
-                    "columns": [],
-                    "properties": {},
-                    "query": get_duckdb_sql(parsed),
-                }
-            }
-            table_name, columns = parse_table(parsed.this)
-            validate_table(parsed.this, table_name, columns)
-
-            properties = parse_with_properties(parsed)
-            validate_properties(parsed, properties)
-
-            table_dict["table"]["name"] = table_name
-            table_dict["table"]["columns"] = columns
-            table_dict["table"]["properties"] = properties
-
-            result.append(table_dict)
-
-        if not result:
-            raise ValueError("No valid CREATE TABLE statements found in the query")
-
-        return result
-
     except sqlglot.errors.ParseError as e:
         logging.error(f"Failed to parse query: {e}")
         raise
@@ -206,11 +140,61 @@ def parse_query_to_dict(
         logging.error(f"Invalid query structure: {e}")
         raise
 
+    for parsed in parsed_statements:
+        if not isinstance(parsed, exp.Create):
+            logging.warning(f"Skipping non-CREATE TABLE statement: {parsed}")
+            continue
+
+        table_dict = {
+            "table": {
+                "name": None,
+                "columns": [],
+                "properties": {},
+                "query": get_duckdb_sql(parsed),
+            }
+        }
+        table_name, columns = parse_table(parsed.this)
+        validate_table(parsed.this, table_name, columns)
+
+        properties = parse_with_properties(parsed)
+        validate_with_properties(properties, properties_schema)
+
+        table_dict["table"]["name"] = table_name
+        table_dict["table"]["columns"] = columns
+        table_dict["table"]["properties"] = properties
+
+        result.append(table_dict)
+
+    if not result:
+        raise ValueError("No valid CREATE TABLE statements found in the query")
+
+    return result
+
 
 def get_duckdb_sql(statement: exp.Expression) -> str:
-    if isinstance(statement, exp.Create):
-        statement = statement.copy()
-        if statement.args.get("properties"):
-            del statement.args["properties"]
-        return statement.sql("duckdb")
-    return ""
+    if not isinstance(statement, exp.Create):
+        return ""
+    statement = statement.copy()
+    if statement.args.get("properties"):
+        del statement.args["properties"]
+    return statement.sql("duckdb")
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+    import json
+
+    file = "examples/basic.sql"
+    prop_schema_file = "src/properties.schema.json"
+
+    sql_filepath = Path(file)
+    prop_schema_filepath = Path(prop_schema_file)
+    sql_content: str
+
+    with open(sql_filepath, "rb") as fo:
+        sql_content = fo.read().decode("utf-8")
+    with open(prop_schema_filepath, "rb") as fo:
+        properties_schema = json.loads(fo.read().decode("utf-8"))
+
+    parsed_queries = parse_query_to_dict(sql_content, properties_schema)
+    print(parsed_queries)
