@@ -28,18 +28,16 @@ async def processor(
     logger.info(f"[{table_name}{{{batch_id}}}] @ {execution_time}")
 
     records = await http_requester()
-    df = pl.from_records(records)
     logger.debug(
-        f"[{table_name}{{{batch_id}}}] - http number of records: {len(records)} - batch {batch_id}"
+        f"[{table_name}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
     )
 
-    epoch = int(time.time() * 1_000)
-    if len(df) > 0:
+    if len(records) > 0:
+        epoch = int(time.time() * 1_000)
+        # TODO: type polars with ducbdb table catalog
+        df = pl.from_records(records)
         await persist(df, batch_id, epoch, table_name, connection)
-    else:
-        logger.debug(
-            f"[{table_name}{{{batch_id}}}] - no record to persist - batch {batch_id}"
-        )
+
     batch_id.increment()
 
 
