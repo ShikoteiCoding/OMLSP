@@ -2,13 +2,12 @@ import json
 import pytest
 
 from jsonschema.exceptions import ValidationError
-from pytest import fixture
 from src.parser import parse_query_to_dict
 
 prop_schema_filepath = "schemas/properties.schema.json"
 
 
-@fixture
+@pytest.fixture
 def properties_schema() -> dict:
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))

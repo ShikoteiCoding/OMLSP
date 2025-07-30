@@ -51,7 +51,9 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
 
 
 def register_table(query_config: dict, connection: DuckDBPyConnection) -> None:
+    query = query_config["query"]
     connection.execute(query_config["query"])
+    logger.debug(query)
 
 
 def build_one_executable(
@@ -86,13 +88,15 @@ def build_one_executable(
 
 async def run_executables(parsed_queries: list[dict], connection: DuckDBPyConnection):
     tasks = []
-    for query_config in parsed_queries:
-        table_config = query_config["table"]
+    for table_config in parsed_queries:
         register_table(table_config, connection)
-        tasks.append(
-            asyncio.create_task(
-                build_one_executable(table_config, connection),
-                name=table_config["name"],
-            )
+
+    tasks = [
+        asyncio.create_task(
+            build_one_executable(table_config, connection),
+            name=table_config["name"],
         )
+        for table_config in parsed_queries
+        if table_config["properties"]["connector"] == "http"
+    ]
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
