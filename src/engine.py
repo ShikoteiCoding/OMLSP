@@ -5,6 +5,7 @@ import polars as pl
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.job import Job
 from apscheduler.triggers.cron import CronTrigger
+from duckdb import DuckDBPyConnection
 from datetime import datetime, timezone
 from loguru import logger
 from typing import Any, Callable, Coroutine
@@ -12,8 +13,6 @@ from typing import Any, Callable, Coroutine
 from inout import persist
 from utils import MutableInteger
 from requester import build_http_requester
-
-STORE_LOCATION = "local-store"
 
 
 async def processor(
@@ -53,10 +52,13 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
         await asyncio.sleep(3600)
 
 
+def register_table(query_config: dict, connection: DuckDBPyConnection) -> None:
+    connection.execute(query_config["query"])
+
+
 def build_one_executable(
-    query_as_dict: dict, connection: Any
+    query_as_dict: dict, connection: DuckDBPyConnection
 ) -> Coroutine[Any, Any, None]:
-    connection.execute(query_as_dict["query"])
     properties = query_as_dict["properties"]
     table_name = query_as_dict["name"]
     cron_expr = str(properties.get("schedule"))
@@ -84,12 +86,15 @@ def build_one_executable(
     return execute(scheduler, job)
 
 
-async def run_executables(parsed_queries: list[dict], connection: Any):
-    tasks = [
-        asyncio.create_task(
-            build_one_executable(query_as_dict["table"], connection),
-            name=query_as_dict["table"]["name"],
+async def run_executables(parsed_queries: list[dict], connection: DuckDBPyConnection):
+    tasks = []
+    for query_config in parsed_queries:
+        table_config = query_config["table"]
+        register_table(table_config, connection)
+        tasks.append(
+            asyncio.create_task(
+                build_one_executable(table_config, connection),
+                name=table_config["name"],
+            )
         )
-        for query_as_dict in parsed_queries
-    ]
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)

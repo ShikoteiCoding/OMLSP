@@ -1,8 +1,8 @@
 import argparse
 import asyncio
-import duckdb
 import json
 
+from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
 from parser import parse_query_to_dict
 from engine import run_executables
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     sql_content: str
 
     # TODO: persist on disk
-    con = duckdb.connect(database=":memory:")
+    con: DuckDBPyConnection = connect(database=":memory:")
 
     with open(sql_filepath, "rb") as fo:
         sql_content = fo.read().decode("utf-8")
