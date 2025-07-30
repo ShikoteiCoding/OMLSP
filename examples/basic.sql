@@ -16,6 +16,6 @@ WITH (
     'connector' = 'http',
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
-    'schedule' = '*/1 * * * *',
+    'schedule' = '*/5 * * * *',
     'json.jsonpath' = '$.url'
 );

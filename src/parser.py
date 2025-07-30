@@ -174,7 +174,14 @@ def parse_query_to_dict(
                 logging.warning(f"Skipping non-CREATE TABLE statement: {parsed}")
                 continue
 
-            table_dict = {"table": {"name": None, "columns": [], "properties": {}}}
+            table_dict = {
+                "table": {
+                    "name": None,
+                    "columns": [],
+                    "properties": {},
+                    "query": get_duckdb_sql(parsed),
+                }
+            }
             table_name, columns = parse_table(parsed.this)
             validate_table(parsed.this, table_name, columns)
 
@@ -198,3 +205,12 @@ def parse_query_to_dict(
     except ValueError as e:
         logging.error(f"Invalid query structure: {e}")
         raise
+
+
+def get_duckdb_sql(statement: exp.Expression) -> str:
+    if isinstance(statement, exp.Create):
+        statement = statement.copy()
+        if statement.args.get("properties"):
+            del statement.args["properties"]
+        return statement.sql("duckdb")
+    return ""
