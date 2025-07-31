@@ -6,7 +6,8 @@ WITH (
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'json.jsonpath' = '$.url'
+    'jsonpath' = '$.url',
+    'headers.Content-Type' = 'application/json'
 );
 
 CREATE TABLE example_2 (
@@ -17,5 +18,18 @@ WITH (
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
     'schedule' = '*/5 * * * *',
-    'json.jsonpath' = '$.url'
+    'jsonpath' = '$.url',
+    'headers.Content-Type' = 'application/json'
+);
+
+
+CREATE TEMP TABLE example_3 (
+    url STRING
+)
+WITH (
+    'connector' = 'lookup-http',
+    'url' = 'https://httpbin.org/get',
+    'method' = 'GET',
+    'jsonpath' = '$.url',
+    'headers.Content-Type' = 'application/json'
 );

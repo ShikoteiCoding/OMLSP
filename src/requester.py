@@ -7,29 +7,46 @@ import asyncio
 from jsonpath_ng import parse
 
 
-def get_jsonpath_expression(jsonpath: str):
+def get_jsonpathession(jsonpath: str):
     return parse(jsonpath)
 
 
-def parse_http_properties(params: dict) -> dict:
-    return {
-        "url": params["url"],
-        "method": params["method"],
-        "jsonpath_expr": get_jsonpath_expression(params["json.jsonpath"]),
-    }
+def parse_http_properties(params: dict[str, str]) -> dict:
+    parsed_params = {}
+    parsed_params["headers"] = {}
+    parsed_params["json"] = {}
+    for key, value in params.items():
+        if key.startswith("headers."):
+            parsed_params["headers"][key.split(".")[1]] = value
+        elif key == "jsonpath":
+            parsed_params["jsonpath"] = get_jsonpathession(value)
+        elif key.startswith("json."):
+            parsed_params["json"][key.split(".")[1]] = value
+        else:
+            parsed_params[key] = value
+    return parsed_params
 
 
 async def request(
-    client: ClientSession, url: str, jsonpath_expr: str, method: str = "GET", **kwarg
+    client: ClientSession,
+    url: str,
+    jsonpath: str,
+    method: str = "GET",
+    headers={"Content-Type": "application/json"},
+    json={},
+    **kwarg,
 ) -> list[dict]:
     async with client as session:
         async with session.request(
-            method=method, url=url, headers={"Content-Type": "application/json"}
+            method=method,
+            url=url,
+            headers=headers,
+            json=json,
         ) as response:
             logger.debug(f"response for {url}: {response.status}")
 
             if response.ok:
-                return await parse_request(response, jsonpath_expr)
+                return await parse_response(response, jsonpath)
 
             # TODO: add retry on fail here
             try:
@@ -42,12 +59,10 @@ async def request(
         return []
 
 
-async def parse_request(
-    response: ClientResponse, jsonpath_expr: Any | None
-) -> list[dict]:
+async def parse_response(response: ClientResponse, jsonpath: Any | None) -> list[dict]:
     data = await response.json()
-    if jsonpath_expr:
-        matches = jsonpath_expr.find(data)
+    if jsonpath:
+        matches = jsonpath.find(data)
         return [{str(match.path): match.value} for match in matches]
     elif isinstance(data, dict):
         return [data]
@@ -83,7 +98,7 @@ if __name__ == "__main__":
         "url": "https://httpbin.org/get",
         "method": "GET",
         "scan.interval": "60s",
-        "json.jsonpath": "$.url",
+        "jsonpath": "$.url",
     }
 
     _http_requester = build_http_requester(properties)

@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HTTP Connector Configuration",
+  "oneOf": [
+    {
+      "title": "HTTP Connector",
+      "type": "object",
+      "required": ["connector", "url", "method", "schedule", "jsonpath"],
+      "properties": {
+        "connector": {
+          "const": "http",
+          "description": "Must be 'http'"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://.+",
+          "description": "Must be a valid HTTP or HTTPS URL"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+          "description": "Standard HTTP methods"
+        },
+        "schedule": {
+          "type": "string",
+          "pattern": "^((\\*|[0-9]+|[0-9]+-[0-9]+|\\*/[0-9]+)(,)?\\s*){5}$",
+          "description": "Cron expression like */5 * * * *"
+        },
+        "jsonpath": {
+          "type": "string",
+          "pattern": "^\\$.*",
+          "description": "Must be a valid JSONPath expression starting with $"
+        },
+        "patternProperties": {
+          "^headers\\..+$": {
+            "type": "string",
+            "description": "Additional header configuration"
+          },
+          "^json\\..+$": {
+            "type": "string",
+            "description": "Additional JSON configuration"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "Lookup HTTP Connector",
+      "type": "object",
+      "required": ["connector", "url", "method", "jsonpath"],
+      "properties": {
+        "connector": {
+          "const": "lookup-http",
+          "description": "Must be 'lookup-http'"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://.+|^\\$.*",
+          "description": "Must be a valid URL or an expression starting with $"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+          "description": "Standard HTTP methods"
+        },
+        "jsonpath": {
+          "type": "string",
+          "pattern": "^\\$.*",
+          "description": "Must be a valid JSONPath expression starting with $"
+        }
+      },
+      "patternProperties": {
+        "^headers\\..+$": {
+          "type": "string",
+          "description": "Additional header configuration"
+        },
+        "^json\\..+$": {
+          "type": "string",
+          "description": "Additional JSON configuration"
+        }
+      },
+      "additionalProperties": true
+    }
+  ]
+}

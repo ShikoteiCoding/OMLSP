@@ -12,4 +12,4 @@ run:
 	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
 
 test:
-	PYTHONPATH=src/ uv run --active pytest tests/ -v
+	PYTHONPATH=src/ uv run --active pytest tests/ -vv
