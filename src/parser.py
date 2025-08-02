@@ -1,7 +1,10 @@
-from sqlglot import parse, exp
-from typing import Any
 import sqlglot.errors
 import logging
+
+from sqlglot import parse, parse_one, exp
+from typing import Any
+from loguru import logger
+
 
 TYPE_MAPPING = {
     "TEXT": ("str", "VARCHAR"),
@@ -214,3 +217,65 @@ def get_duckdb_sql(statement: exp.Expression) -> str:
             del statement.args["properties"]
         return statement.sql("duckdb")
     return ""
+
+def parse_select(select: exp.Select) -> dict[str, Any]:
+    select_dict = {
+        "columns": [],
+        "table": "",
+        "where": None,
+        "joins": []
+    }
+
+    for projection in select.expressions:
+        col_name = get_name(projection)
+        select_dict["columns"].append(col_name)
+
+    from_clause = select.args.get("from")
+    if from_clause:
+        select_dict["table"] = get_name(from_clause.this)
+
+    where_clause = select.args.get("where")
+    if where_clause:
+        select_dict["where"] = where_clause.sql(dialect=None)
+
+    joins = select.args.get("joins", [])
+    for join in joins:
+        join_dict = {
+            "table": get_name(join.this),
+            "type": join.args.get("kind", "").upper() or "INNER",
+            "on": join.args.get("on").sql(dialect=None) if join.args.get("on") else None
+        }
+        select_dict["joins"].append(join_dict)
+
+    return select_dict
+
+def parse_select_to_dict(query: str) -> dict[str, Any]:
+    """
+    Parse a SELECT query into a dictionary
+
+    Args:
+        query (str): SQL query string containing one SELECT statement
+
+    Returns:
+        dict: dictionary
+
+    Raises:
+        sqlglot.errors.ParseError: If query cannot be parsed
+        ValueError: If query structure is invalid
+    """
+    
+    try:
+        parsed = parse_one(query, dialect=None)
+    except sqlglot.errors.ParseError as e:
+        logger.error(f"Failed to parse query: {e}")
+        raise
+    except ValueError as e:
+        logger.error(f"Invalid query structure: {e}")
+        raise
+ 
+    if isinstance(parsed, exp.Select):
+            select_dict = parse_select(parsed)        
+    else:
+        logger.warning(f"Unsupported statement type: {parsed}")
+
+    return select_dict
