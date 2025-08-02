@@ -218,13 +218,9 @@ def get_duckdb_sql(statement: exp.Expression) -> str:
         return statement.sql("duckdb")
     return ""
 
+
 def parse_select(select: exp.Select) -> dict[str, Any]:
-    select_dict = {
-        "columns": [],
-        "table": "",
-        "where": None,
-        "joins": []
-    }
+    select_dict = {"columns": [], "table": "", "where": None, "joins": []}
 
     for projection in select.expressions:
         col_name = get_name(projection)
@@ -243,11 +239,14 @@ def parse_select(select: exp.Select) -> dict[str, Any]:
         join_dict = {
             "table": get_name(join.this),
             "type": join.args.get("kind", "").upper() or "INNER",
-            "on": join.args.get("on").sql(dialect=None) if join.args.get("on") else None
+            "on": join.args.get("on").sql(dialect=None)
+            if join.args.get("on")
+            else None,
         }
         select_dict["joins"].append(join_dict)
 
     return select_dict
+
 
 def parse_select_to_dict(query: str) -> dict[str, Any]:
     """
@@ -263,7 +262,7 @@ def parse_select_to_dict(query: str) -> dict[str, Any]:
         sqlglot.errors.ParseError: If query cannot be parsed
         ValueError: If query structure is invalid
     """
-    
+
     try:
         parsed = parse_one(query, dialect=None)
     except sqlglot.errors.ParseError as e:
@@ -272,9 +271,9 @@ def parse_select_to_dict(query: str) -> dict[str, Any]:
     except ValueError as e:
         logger.error(f"Invalid query structure: {e}")
         raise
- 
+
     if isinstance(parsed, exp.Select):
-            select_dict = parse_select(parsed)        
+        select_dict = parse_select(parsed)
     else:
         logger.warning(f"Unsupported statement type: {parsed}")
 
