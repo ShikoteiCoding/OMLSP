@@ -69,13 +69,6 @@ async def start_server(con: DuckDBPyConnection) -> None:
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
 
-async def main():
-    """
-    Main function to start the server
-    """
-    con = connect(database=":memory:")
-    await start_server(con)
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    con = connect(database=":memory:")
+    asyncio.run(start_server(con))
