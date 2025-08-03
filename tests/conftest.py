@@ -8,6 +8,7 @@ VCR_CONFIG = {
     "match_on": ["method", "uri"],
 }
 
+
 @pytest.fixture
 def vcr_cassette(request):
     """VCR fixture"""
