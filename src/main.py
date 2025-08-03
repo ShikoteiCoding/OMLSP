@@ -25,6 +25,6 @@ if __name__ == "__main__":
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    parsed_queries = parse_sql_statements(sql_content, properties_schema)
+    tables, select = parse_sql_statements(sql_content, properties_schema)
 
-    asyncio.run(run_executables(parsed_queries, con))
+    asyncio.run(run_executables(tables, con))

@@ -1,6 +1,6 @@
 CREATE TABLE all_tickers (
     symbol STRING,
-    'symbolName' STRING,
+    symbolName STRING,
     buy FLOAT,
     sell FLOAT
 )
@@ -33,7 +33,5 @@ WITH (
 
 -- TODO
 SELECT 
-    ohlc.*
-FROM all_tickers AS tick
-LEFT JOIN ohlc
-    ON tick.symbol = ohlc.symbol
+    *
+FROM all_tickers;

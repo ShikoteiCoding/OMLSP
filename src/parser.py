@@ -1,7 +1,6 @@
-import sqlglot.errors
 import jsonschema
 
-from sqlglot import parse, exp
+from sqlglot import parse, exp, parse_one
 from typing import Any
 from loguru import logger
 
@@ -16,6 +15,11 @@ TYPE_MAPPING = {
     "DOUBLE": ("float", "DOUBLE"),
     "BOOLEAN": ("bool", "BOOLEAN"),
 }
+
+VALID_STATEMENTS = (
+    exp.Create,
+    exp.Select,
+)
 
 
 def get_name(expression: exp.Expression) -> str:
@@ -34,20 +38,36 @@ def get_property(expression: exp.Property) -> exp.Expression | None:
     return expression.args.get("value")
 
 
-def parse_table(
-    table: exp.Schema | exp.Table,
-) -> tuple[str, list[dict[str, str]]]:
+def rename_column_transform(node, old_name, new_name):
+    if isinstance(node, exp.Column) and node.name == old_name:
+        # If it's a direct column reference
+        node.this.set("this", new_name)
+    elif isinstance(node, exp.Alias) and node.this.name == old_name:
+        # If it's an aliased column, rename the alias
+        node.set("alias", new_name)
+    return node
+
+
+def parse_table_schema(
+    table: exp.Schema,
+) -> tuple[str, list[dict[str, str]], list[str]]:
     """Parse table schema or table into name and columns"""
     assert isinstance(table, (exp.Schema,)), (
         f"Expression of type {type(table)} is not accepted"
     )
+    exp.Identifier
+    exp.ColumnDef
 
     table_name = get_name(table)
     columns = []
+    dynamic_columns = []
 
     for column in table.expressions:
         col_name = get_name(column)
         python_type, duckdb_type, _ = get_type(column)
+        if col_name.startswith("$"):
+            new_col_name = col_name.replace("$", "")
+            dynamic_columns.append(new_col_name)
         columns.append(
             {
                 "name": col_name,
@@ -55,10 +75,10 @@ def parse_table(
                 "duckdb_type": duckdb_type,
             }
         )
-    return table_name, columns
+    return table_name, columns, dynamic_columns
 
 
-def parse_with_properties(
+def parse_table_properties(
     with_properties: exp.Create,
 ) -> tuple[dict[str, str], str]:
     """Parse properties from a WITH statement"""
@@ -90,7 +110,101 @@ def validate_with_properties(
     jsonschema.validate(instance=properties, schema=properties_schema)
 
 
-def parse_sql_statements(query: str, properties_schema: dict) -> list[dict[str, Any]]:
+def get_duckdb_sql(
+    statement: exp.Create, table_kind: str = "", dynamic_columns: list[str] = []
+) -> str:
+    assert isinstance(statement, exp.Create), (
+        f"Expected {type(exp.Create)} not {type(statement)}"
+    )
+
+    statement = statement.copy()
+    if statement.args.get("properties"):
+        del statement.args["properties"]
+
+    if table_kind:
+        statement.set("kind", table_kind)
+
+    sql = statement.sql()
+    stmt = parse_one(sql)
+    stmt = stmt.copy()
+
+    # TODO: find a way to remove $ column names
+    for col in stmt.expressions:
+        if isinstance(col, exp.ColumnDef) and col.name.startswith("$"):
+            col.set("this", exp.to_identifier(str(col.name).replace("$", "")))
+
+    logger.debug(stmt)
+    return stmt.sql("duckdb")
+
+
+def process_create_statement(statement: exp.Create, properties_schema: dict) -> dict:
+    # TODO: assert only tables here and make this split by kind of create: table, function, etc...
+    table_dict = {
+        "type": "table",
+        "name": None,
+        "columns": [],
+        "dynamic_columns": [],  # TODO: for lookup table, maybe move elsewhere
+        "properties": {},
+    }
+    table_name, columns, dynamic_columns = parse_table_schema(statement.this)
+
+    properties, table_kind = parse_table_properties(statement)
+    validate_with_properties(properties, properties_schema)
+    table_dict["name"] = table_name
+    table_dict["columns"] = columns
+    table_dict["dynamic_columns"] = dynamic_columns
+    table_dict["properties"] = properties
+    table_dict["query"] = get_duckdb_sql(statement, table_kind, dynamic_columns)
+    return table_dict
+
+
+def parse_select(select: exp.Select) -> dict[str, Any]:
+    select_dict = {"columns": [], "table": "", "where": None, "joins": []}
+
+    for projection in select.expressions:
+        col_name = get_name(projection)
+        select_dict["columns"].append(col_name)
+
+    from_clause = select.args.get("from")
+    if from_clause:
+        select_dict["table"] = get_name(from_clause.this)
+
+    where_clause = select.args.get("where")
+    if where_clause:
+        select_dict["where"] = where_clause.sql(dialect=None)
+
+    joins = select.args.get("joins", [])
+    for join in joins:
+        join_dict = {
+            "table": get_name(join.this),
+            "type": join.args.get("kind", "").upper() or "INNER",
+            "on": join.args.get("on").sql(dialect=None)
+            if join.args.get("on")
+            else None,
+        }
+        select_dict["joins"].append(join_dict)
+
+    return select_dict
+
+
+def process_select_statement(statement: exp.Select) -> dict[str, Any]:
+    """
+    Parse a SELECT query into a dictionary
+    Args:
+        query (str): SQL query string containing one SELECT statement
+    Returns:
+        dict: dictionary
+    """
+    assert isinstance(statement, exp.Select), (
+        f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
+    )
+
+    return parse_select(statement)
+
+
+def parse_sql_statements(
+    query: str, properties_schema: dict
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries
 
@@ -107,58 +221,20 @@ def parse_sql_statements(query: str, properties_schema: dict) -> list[dict[str, 
     tables = []
     selects = []
 
-    try:
-        parsed_statements = parse(query, dialect=None)
-    except sqlglot.errors.ParseError as e:
-        logger.error(f"Failed to parse query: {e}")
-        raise
-    except ValueError as e:
-        logger.error(f"Invalid query structure: {e}")
-        raise
+    parsed_statements = parse(query, dialect=None)
 
-    for parsed in parsed_statements:
-        if isinstance(parsed, exp.Create):
-            selects.append(parsed)
-            continue
+    for parsed_statement in parsed_statements:
+        assert isinstance(parsed_statement, VALID_STATEMENTS), (
+            f"Invalid statement {type(parsed_statement)}, expected: {VALID_STATEMENTS}"
+        )
 
-        if not isinstance(parsed, exp.Create):
-            logger.warning(f"Skipping non-CREATE TABLE statement: {parsed}")
-            continue
+        if isinstance(parsed_statement, exp.Create):
+            tables.append(process_create_statement(parsed_statement, properties_schema))
 
-        table_dict = {
-            "type": "table",
-            "name": None,
-            "columns": [],
-            "properties": {},
-        }
-        table_name, columns = parse_table(parsed.this)
+        elif isinstance(parsed_statement, exp.Select):
+            selects.append(process_select_statement(parsed_statement))
 
-        properties, table_kind = parse_with_properties(parsed)
-        validate_with_properties(properties, properties_schema)
-        table_dict["name"] = table_name
-        table_dict["columns"] = columns
-        table_dict["properties"] = properties
-        table_dict["query"] = get_duckdb_sql(parsed, table_kind)
-
-        result.append(table_dict)
-
-    if not result:
-        raise ValueError("No valid CREATE TABLE statements found in the query")
-
-    return result
-
-
-def get_duckdb_sql(statement: exp.Expression, table_kind: str = "") -> str:
-    if not isinstance(statement, exp.Create):
-        return ""
-    statement = statement.copy()
-    if statement.args.get("properties"):
-        del statement.args["properties"]
-    if table_kind:
-        statement.set("kind", table_kind)
-
-    logger.debug(statement)
-    return statement.sql("duckdb")
+    return tables, selects
 
 
 if __name__ == "__main__":
@@ -177,5 +253,9 @@ if __name__ == "__main__":
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    parsed_queries = parse_sql_statements(sql_content, properties_schema)
-    print(parsed_queries)
+    tables, selects = parse_sql_statements(sql_content, properties_schema)
+    for query in tables:
+        logger.warning(query)
+
+    for select in selects:
+        logger.warning(select)

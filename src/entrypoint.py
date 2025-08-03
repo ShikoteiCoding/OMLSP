@@ -1,7 +1,7 @@
 import asyncio
 from loguru import logger
 from duckdb import connect, DuckDBPyConnection
-from parser import parse_select_to_dict
+from parser import process_select_statement
 
 query_queue = asyncio.Queue()
 
@@ -14,7 +14,7 @@ async def process_queries(con: DuckDBPyConnection) -> None:
         query_text, writer, client_id = await query_queue.get()
         try:
             logger.info(f"Client {client_id} - Received query: {query_text.strip()}")
-            parsed_query = parse_select_to_dict(query_text)
+            parsed_query = process_select_statement(query_text)
 
             logger.info(f"Client {client_id} - Parsed query: {parsed_query}")
             result = con.execute(query_text).fetchall()  # retrieves all
