@@ -26,35 +26,19 @@ WITH (
 """
 
 EXPECTED_RESULT = [{
-    'table': {
-        'name': 'example',
-        'columns': [
-            {'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}
-        ],
-        'properties': {
-            'connector': 'http',
-            'url': 'https://httpbin.org/get',
-            'method': 'GET',
-            'scan.interval': '60s',
-            'json.jsonpath': '$.url'
-        }
-    }
-},
-{
-    'table': {
-        'name': 'example_2',
-        'columns': [
-            {'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}
-        ],
-        'properties': {
-            'connector': 'http',
-            'url': 'https://httpbin.org/get',
-            'method': 'GET',
-            'scan.interval': '60s',
-            'json.jsonpath': '$.url'
-        }
-    }
-}]
+    'table': 
+        {'name': 'example', 'columns': 
+         [{'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}], 
+         'properties': {'connector': 'http', 'url': 'https://httpbin.org/get', 
+                        'method': 'GET', 'scan.interval': '60s', 'json.jsonpath': '$.url'}, 
+        'query': 'CREATE TABLE example (url TEXT)'
+        }}, 
+    {'table':
+        {'name': 'example_2', 'columns': 
+         [{'name': 'url', 'python_type': 'str', 'duckdb_type': 'VARCHAR'}], 
+         'properties': {'connector': 'http', 'url': 'https://httpbin.org/get', 
+                        'method': 'GET', 'scan.interval': '60s', 'json.jsonpath': '$.url'}, 
+        'query': 'CREATE TABLE example_2 (url TEXT)'}}]
 
 INVALID_QUERY = """
 SELECT * FROM example;
