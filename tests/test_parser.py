@@ -39,7 +39,6 @@ EXPECTED_RESULT = [
                 "scan.interval": "60s",
                 "json.jsonpath": "$.url",
             },
-            "query": "CREATE TABLE example (url TEXT)",
         }
     },
     {
@@ -55,7 +54,6 @@ EXPECTED_RESULT = [
                 "scan.interval": "60s",
                 "json.jsonpath": "$.url",
             },
-            "query": "CREATE TABLE example_2 (url TEXT)",
         }
     },
 ]
