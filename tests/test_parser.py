@@ -2,7 +2,7 @@ import json
 import pytest
 
 from jsonschema.exceptions import ValidationError
-from src.parser import parse_query_to_dict
+from src.parser import parse_sql_statements
 
 prop_schema_filepath = "schemas/properties.schema.json"
 
@@ -108,25 +108,25 @@ WITH (
 
 
 def test_valid_create_table_with_columns_and_properties(properties_schema: dict):
-    result = parse_query_to_dict(VALID_QUERY, properties_schema)
+    result = parse_sql_statements(VALID_QUERY, properties_schema)
     assert result == EXPECTED_RESULT
 
 
 def test_invalid_non_create_query(properties_schema: dict):
     with pytest.raises(ValueError):
-        parse_query_to_dict(INVALID_QUERY, properties_schema)
+        parse_sql_statements(INVALID_QUERY, properties_schema)
 
 
 def test_invalid_property_not_literal_timestamp(properties_schema: dict):
     with pytest.raises(ValidationError):
-        parse_query_to_dict(INVALID_QUERY_2, properties_schema)
+        parse_sql_statements(INVALID_QUERY_2, properties_schema)
 
 
 def test_invalid_property_null_value(properties_schema: dict):
     with pytest.raises(ValidationError):
-        parse_query_to_dict(INVALID_QUERY_3, properties_schema)
+        parse_sql_statements(INVALID_QUERY_3, properties_schema)
 
 
 def test_invalid_expression(properties_schema: dict):
     with pytest.raises(ValueError):
-        parse_query_to_dict(INVALID_QUERY_4, properties_schema)
+        parse_sql_statements(INVALID_QUERY_4, properties_schema)

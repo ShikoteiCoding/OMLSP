@@ -90,7 +90,7 @@ def validate_with_properties(
     jsonschema.validate(instance=properties, schema=properties_schema)
 
 
-def parse_query_to_dict(query: str, properties_schema: dict) -> list[dict[str, Any]]:
+def parse_sql_statements(query: str, properties_schema: dict) -> list[dict[str, Any]]:
     """
     Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries
 
@@ -104,7 +104,8 @@ def parse_query_to_dict(query: str, properties_schema: dict) -> list[dict[str, A
         sqlglot.errors.ParseError: If any query cannot be parsed
         ValueError: If any query structure is invalid
     """
-    result = []
+    tables = []
+    selects = []
 
     try:
         parsed_statements = parse(query, dialect=None)
@@ -116,6 +117,10 @@ def parse_query_to_dict(query: str, properties_schema: dict) -> list[dict[str, A
         raise
 
     for parsed in parsed_statements:
+        if isinstance(parsed, exp.Create):
+            selects.append(parsed)
+            continue
+
         if not isinstance(parsed, exp.Create):
             logger.warning(f"Skipping non-CREATE TABLE statement: {parsed}")
             continue
@@ -130,7 +135,6 @@ def parse_query_to_dict(query: str, properties_schema: dict) -> list[dict[str, A
 
         properties, table_kind = parse_with_properties(parsed)
         validate_with_properties(properties, properties_schema)
-        logger.warning(table_kind)
         table_dict["name"] = table_name
         table_dict["columns"] = columns
         table_dict["properties"] = properties
@@ -153,7 +157,7 @@ def get_duckdb_sql(statement: exp.Expression, table_kind: str = "") -> str:
     if table_kind:
         statement.set("kind", table_kind)
 
-    logger.warning(statement)
+    logger.debug(statement)
     return statement.sql("duckdb")
 
 
@@ -173,5 +177,5 @@ if __name__ == "__main__":
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    parsed_queries = parse_query_to_dict(sql_content, properties_schema)
+    parsed_queries = parse_sql_statements(sql_content, properties_schema)
     print(parsed_queries)
