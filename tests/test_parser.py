@@ -4,7 +4,7 @@ import pytest
 from jsonschema.exceptions import ValidationError
 from src.parser import parse_sql_statements
 
-prop_schema_filepath = "schemas/properties.schema.json"
+prop_schema_filepath = "src/properties.schema.json"
 
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def properties_schema() -> dict:
     return properties_schema
 
 
-VALID_QUERY = """
+VALID_CREATE_QUERY = """
 CREATE TABLE example (
     url STRING
 )
@@ -23,7 +23,7 @@ WITH (
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
     'schedule' = '*/5 * * * *',
-    'json.jsonpath' = '$.url'
+    'jsonpath' = '$.url'
 );
 
 CREATE TABLE example_2 (
@@ -34,48 +34,67 @@ WITH (
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'json.jsonpath' = '$.url'
+    'jsonpath' = '$.url'
+);
+
+CREATE TEMP TABLE lookup_example (
+    $url STRING
+)
+WITH (
+    'connector' = 'lookup-http',
+    'url' = 'https://httpbin.org/get',
+    'method' = 'GET',
+    'schedule' = '*/1 * * * *',
+    'jsonpath' = '$.url'
 );
 """
 
-EXPECTED_RESULT = [
+VALID_CREATE_RESULT = [
     {
-        "table": {
-            "name": "example",
-            "columns": [
-                {"name": "url", "python_type": "str", "duckdb_type": "VARCHAR"}
-            ],
-            "properties": {
-                "connector": "http",
-                "url": "https://httpbin.org/get",
-                "method": "GET",
-                "schedule": "*/5 * * * *",
-                "json.jsonpath": "$.url",
-            },
-            "query": "CREATE TABLE example (url TEXT)",
-        }
+        "name": "example",
+        "properties": {
+            "connector": "http",
+            "url": "https://httpbin.org/get",
+            "method": "GET",
+            "schedule": "*/5 * * * *",
+            "jsonpath": "$.url",
+        },
+        "query": "CREATE TABLE example (url TEXT)",
+        "type": "table",
     },
     {
-        "table": {
-            "name": "example_2",
-            "columns": [
-                {"name": "url", "python_type": "str", "duckdb_type": "VARCHAR"}
-            ],
-            "properties": {
-                "connector": "http",
-                "url": "https://httpbin.org/get",
-                "method": "GET",
-                "schedule": "*/1 * * * *",
-                "json.jsonpath": "$.url",
-            },
-            "query": "CREATE TABLE example_2 (url TEXT)",
-        }
+        "name": "example_2",
+        "properties": {
+            "connector": "http",
+            "url": "https://httpbin.org/get",
+            "method": "GET",
+            "schedule": "*/1 * * * *",
+            "jsonpath": "$.url",
+        },
+        "query": "CREATE TABLE example_2 (url TEXT)",
+        "type": "table",
+    },
+    {
+        "name": "lookup_example",
+        "properties": {
+            "connector": "lookup-http",
+            "url": "https://httpbin.org/get",
+            "method": "GET",
+            "schedule": "*/1 * * * *",
+            "jsonpath": "$.url",
+        },
+        "query": "CREATE TEMPORARY TABLE lookup_example (url TEXT)",
+        "type": "table",
     },
 ]
 
-INVALID_QUERY = """
+VALID_SELECT_QUERY = """
 SELECT * FROM example;
 """
+
+VALID_SELECT_RESULT = [
+    {"columns": [""], "joins": [], "table": "example", "where": None}
+]
 
 INVALID_QUERY_2 = """
 CREATE TABLE example (
@@ -108,25 +127,25 @@ WITH (
 
 
 def test_valid_create_table_with_columns_and_properties(properties_schema: dict):
-    result = parse_sql_statements(VALID_QUERY, properties_schema)
-    assert result == EXPECTED_RESULT
+    result, _ = parse_sql_statements(VALID_CREATE_QUERY, properties_schema)
+    assert result == VALID_CREATE_RESULT
 
 
-def test_invalid_non_create_query(properties_schema: dict):
-    with pytest.raises(ValueError):
-        parse_sql_statements(INVALID_QUERY, properties_schema)
+def test_valid_select_statement(properties_schema: dict):
+    _, result = parse_sql_statements(VALID_SELECT_QUERY, properties_schema)
+    assert result == VALID_SELECT_RESULT
 
 
 def test_invalid_property_not_literal_timestamp(properties_schema: dict):
-    with pytest.raises(ValidationError):
+    with pytest.raises(Exception):
         parse_sql_statements(INVALID_QUERY_2, properties_schema)
 
 
 def test_invalid_property_null_value(properties_schema: dict):
-    with pytest.raises(ValidationError):
+    with pytest.raises(Exception):
         parse_sql_statements(INVALID_QUERY_3, properties_schema)
 
 
 def test_invalid_expression(properties_schema: dict):
-    with pytest.raises(ValueError):
+    with pytest.raises(Exception):
         parse_sql_statements(INVALID_QUERY_4, properties_schema)

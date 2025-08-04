@@ -1,6 +1,6 @@
 import jsonschema
 
-from sqlglot import parse, exp, parse_one
+from sqlglot import parse, exp
 from typing import Any
 from loguru import logger
 
@@ -50,41 +50,46 @@ def rename_column_transform(node, old_name, new_name):
 
 def parse_table_schema(
     table: exp.Schema,
-) -> tuple[str, list[dict[str, str]], list[str]]:
+) -> tuple[exp.Schema, str, list[dict[str, str]], list[str]]:
     """Parse table schema or table into name and columns"""
     assert isinstance(table, (exp.Schema,)), (
         f"Expression of type {type(table)} is not accepted"
     )
-    exp.Identifier
-    exp.ColumnDef
 
     table_name = get_name(table)
     columns = []
     dynamic_columns = []
 
+    table = table.copy()
+
     for column in table.expressions:
-        col_name = get_name(column)
-        python_type, duckdb_type, _ = get_type(column)
-        if col_name.startswith("$"):
-            new_col_name = col_name.replace("$", "")
+        if isinstance(column, exp.ColumnDef) and column.name.startswith("$"):
+            new_col_name = str(column.name).replace("$", "")
+            logger.info(new_col_name)
+            column.set("this", exp.to_identifier(new_col_name))
             dynamic_columns.append(new_col_name)
-        columns.append(
-            {
-                "name": col_name,
-                "python_type": python_type,
-                "duckdb_type": duckdb_type,
-            }
-        )
-    return table_name, columns, dynamic_columns
+        columns.append(column)
+    return table, table_name, columns, dynamic_columns
 
 
-def parse_table_properties(
-    with_properties: exp.Create,
-) -> tuple[dict[str, str], str]:
-    """Parse properties from a WITH statement"""
+def validate_create_properties(
+    properties: dict[str, str], properties_schema: dict
+) -> None:
+    """JSON Schema validation of properties extracted from WITH statement"""
+    jsonschema.validate(instance=properties, schema=properties_schema)
+
+
+def parse_create_properties(
+    statement: exp.Create, properties_schema: dict
+) -> tuple[exp.Create, dict[str, str]]:
+    """Parse properties of Create statement"""
+    assert isinstance(statement, (exp.Create,)), (
+        f"Expression of type {type(statement)} is not accepted"
+    )
     custom_properties = {}
-    table_kind = ""
-    for prop in with_properties.args.get("properties", []):
+    table_kind = "TABLE"
+    statement = statement.copy()
+    for prop in statement.args.get("properties", []):
         # sqlglot extract temporary statement and put it in properties
         if isinstance(prop, exp.TemporaryProperty):
             # TODO: find better way than overwrite table "kind"
@@ -100,62 +105,52 @@ def parse_table_properties(
         else:
             logger.warning(f"Unknown property: {type(prop)} - {prop}")
         custom_properties[key] = value
-    return custom_properties, table_kind
+
+    statement.set("kind", table_kind)
+    validate_create_properties(custom_properties, properties_schema)
+    return statement, custom_properties
 
 
-def validate_with_properties(
-    properties: dict[str, str], properties_schema: dict
-) -> None:
-    """JSON Schema validation of properties extracted from WITH statement"""
-    jsonschema.validate(instance=properties, schema=properties_schema)
-
-
-def get_duckdb_sql(
-    statement: exp.Create, table_kind: str = "", dynamic_columns: list[str] = []
-) -> str:
+def get_duckdb_sql(statement: exp.Create) -> str:
     assert isinstance(statement, exp.Create), (
         f"Expected {type(exp.Create)} not {type(statement)}"
     )
 
     statement = statement.copy()
     if statement.args.get("properties"):
+        print("here")
         del statement.args["properties"]
+    print(statement)
 
-    if table_kind:
-        statement.set("kind", table_kind)
-
-    sql = statement.sql()
-    stmt = parse_one(sql)
-    stmt = stmt.copy()
-
-    # TODO: find a way to remove $ column names
-    for col in stmt.expressions:
-        if isinstance(col, exp.ColumnDef) and col.name.startswith("$"):
-            col.set("this", exp.to_identifier(str(col.name).replace("$", "")))
-
-    logger.debug(stmt)
-    return stmt.sql("duckdb")
+    return statement.sql("duckdb")
 
 
 def process_create_statement(statement: exp.Create, properties_schema: dict) -> dict:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
-    table_dict = {
-        "type": "table",
-        "name": None,
-        "columns": [],
-        "dynamic_columns": [],  # TODO: for lookup table, maybe move elsewhere
-        "properties": {},
-    }
-    table_name, columns, dynamic_columns = parse_table_schema(statement.this)
 
-    properties, table_kind = parse_table_properties(statement)
-    validate_with_properties(properties, properties_schema)
-    table_dict["name"] = table_name
-    table_dict["columns"] = columns
-    table_dict["dynamic_columns"] = dynamic_columns
-    table_dict["properties"] = properties
-    table_dict["query"] = get_duckdb_sql(statement, table_kind, dynamic_columns)
-    return table_dict
+    if str(statement.kind) == "TABLE":
+        table_dict = {
+            "type": "table",
+            "name": "",
+            "properties": {},
+        }
+        updated_create_statement, properties = parse_create_properties(
+            statement, properties_schema
+        )
+        updated_table_statement, table_name, _, _ = parse_table_schema(
+            updated_create_statement.this
+        )
+        updated_create_statement.set(
+            "this", updated_table_statement
+        )  # overwrite modified table statement
+
+        table_dict["name"] = table_name
+        table_dict["properties"] = properties
+        table_dict["query"] = get_duckdb_sql(updated_create_statement)
+        return table_dict
+
+    # TODO: Process views, materialized views, sinks and functions here
+    return {}
 
 
 def parse_select(select: exp.Select) -> dict[str, Any]:

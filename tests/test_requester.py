@@ -9,7 +9,7 @@ async def test_successful_request(vcr_cassette):
         "connector": "http",
         "url": "https://httpbin.org/get",
         "method": "GET",
-        "json.jsonpath": "$.url",
+        "jsonpath": "$.url",
     }
     http_requester_func = build_http_requester(properties)
     result = await http_requester_func()
@@ -23,7 +23,7 @@ async def test_unsuccessful_request(vcr_cassette):
         "connector": "http",
         "url": "https://httpbin.org/status/404",
         "method": "GET",
-        "json.jsonpath": "$.url",
+        "jsonpath": "$.url",
     }
     http_requester_func = build_http_requester(properties)
     result = await http_requester_func()
