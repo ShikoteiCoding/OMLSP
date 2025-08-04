@@ -1,0 +1,30 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Content-Type:
+      - application/json
+    method: GET
+    uri: https://httpbin.org/status/404
+  response:
+    body:
+      string: ''
+    headers:
+      Access-Control-Allow-Credentials:
+      - 'true'
+      Access-Control-Allow-Origin:
+      - '*'
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '0'
+      Content-Type:
+      - text/html; charset=utf-8
+      Date:
+      - Sun, 03 Aug 2025 05:58:46 GMT
+      Server:
+      - gunicorn/19.9.0
+    status:
+      code: 404
+      message: NOT FOUND
+version: 1
