@@ -14,3 +14,9 @@ run:
 
 test:
 	PYTHONPATH=src/ uv run --active pytest tests/ -v
+
+dev-entrypoint:
+	PYTHONPATH=src/ uv run --active src/entrypoint.py
+
+dev-client:
+	PYTHONPATH=src/ uv run --active src/client.py 1
