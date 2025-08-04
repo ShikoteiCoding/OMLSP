@@ -4,7 +4,6 @@ check:
 
 format:
 	uv run --active ruff format src/
-	uv run --active ruff format tests/
 
 sync:
 	uv sync --active
@@ -13,4 +12,10 @@ run:
 	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
 
 test:
-	PYTHONPATH=src/ uv run --active pytest tests/ -v
+	PYTHONPATH=src/ uv run --active pytest tests/ -vv
+
+dev-entrypoint:
+	PYTHONPATH=src/ uv run --active src/entrypoint.py
+
+dev-client:
+	PYTHONPATH=src/ uv run --active src/client.py 1
