@@ -1,0 +1,34 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Content-Type:
+      - application/json
+    method: GET
+    uri: https://httpbin.org/get
+  response:
+    body:
+      string: "{\n  \"args\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n
+        \   \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Type\": \"application/json\",
+        \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"Python/3.13 aiohttp/3.12.14\",
+        \n    \"X-Amzn-Trace-Id\": \"Root=1-688efa94-46620b2c70cc46f440ce7564\"\n
+        \ }, \n  \"origin\": \"124.217.188.159\", \n  \"url\": \"https://httpbin.org/get\"\n}\n"
+    headers:
+      Access-Control-Allow-Credentials:
+      - 'true'
+      Access-Control-Allow-Origin:
+      - '*'
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '355'
+      Content-Type:
+      - application/json
+      Date:
+      - Sun, 03 Aug 2025 05:58:44 GMT
+      Server:
+      - gunicorn/19.9.0
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -19,4 +19,7 @@ dependencies = [
 dev = [
   "ruff>=0.12.3",
     "pytest==8.4.1",
+    "pytest-asyncio==1.1.0",
+    "vcrpy==6.0.2",
+
 ]
