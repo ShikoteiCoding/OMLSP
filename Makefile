@@ -4,6 +4,7 @@ check:
 
 format:
 	uv run --active ruff format src/
+	uv run --active ruff format tests/
 
 sync:
 	uv sync --active
