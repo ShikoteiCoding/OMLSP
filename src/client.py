@@ -24,6 +24,7 @@ async def send_query(host: str, port: int, client_id: str) -> None:
         await writer.drain()
         response = await reader.readuntil(b"\n\n")
         print(f"Client {client_id} > {response.decode().strip()}")
+        reader._buffer.clear()
 
 
 if __name__ == "__main__":

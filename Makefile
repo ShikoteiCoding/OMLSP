@@ -13,4 +13,10 @@ run:
 	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
 
 test:
-	PYTHONPATH=src/ uv run --active pytest tests/ -vv
+	PYTHONPATH=src/ uv run --active pytest tests/ -v
+
+dev-entrypoint:
+	PYTHONPATH=src/ uv run --active src/entrypoint.py
+
+dev-client:
+	PYTHONPATH=src/ uv run --active src/client.py 1
