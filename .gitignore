@@ -208,3 +208,6 @@ __marimo__/
 
 # Local
 local-store
+
+# vscode
+.vscode/
