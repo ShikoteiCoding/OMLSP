@@ -34,4 +34,6 @@ WITH (
 -- TODO
 SELECT 
     *
-FROM all_tickers;
+FROM all_tickers AS ALT
+LEFT JOIN ohlc ON
+    ALT.symbol = ohlc.symbol;
