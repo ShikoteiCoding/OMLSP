@@ -1,5 +1,4 @@
 import asyncio
-import duckdb
 import polars as pl
 import pyarrow as pa
 import time
@@ -17,11 +16,14 @@ from utils import MutableInteger
 from requester import build_http_requester
 from string import Template
 
-def infer_properties(properties: dict[str, str], context: dict[str, str]) -> dict[str, str]:
+
+def infer_properties(
+    properties: dict[str, str], context: dict[str, str]
+) -> dict[str, str]:
     new_props = {}
 
     for key, value in properties.items():
-        if key in ["jsonpath", "method"]: # TODO: ignore jsonpath for now
+        if key in ["jsonpath", "method"]:  # TODO: ignore jsonpath for now
             new_props[key] = value
             continue
         template = Template(value)
@@ -29,38 +31,41 @@ def infer_properties(properties: dict[str, str], context: dict[str, str]) -> dic
 
     return new_props
 
-def build_scalar_udf(properties: dict[str, str], dynamic_columns: list[str]) -> Callable:
+
+def build_scalar_udf(
+    properties: dict[str, str], dynamic_columns: list[str]
+) -> Callable:
     arity = len(dynamic_columns)
 
     def udf1(a1):
         context = dict(zip(dynamic_columns, a1))
         inferred_properties = infer_properties(properties, context)
         requester = build_http_requester(inferred_properties)
-        return pa.array([f"Got 1: {a1}"], type=pa.string())
+        return pa.array(requester(), type=pa.string())
 
     def udf2(a1, a2):
         context = dict(zip(dynamic_columns, a1 + a2))
         inferred_properties = infer_properties(properties, context)
         requester = build_http_requester(inferred_properties)
-        return pa.array([f"Got 2: {a1}, {a2}"], type=pa.string())
+        return pa.array(requester(), type=pa.string())
 
     def udf3(a1, a2, a3):
         context = dict(zip(dynamic_columns, a1 + a2 + a3))
         inferred_properties = infer_properties(properties, context)
         requester = build_http_requester(inferred_properties)
-        return pa.array([f"Got 3: {a1}, {a2}, {a3}"], type=pa.string())
+        return pa.array(requester(), type=pa.string())
 
     def udf4(a1, a2, a3, a4):
         context = dict(zip(dynamic_columns, a1 + a2 + a3 + a4))
         inferred_properties = infer_properties(properties, context)
         requester = build_http_requester(inferred_properties)
-        return pa.array([f"Got 4: {a1}, {a2}, {a3}, {a4}"], type=pa.string())
+        return pa.array(requester(), type=pa.string())
 
     def udf5(a1, a2, a3, a4, a5):
         context = dict(zip(dynamic_columns, a1 + a2 + a3 + a4 + a5))
         inferred_properties = infer_properties(properties, context)
         requester = build_http_requester(inferred_properties)
-        return pa.array([f"Got 5: {a1}, {a2}, {a3}, {a4}, {a5}"], type=pa.string())
+        return pa.array(requester(), type=pa.string())
 
     if arity == 1:
         return udf1
@@ -95,8 +100,9 @@ async def processor(
 
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
-        # TODO: type polars with ducbdb table catalog
+        # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
+        print(df)
         await persist(df, batch_id, epoch, table_name, connection)
 
     batch_id.increment()
@@ -179,23 +185,28 @@ def register_lookup_table_executable(
     return macro_name
 
 
-
 async def run_executables(parsed_queries: list[dict], connection: DuckDBPyConnection):
     tasks = []
 
     for table_config in parsed_queries:
         properties = table_config["properties"]
+        name = table_config["name"]
 
         # register table, temp tables (TODO: views / materialized views / sink)
         register_table(table_config, connection)
 
         # start runner for non lookup tables
         if properties["connector"] == "http":
-            tasks.append(build_one_runner(table_config, connection))
+            tasks.append(
+                asyncio.create_task(
+                    build_one_runner(table_config, connection), name=f"{name}_runner"
+                )
+            )
 
         # handle lookup table
         if properties["connector"] == "lookup-http":
             macro_name = register_lookup_table_executable(table_config, connection)
+            logger.debug(macro_name)
 
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 

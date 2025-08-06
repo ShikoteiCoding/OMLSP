@@ -1,14 +1,11 @@
+import asyncio
+import jq
+
 from aiohttp import ClientSession, ClientResponse
 from typing import Any, Callable, Coroutine
 
 from loguru import logger
-
-import asyncio
 from jsonpath_ng import parse
-
-
-def get_jsonpathession(jsonpath: str):
-    return parse(jsonpath)
 
 
 def parse_http_properties(params: dict[str, str]) -> dict:
@@ -19,7 +16,10 @@ def parse_http_properties(params: dict[str, str]) -> dict:
         if key.startswith("headers."):
             parsed_params["headers"][key.split(".")[1]] = value
         elif key == "jsonpath":
-            parsed_params["jsonpath"] = get_jsonpathession(value)
+            if value.startswith("$"):
+                parsed_params["jsonpath"] = parse(value)
+            if value.startswith("."):
+                parsed_params["jq"] = jq.compile(value)
         elif key.startswith("json."):
             parsed_params["json"][key.split(".")[1]] = value
         else:
@@ -30,7 +30,8 @@ def parse_http_properties(params: dict[str, str]) -> dict:
 async def request(
     client: ClientSession,
     url: str,
-    jsonpath: str,
+    jsonpath: Any = None,
+    jq: Any = None,
     method: str = "GET",
     headers={"Content-Type": "application/json"},
     json={},
@@ -46,7 +47,7 @@ async def request(
             logger.debug(f"response for {url}: {response.status}")
 
             if response.ok:
-                return await parse_response(response, jsonpath)
+                return await parse_response(response, jsonpath, jq)
 
             # TODO: add retry on fail here
             try:
@@ -59,11 +60,20 @@ async def request(
         return []
 
 
-async def parse_response(response: ClientResponse, jsonpath: Any | None) -> list[dict]:
+async def parse_response(
+    response: ClientResponse, jsonpath: Any = None, jq: Any = None
+) -> list[dict]:
     data = await response.json()
+
     if jsonpath:
         matches = jsonpath.find(data)
         return [{str(match.path): match.value} for match in matches]
+
+    # TODO: new jq parsing, might be deprecating jsonpath
+    elif jq:
+        res = jq.input(data).all()
+        return res
+
     elif isinstance(data, dict):
         return [data]
     elif isinstance(data, list):

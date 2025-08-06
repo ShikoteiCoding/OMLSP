@@ -29,7 +29,7 @@
         },
         "jsonpath": {
           "type": "string",
-          "pattern": "^\\$.*",
+          "pattern": "^[$.]",
           "description": "Must be a valid JSONPath expression starting with $"
         },
         "patternProperties": {

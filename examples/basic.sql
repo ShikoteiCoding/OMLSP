@@ -9,7 +9,7 @@ WITH (
     'url' = 'https://api.kucoin.com/api/v1/market/allTickers',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'jsonpath' = '$.ticker[*]',
+    'jsonpath' = '.data.ticker[] | {symbol, symbolName, buy, sell}',
     'headers.Content-Type' = 'application/json'
 );
 
