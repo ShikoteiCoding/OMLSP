@@ -31,7 +31,7 @@ async def main():
 
     async with asyncio.TaskGroup() as tg:
         tg.create_task(run_executables(tables, con))
-        tg.create_task(start_server(con))
+        tg.create_task(start_server(con, properties_schema))
 
 
 if __name__ == "__main__":
