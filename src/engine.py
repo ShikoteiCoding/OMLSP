@@ -6,7 +6,8 @@ import time
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.job import Job
 from apscheduler.triggers.cron import CronTrigger
-from duckdb import DuckDBPyConnection
+from duckdb import DuckDBPyConnection, struct_type
+from duckdb.typing import VARCHAR
 from datetime import datetime, timezone
 from loguru import logger
 from typing import Any, Callable, Coroutine
@@ -159,28 +160,40 @@ def register_lookup_table_executable(
     properties = query_as_dict["properties"]
     table_name = query_as_dict["name"]
     dynamic_columns = query_as_dict["dynamic_columns"]
+    columns = query_as_dict["columns"]
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
 
     func = build_scalar_udf(properties, dynamic_columns)
 
-    # register scalar
+    return_type = struct_type(columns)  # typed struct from sql statement
+    output_cols = ", ".join(
+        [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
+    )
+
+    # register scalar for row to row http call
     connection.create_function(
         name=func_name,
         function=func,  # type: ignore
-        parameters=["VARCHAR" for _ in range(len(dynamic_columns))],  # type: ignore
-        return_type="VARCHAR",  # type: ignore
-        type="arrow",  # type: ignore
+        parameters=[VARCHAR for _ in range(len(dynamic_columns))],  # type: ignore
+        return_type=return_type,  # type: ignore
+        type="native",  # type: ignore
     )
+    logger.debug(f"registered function: {func_name}")
 
-    # register macro
+    # register macro (to be injected in place of sql)
     connection.sql(f"""
         CREATE OR REPLACE MACRO {macro_name}(table_name, {",".join(dynamic_columns)}) AS TABLE
         SELECT
-            {func_name}({",".join(dynamic_columns)}) AS formatted
-        FROM query_table(table_name);
+            {output_cols}
+        FROM (
+        SELECT
+            {func_name}({",".join(dynamic_columns)}) AS struct
+        FROM query_table(table_name)
+        );
     """)
+    logger.debug(f"registered macro: {macro_name}")
 
     return macro_name
 

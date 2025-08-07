@@ -23,11 +23,11 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
             writer.write("Query sent\n\n".encode())
             # result = con.execute(parsed_queries).fetchall()  # retrieves all
             # if result:
-                # TODO change the way to send out result
-                # result_str = "".join(str(row) for row in result)
-                # writer.write(f"{result_str}\n\n".encode())
+            # TODO change the way to send out result
+            # result_str = "".join(str(row) for row in result)
+            # writer.write(f"{result_str}\n\n".encode())
             # else:
-                # writer.write("No rows returned\n\n".encode())
+            # writer.write("No rows returned\n\n".encode())
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
             writer.write(f"Error: {str(e)}\n\n".encode())

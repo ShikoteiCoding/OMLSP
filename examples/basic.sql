@@ -21,7 +21,7 @@ CREATE TEMP TABLE ohlc (
     low FLOAT,
     close FLOAT,
     volume FLOAT,
-    amounnt FLOAT
+    amount FLOAT
 )
 WITH (
     'connector' = 'lookup-http',
