@@ -1,8 +1,8 @@
 import asyncio
+import polars as pl
 from loguru import logger
 from duckdb import connect, DuckDBPyConnection
 
-from engine import run_executables
 from parser import parse_sql_statements
 
 query_queue = asyncio.Queue()
@@ -15,19 +15,24 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
     while True:
         sql_content, writer, client_id = await query_queue.get()
         try:
-            logger.info(f"Client {client_id} - Received query: {sql_content.strip()}")
-            parsed_queries, _ = parse_sql_statements(sql_content, properties_schema)
+            logger.info(f"Client {client_id} - Received query: {sql_content}")
+            create_queries, select_queries = parse_sql_statements(
+                sql_content, properties_schema
+            )
+            logger.debug(
+                f"Client {client_id} - Create queries: {create_queries} - Select queries: {select_queries}"
+            )
 
-            logger.info(f"Client {client_id} - Parsed query: {parsed_queries}")
-            asyncio.create_task(run_executables(parsed_queries, con))
             writer.write("Query sent\n\n".encode())
-            # result = con.execute(parsed_queries).fetchall()  # retrieves all
-            # if result:
-            # TODO change the way to send out result
-            # result_str = "".join(str(row) for row in result)
-            # writer.write(f"{result_str}\n\n".encode())
-            # else:
-            # writer.write("No rows returned\n\n".encode())
+            # TODO: handle multiple statements (loop)
+            cursor = con.execute(select_queries[0]["query"])
+            rows = cursor.fetchall()
+            if cursor.description:
+                columns = [desc[0] for desc in cursor.description]
+                df = pl.DataFrame(rows, schema=columns)
+                writer.write(f"{df}\n\n".encode())
+            else:
+                writer.write("No rows returned\n\n".encode())
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
             writer.write(f"Error: {str(e)}\n\n".encode())

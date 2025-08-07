@@ -127,8 +127,8 @@ def parse_create_properties(
     return statement, custom_properties
 
 
-def get_duckdb_sql(statement: exp.Create) -> str:
-    assert isinstance(statement, exp.Create), (
+def get_duckdb_sql(statement: exp.Create | exp.Select) -> str:
+    assert isinstance(statement, (exp.Create, exp.Select)), (
         f"Expected {type(exp.Create)} not {type(statement)}"
     )
 
@@ -196,22 +196,22 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
     return {}
 
 
-def parse_select(select: exp.Select) -> dict[str, Any]:
+def parse_select(statement: exp.Select) -> dict[str, Any]:
     select_dict = {"columns": [], "table": "", "where": None, "joins": []}
 
-    for projection in select.expressions:
+    for projection in statement.expressions:
         col_name = get_name(projection)
         select_dict["columns"].append(col_name)
 
-    from_clause = select.args.get("from")
+    from_clause = statement.args.get("from")
     if from_clause:
         select_dict["table"] = get_name(from_clause.this)
 
-    where_clause = select.args.get("where")
+    where_clause = statement.args.get("where")
     if where_clause:
         select_dict["where"] = where_clause.sql(dialect=None)
 
-    joins = select.args.get("joins", [])
+    joins = statement.args.get("joins", [])
     for join in joins:
         join_dict = {
             "table": get_name(join.this),
@@ -221,6 +221,8 @@ def parse_select(select: exp.Select) -> dict[str, Any]:
             else None,
         }
         select_dict["joins"].append(join_dict)
+
+    select_dict["query"] = get_duckdb_sql(statement)
 
     return select_dict
 
