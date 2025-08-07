@@ -1,29 +1,33 @@
 import asyncio
 from loguru import logger
 from duckdb import connect, DuckDBPyConnection
-from parser import process_select_statement
+
+from engine import run_executables
+from parser import parse_sql_statements
 
 query_queue = asyncio.Queue()
 
 
-async def process_queries(con: DuckDBPyConnection) -> None:
+async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> None:
     """
     Process SELECT queries
     """
     while True:
-        query_text, writer, client_id = await query_queue.get()
+        sql_content, writer, client_id = await query_queue.get()
         try:
-            logger.info(f"Client {client_id} - Received query: {query_text.strip()}")
-            parsed_query = process_select_statement(query_text)
+            logger.info(f"Client {client_id} - Received query: {sql_content.strip()}")
+            parsed_queries, _ = parse_sql_statements(sql_content, properties_schema)
 
-            logger.info(f"Client {client_id} - Parsed query: {parsed_query}")
-            result = con.execute(query_text).fetchall()  # retrieves all
-            if result:
+            logger.info(f"Client {client_id} - Parsed query: {parsed_queries}")
+            asyncio.create_task(run_executables(parsed_queries, con))
+            writer.write("Query sent\n\n".encode())
+            # result = con.execute(parsed_queries).fetchall()  # retrieves all
+            # if result:
                 # TODO change the way to send out result
-                result_str = "".join(str(row) for row in result)
-                writer.write(f"{result_str}\n\n".encode())
-            else:
-                writer.write("No rows returned\n\n".encode())
+                # result_str = "".join(str(row) for row in result)
+                # writer.write(f"{result_str}\n\n".encode())
+            # else:
+                # writer.write("No rows returned\n\n".encode())
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
             writer.write(f"Error: {str(e)}\n\n".encode())
@@ -44,17 +48,25 @@ async def handle_client(
     client_id = client_id_data.decode().strip()
     logger.info(f"Client {client_id} connected from {addr}")
 
+    query_lines = []
     while True:
         data = await reader.readuntil(b"\n")
-        query = data.decode().strip()
-        if query.lower() == "exit":
+        query_part = data.decode().strip()
+        if query_part.lower() == "exit":
             logger.info(f"Client {client_id} disconnected from {addr}")
             break
-        if query:
-            await query_queue.put((query, writer, client_id))  # Add query to queue
+        if query_part:
+            query_lines.append(query_part)
+            full_query = " ".join(query_lines)
+            if full_query.strip().endswith(";"):
+                await query_queue.put((full_query, writer, client_id))
+                query_lines = []
+
+    writer.close()
+    await writer.wait_closed()
 
 
-async def start_server(con: DuckDBPyConnection) -> None:
+async def start_server(con: DuckDBPyConnection, properties_schema: dict) -> None:
     """
     Start a TCP server to accept client connections
     """
@@ -63,7 +75,7 @@ async def start_server(con: DuckDBPyConnection) -> None:
     logger.info(f"Server running on {server.sockets[0].getsockname()}")
     tasks = [
         asyncio.create_task(server.serve_forever()),
-        asyncio.create_task(process_queries(con)),
+        asyncio.create_task(process_queries(con, properties_schema)),
     ]
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
