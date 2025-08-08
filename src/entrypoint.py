@@ -17,17 +17,9 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
         try:
             logger.info(f"Client {client_id} - Received query: {sql_content.strip()}")
             parsed_queries, _ = parse_sql_statements(sql_content, properties_schema)
-
             logger.info(f"Client {client_id} - Parsed query: {parsed_queries}")
             asyncio.create_task(run_executables(parsed_queries, con))
             writer.write("Query sent\n\n".encode())
-            # result = con.execute(parsed_queries).fetchall()  # retrieves all
-            # if result:
-                # TODO change the way to send out result
-                # result_str = "".join(str(row) for row in result)
-                # writer.write(f"{result_str}\n\n".encode())
-            # else:
-                # writer.write("No rows returned\n\n".encode())
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
             writer.write(f"Error: {str(e)}\n\n".encode())
