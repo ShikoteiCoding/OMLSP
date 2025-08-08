@@ -1,4 +1,6 @@
 import asyncio
+import polars as pl
+
 from loguru import logger
 from duckdb import connect, DuckDBPyConnection
 
@@ -10,16 +12,33 @@ query_queue = asyncio.Queue()
 
 async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> None:
     """
-    Process SELECT queries
+    Process CREATE and SELECT queries
     """
     while True:
         sql_content, writer, client_id = await query_queue.get()
         try:
             logger.info(f"Client {client_id} - Received query: {sql_content.strip()}")
-            parsed_queries, _ = parse_sql_statements(sql_content, properties_schema)
-            logger.info(f"Client {client_id} - Parsed query: {parsed_queries}")
-            asyncio.create_task(run_executables(parsed_queries, con))
-            writer.write("Query sent\n\n".encode())
+            create_queries, select_queries = parse_sql_statements(
+                sql_content, properties_schema
+            )
+            logger.debug(
+                f"Client {client_id} - Create queries: {create_queries} - Select queries: {select_queries}"
+            )
+
+            if create_queries:
+                asyncio.create_task(run_executables(create_queries, con))
+                writer.write("query sent\n\n".encode())
+            if select_queries:
+                query = select_queries[0].get("query", sql_content.strip())
+                cursor = con.execute(query)
+                rows = cursor.fetchall()
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    df = pl.DataFrame(rows, schema=columns)
+                    writer.write(f"{df}\n\n".encode())
+                else:
+                    writer.write("No rows returned\n\n".encode())
+
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
             writer.write(f"Error: {str(e)}\n\n".encode())
