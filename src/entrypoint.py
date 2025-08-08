@@ -5,48 +5,9 @@ from duckdb import connect, DuckDBPyConnection
 
 from parser import parse_sql_statements
 
-query_queue = asyncio.Queue()
-
-
-async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> None:
-    """
-    Process SELECT queries
-    """
-    while True:
-        sql_content, writer, client_id = await query_queue.get()
-        try:
-            logger.info(f"Client {client_id} - Received query: {sql_content}")
-            create_queries, select_queries = parse_sql_statements(
-                sql_content, properties_schema
-            )
-            logger.debug(
-                f"Client {client_id} - Create queries: {create_queries} - Select queries: {select_queries}"
-            )
-
-            writer.write("Query sent\n\n".encode())
-            # TODO: handle multiple statements (loop)
-            cursor = con.execute(select_queries[0]["query"])
-            rows = cursor.fetchall()
-            if cursor.description:
-                columns = [desc[0] for desc in cursor.description]
-                df = pl.DataFrame(rows, schema=columns)
-                writer.write(f"{df}\n\n".encode())
-            else:
-                writer.write("No rows returned\n\n".encode())
-        except Exception as e:
-            logger.error(f"Client {client_id} - Error processing query: {e}")
-            writer.write(f"Error: {str(e)}\n\n".encode())
-        finally:
-            await writer.drain()
-            query_queue.task_done()
-
-
 async def handle_client(
-    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, con: DuckDBPyConnection, properties_schema: dict
 ) -> None:
-    """
-    Handle a client connection, reading SELECT queries and adding to queue
-    """
     addr = writer.get_extra_info("peername")
 
     client_id_data = await reader.readuntil(b"\n")
@@ -55,36 +16,53 @@ async def handle_client(
 
     query_lines = []
     while True:
-        data = await reader.readuntil(b"\n")
+        try:
+            data = await reader.readuntil(b"\n")
+        except asyncio.IncompleteReadError:
+            break
+
         query_part = data.decode().strip()
         if query_part.lower() == "exit":
             logger.info(f"Client {client_id} disconnected from {addr}")
             break
-        if query_part:
-            query_lines.append(query_part)
-            full_query = " ".join(query_lines)
-            if full_query.strip().endswith(";"):
-                await query_queue.put((full_query, writer, client_id))
-                query_lines = []
+
+        query_lines.append(query_part)
+        full_query = " ".join(query_lines)
+
+        if full_query.strip().endswith(";"):
+            query_lines = []
+            try:
+                logger.info(f"Client {client_id} - Received query: {full_query}")
+                create_queries, select_queries = parse_sql_statements(
+                    full_query, properties_schema
+                )
+                logger.debug(
+                    f"Client {client_id} - Create: {create_queries}, Select: {select_queries}"
+                )
+                cursor = con.execute(select_queries[0]["query"])
+                rows = cursor.fetchall()
+
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    df = pl.DataFrame(rows, schema=columns, orient="row")
+                    writer.write(f"{df.head()}\n\n".encode())
+                else:
+                    writer.write("No rows returned\n\n".encode())
+                await writer.drain()
+
+            except Exception as e:
+                logger.error(f"Client {client_id} - Error: {e}")
+                writer.write(f"Error: {e}\n\n".encode())
+                await writer.drain()
 
     writer.close()
     await writer.wait_closed()
 
 
 async def start_server(con: DuckDBPyConnection, properties_schema: dict) -> None:
-    """
-    Start a TCP server to accept client connections
-    """
-    server = await asyncio.start_server(handle_client, "0.0.0.0", 8080)
-
+    server = await asyncio.start_server(
+        lambda r, w: handle_client(r, w, con, properties_schema), "0.0.0.0", 8080
+    )
     logger.info(f"Server running on {server.sockets[0].getsockname()}")
-    tasks = [
-        asyncio.create_task(server.serve_forever()),
-        asyncio.create_task(process_queries(con, properties_schema)),
-    ]
-    _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
-
-
-if __name__ == "__main__":
-    con = connect(database=":memory:")
-    asyncio.run(start_server(con))
+    async with server:
+        await server.serve_forever()
