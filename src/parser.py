@@ -67,7 +67,7 @@ def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str]]:
 
 def parse_temp_table_schema(
     table: exp.Schema,
-) -> tuple[exp.Schema, str, list[dict[str, str]], list[str]]:
+) -> tuple[exp.Schema, str, dict[str, str], list[str]]:
     """Parse temp table schema. Handle dynamic parameters of lookup / temp tables."""
     assert isinstance(table, (exp.Schema,)), (
         f"Expression of type {type(table)} is not accepted"
@@ -75,7 +75,7 @@ def parse_temp_table_schema(
     table_name = get_name(table)
     table = table.copy()
 
-    columns = []
+    columns = {}
     dynamic_columns = []
 
     for column in table.expressions:
@@ -83,7 +83,7 @@ def parse_temp_table_schema(
             new_col_name = str(column.name).replace("$", "")
             column.set("this", exp.to_identifier(new_col_name))
             dynamic_columns.append(new_col_name)
-        columns.append(column)
+        columns[column.name] = str(column.kind)
 
     return table, table_name, columns, dynamic_columns
 
@@ -127,8 +127,8 @@ def parse_create_properties(
     return statement, custom_properties
 
 
-def get_duckdb_sql(statement: exp.Create) -> str:
-    assert isinstance(statement, exp.Create), (
+def get_duckdb_sql(statement: exp.Create | exp.Select) -> str:
+    assert isinstance(statement, (exp.Create, exp.Select)), (
         f"Expected {type(exp.Create)} not {type(statement)}"
     )
 
@@ -175,7 +175,7 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
         updated_create_statement, properties = parse_create_properties(
             statement, properties_schema
         )
-        updated_table_statement, table_name, _, dynamic_columns = (
+        updated_table_statement, table_name, columns, dynamic_columns = (
             parse_temp_table_schema(updated_create_statement.this)
         )
         updated_create_statement.set(
@@ -185,29 +185,33 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
         table_dict["name"] = table_name
         table_dict["properties"] = properties
         table_dict["query"] = get_duckdb_sql(updated_create_statement)
+
+        # Keep to build dynamic macro call in engine
         table_dict["dynamic_columns"] = dynamic_columns
+        table_dict["columns"] = columns
+
         return table_dict
 
     # TODO: Process views, materialized views, sinks and functions here
     return {}
 
 
-def parse_select(select: exp.Select) -> dict[str, Any]:
+def parse_select(statement: exp.Select) -> dict[str, Any]:
     select_dict = {"columns": [], "table": "", "where": None, "joins": []}
 
-    for projection in select.expressions:
+    for projection in statement.expressions:
         col_name = get_name(projection)
         select_dict["columns"].append(col_name)
 
-    from_clause = select.args.get("from")
+    from_clause = statement.args.get("from")
     if from_clause:
         select_dict["table"] = get_name(from_clause.this)
 
-    where_clause = select.args.get("where")
+    where_clause = statement.args.get("where")
     if where_clause:
         select_dict["where"] = where_clause.sql(dialect=None)
 
-    joins = select.args.get("joins", [])
+    joins = statement.args.get("joins", [])
     for join in joins:
         join_dict = {
             "table": get_name(join.this),
@@ -217,6 +221,8 @@ def parse_select(select: exp.Select) -> dict[str, Any]:
             else None,
         }
         select_dict["joins"].append(join_dict)
+
+    select_dict["query"] = get_duckdb_sql(statement)
 
     return select_dict
 
