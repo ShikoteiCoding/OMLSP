@@ -48,27 +48,43 @@ def rename_column_transform(node, old_name, new_name):
     return node
 
 
-def parse_table_schema(
-    table: exp.Schema,
-) -> tuple[exp.Schema, str, list[dict[str, str]], list[str]]:
-    """Parse table schema or table into name and columns"""
+def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str]]:
+    """Parse table schema into name and columns"""
     assert isinstance(table, (exp.Schema,)), (
         f"Expression of type {type(table)} is not accepted"
     )
-
     table_name = get_name(table)
+    table = table.copy()
+
+    columns = [
+        str(column.name)
+        for column in table.expressions
+        if isinstance(column, exp.ColumnDef)
+    ]
+
+    return table, table_name, columns
+
+
+def parse_temp_table_schema(
+    table: exp.Schema,
+) -> tuple[exp.Schema, str, list[dict[str, str]], list[str]]:
+    """Parse temp table schema. Handle dynamic parameters of lookup / temp tables."""
+    assert isinstance(table, (exp.Schema,)), (
+        f"Expression of type {type(table)} is not accepted"
+    )
+    table_name = get_name(table)
+    table = table.copy()
+
     columns = []
     dynamic_columns = []
-
-    table = table.copy()
 
     for column in table.expressions:
         if isinstance(column, exp.ColumnDef) and column.name.startswith("$"):
             new_col_name = str(column.name).replace("$", "")
-            logger.info(new_col_name)
             column.set("this", exp.to_identifier(new_col_name))
             dynamic_columns.append(new_col_name)
         columns.append(column)
+
     return table, table_name, columns, dynamic_columns
 
 
@@ -89,7 +105,7 @@ def parse_create_properties(
     custom_properties = {}
     table_kind = "TABLE"
     statement = statement.copy()
-    for prop in statement.args.get("properties", []):
+    for prop in get_properties_from_create(statement):
         # sqlglot extract temporary statement and put it in properties
         if isinstance(prop, exp.TemporaryProperty):
             # TODO: find better way than overwrite table "kind"
@@ -118,26 +134,31 @@ def get_duckdb_sql(statement: exp.Create) -> str:
 
     statement = statement.copy()
     if statement.args.get("properties"):
-        print("here")
         del statement.args["properties"]
-    print(statement)
 
     return statement.sql("duckdb")
 
 
+def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
+    return [prop for prop in statement.args.get("properties", [])]
+
+
 def process_create_statement(statement: exp.Create, properties_schema: dict) -> dict:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
+    is_temp = isinstance(
+        get_properties_from_create(statement)[0], exp.TemporaryProperty
+    )
+    table_dict = {
+        "type": "table",
+        "name": "",
+        "properties": {},
+    }
 
-    if str(statement.kind) == "TABLE":
-        table_dict = {
-            "type": "table",
-            "name": "",
-            "properties": {},
-        }
+    if str(statement.kind) == "TABLE" and not is_temp:
         updated_create_statement, properties = parse_create_properties(
             statement, properties_schema
         )
-        updated_table_statement, table_name, _, _ = parse_table_schema(
+        updated_table_statement, table_name, _ = parse_table_schema(
             updated_create_statement.this
         )
         updated_create_statement.set(
@@ -147,6 +168,24 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
         table_dict["name"] = table_name
         table_dict["properties"] = properties
         table_dict["query"] = get_duckdb_sql(updated_create_statement)
+        return table_dict
+
+    # process separately to handle the udft logic here
+    elif str(statement.kind) == "TABLE" and is_temp:
+        updated_create_statement, properties = parse_create_properties(
+            statement, properties_schema
+        )
+        updated_table_statement, table_name, _, dynamic_columns = (
+            parse_temp_table_schema(updated_create_statement.this)
+        )
+        updated_create_statement.set(
+            "this", updated_table_statement
+        )  # overwrite modified table statement
+
+        table_dict["name"] = table_name
+        table_dict["properties"] = properties
+        table_dict["query"] = get_duckdb_sql(updated_create_statement)
+        table_dict["dynamic_columns"] = dynamic_columns
         return table_dict
 
     # TODO: Process views, materialized views, sinks and functions here
@@ -216,7 +255,7 @@ def parse_sql_statements(
     tables = []
     selects = []
 
-    parsed_statements = parse(query, dialect=None)
+    parsed_statements = parse(query)
 
     for parsed_statement in parsed_statements:
         assert isinstance(parsed_statement, VALID_STATEMENTS), (
