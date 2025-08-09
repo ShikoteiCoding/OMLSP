@@ -194,6 +194,7 @@ def register_lookup_table_executable(
         );
     """)
     logger.debug(f"registered macro: {macro_name}")
+    # TODO: save macro into metadata table
 
     return macro_name
 
@@ -222,6 +223,59 @@ async def run_executables(parsed_queries: list[dict], connection: DuckDBPyConnec
             logger.debug(macro_name)
 
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+
+
+def get_lookup_tables(con: DuckDBPyConnection) -> list:
+    query = """
+        SELECT table_name FROM duckdb_tables WHERE temporary IS TRUE;
+        """
+    temp_tables = [str(table_name[0]) for table_name in con.sql(query).fetchall()]
+
+    return temp_tables
+
+
+def get_tables(con: DuckDBPyConnection) -> list:
+    query = """
+        SELECT table_name FROM duckdb_tables WHERE temporary IS FALSE;
+        """
+    tables = [str(table_name[0]) for table_name in con.sql(query).fetchall()]
+
+    return tables
+
+
+def select_query_to_duckdb(
+    con: DuckDBPyConnection,
+    select_query: dict[str, Any],
+    lookup_tables: list[str],
+    tables: list[str],
+) -> str:
+    mapping = dict(zip(tables, tables))
+
+    for lookup_table in lookup_tables:
+        mapping[lookup_table] = f"{lookup_table}_macro"
+
+    # TODO: substitute table names with mapping values
+    # TODO: find macro and their substitute
+
+    return ""
+
+
+# TODO: rename
+def handle_select(con: DuckDBPyConnection, select_query: dict[str, Any]) -> str:
+    logger.warning(select_query)
+    table_name = select_query["table"]
+
+    lookup_tables = get_lookup_tables(con)
+    tables = get_tables(con)
+
+    if table_name in lookup_tables:
+        msg = f"{table_name} is a lookup table, you cannot use it in FROM."
+        logger.error(msg)
+        return msg
+
+    duckdb_sql = select_query_to_duckdb(con, select_query, lookup_tables, tables)
+
+    return duckdb_sql
 
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str]]:
     return table, table_name, columns
 
 
-def parse_temp_table_schema(
+def parse_lookup_table_schema(
     table: exp.Schema,
 ) -> tuple[exp.Schema, str, dict[str, str], list[str]]:
     """Parse temp table schema. Handle dynamic parameters of lookup / temp tables."""
@@ -176,7 +176,7 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
             statement, properties_schema
         )
         updated_table_statement, table_name, columns, dynamic_columns = (
-            parse_temp_table_schema(updated_create_statement.this)
+            parse_lookup_table_schema(updated_create_statement.this)
         )
         updated_create_statement.set(
             "this", updated_table_statement
@@ -196,35 +196,31 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
     return {}
 
 
-def parse_select(statement: exp.Select) -> dict[str, Any]:
-    select_dict = {"columns": [], "table": "", "where": None, "joins": []}
+def parse_select(statement: exp.Select) -> tuple[exp.Select, list[str], str, str]:
+    columns = []
+    table = ""
+    where = ""
+
+    statement = statement.copy()
 
     for projection in statement.expressions:
         col_name = get_name(projection)
-        select_dict["columns"].append(col_name)
+        columns.append(str(col_name))
 
     from_clause = statement.args.get("from")
     if from_clause:
-        select_dict["table"] = get_name(from_clause.this)
+        table = str(get_name(from_clause.this))
 
     where_clause = statement.args.get("where")
     if where_clause:
-        select_dict["where"] = where_clause.sql(dialect=None)
+        where = where_clause.sql(dialect=None)
 
-    joins = statement.args.get("joins", [])
-    for join in joins:
-        join_dict = {
-            "table": get_name(join.this),
-            "type": join.args.get("kind", "").upper() or "INNER",
-            "on": join.args.get("on").sql(dialect=None)
-            if join.args.get("on")
-            else None,
-        }
-        select_dict["joins"].append(join_dict)
+    # TODO: change find all with more robust ?
+    for table in statement.find_all(exp.Table):
+        if isinstance(table.parent, exp.Join):
+            table.set("this", exp.to_identifier(f"${str(table.name)}"))
 
-    select_dict["query"] = get_duckdb_sql(statement)
-
-    return select_dict
+    return statement, columns, table, where
 
 
 def process_select_statement(statement: exp.Select) -> dict[str, Any]:
@@ -238,8 +234,16 @@ def process_select_statement(statement: exp.Select) -> dict[str, Any]:
     assert isinstance(statement, exp.Select), (
         f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
     )
+    select_dict = {}
+    updated_select_statement, columns, table, where = parse_select(statement)
+    logger.warning(updated_select_statement)
 
-    return parse_select(statement)
+    select_dict["columns"] = columns
+    select_dict["table"] = table
+    select_dict["where"] = where
+    select_dict["query"] = get_duckdb_sql(updated_select_statement)
+
+    return select_dict
 
 
 def parse_sql_statements(

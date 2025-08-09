@@ -1,5 +1,5 @@
 import asyncio
-import sys
+import argparse
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.key_binding import KeyBindings
@@ -47,9 +47,17 @@ async def send_query(host: str, port: int, client_id: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python client.py <client_id>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Client for sending SELECT queries to a server"
+    )
+    parser.add_argument("client_id", help="Unique client identifier")
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="Server address (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=8080, help="Server port (default: 8080)"
+    )
 
-    client_id = sys.argv[1]
-    asyncio.run(send_query("127.0.0.1", 8080, client_id))
+    args = parser.parse_args()
+
+    asyncio.run(send_query(args.host, args.port, args.client_id))
