@@ -1,6 +1,5 @@
 import asyncio
 import polars as pl
-import pyarrow as pa
 import time
 import re
 
@@ -16,12 +15,17 @@ from typing import Any, Callable, Coroutine
 from string import Template
 
 from inout import persist
-from metadata import create_macro_definition, get_macro_definition_by_name
+from metadata import (
+    create_macro_definition,
+    get_macro_definition_by_name,
+    get_lookup_tables,
+    get_tables,
+)
 from utils import MutableInteger
 from requester import build_http_requester
 
 
-def infer_properties(
+def build_lookup_properties(
     properties: dict[str, str], context: dict[str, str]
 ) -> dict[str, str]:
     new_props = {}
@@ -42,47 +46,34 @@ def build_scalar_udf(
     arity = len(dynamic_columns)
 
     def udf1(a1):
-        context = dict(zip(dynamic_columns, a1))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+        # TODO: build default response from lookup table schema
+        context = dict(zip(dynamic_columns, [a1]))
+        lookup_properties = build_lookup_properties(properties, context)
+        default_response = context.copy()
 
-    def udf2(a1, a2):
-        context = dict(zip(dynamic_columns, a1 + a2))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+        requester = build_http_requester(lookup_properties, is_async=False)
 
-    def udf3(a1, a2, a3):
-        context = dict(zip(dynamic_columns, a1 + a2 + a3))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+        try:
+            response = requester()
 
-    def udf4(a1, a2, a3, a4):
-        context = dict(zip(dynamic_columns, a1 + a2 + a3 + a4))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+            if isinstance(response, dict):
+                return context | response
 
-    def udf5(a1, a2, a3, a4, a5):
-        context = dict(zip(dynamic_columns, a1 + a2 + a3 + a4 + a5))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+            # TODO: handle array jq responses
+            # need different scalar udf return type to handle
+            # and most likely an explode in macro
+            if isinstance(response, list):
+                return default_response | response[-1]
+
+        except Exception as e:
+            logger.exception(f"HTTP request failed: {e}")
+
+        return default_response
 
     if arity == 1:
         return udf1
-    elif arity == 2:
-        return udf2
-    elif arity == 3:
-        return udf3
-    elif arity == 4:
-        return udf4
-    elif arity == 5:
-        return udf5
     else:
-        raise ValueError("Too many dynamic columns (max 5 supported)")
+        raise ValueError("Too many dynamic columns (max 1 supported)")
 
 
 async def processor(
@@ -106,7 +97,6 @@ async def processor(
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
-        print(df)
         await persist(df, batch_id, epoch, table_name, connection)
 
     batch_id.increment()
@@ -167,13 +157,10 @@ def register_lookup_table_executable(
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
-
     func = build_scalar_udf(properties, dynamic_columns)
 
+    # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
-    output_cols = ", ".join(
-        [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
-    )
 
     # register scalar for row to row http call
     connection.create_function(
@@ -189,14 +176,18 @@ def register_lookup_table_executable(
     # register macro (to be injected in place of sql)
     func_def = f"{func_name}({','.join(dynamic_columns)})"
     macro_def = f"{macro_name}(table_name, {','.join(dynamic_columns)})"
+    output_cols = ", ".join(
+        [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
+    )
+
     connection.sql(f"""
         CREATE OR REPLACE MACRO {macro_def} AS TABLE
         SELECT
             {output_cols}
         FROM (
-        SELECT
-            {func_def} AS struct
-        FROM query_table(table_name)
+            SELECT
+                {func_def} AS struct
+            FROM query_table(table_name)
         );
     """)
     logger.debug(f"registered macro: {macro_name}")
@@ -231,36 +222,23 @@ async def run_executables(parsed_queries: list[dict], connection: DuckDBPyConnec
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
 
-def get_lookup_tables(con: DuckDBPyConnection) -> list:
-    query = """
-        SELECT table_name FROM duckdb_tables WHERE temporary IS TRUE;
-        """
-    temp_tables = [str(table_name[0]) for table_name in con.sql(query).fetchall()]
-
-    return temp_tables
-
-
-def get_tables(con: DuckDBPyConnection) -> list:
-    query = """
-        SELECT table_name FROM duckdb_tables WHERE temporary IS FALSE;
-        """
-    tables = [str(table_name[0]) for table_name in con.sql(query).fetchall()]
-
-    return tables
-
-
 def select_query_to_duckdb(
     con: DuckDBPyConnection,
     select_query: dict[str, Any],
     lookup_tables: list[str],
     tables: list[str],
 ) -> str:
+    original_query = select_query["query"]
+    join_tables = select_query["joins"]
+
+    # no lookup query case
+    if len(join_tables) == 0:
+        return original_query
+
+    # lookup query case
     mapping = dict(zip(tables, tables))
     table_name = select_query["table"]
     table_alias = select_query["alias"]
-    original_query = select_query["query"]
-
-    # For each lookup table, get macro definition
     for lookup_table in lookup_tables:
         macro_name, fields = get_macro_definition_by_name(con, f"{lookup_table}_macro")
         # TODO: move to func ?
@@ -295,7 +273,6 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
     rows = cursor.fetchall()
     # TODO: get schema from metadata
     if cursor.description:
-        logger.warning(cursor.description)
         columns = [desc[0] for desc in cursor.description]
         df = pl.DataFrame(rows, orient="row", schema=columns)
         return df

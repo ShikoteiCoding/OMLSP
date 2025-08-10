@@ -1,7 +1,8 @@
 import asyncio
 import jq
+import httpx
 
-from aiohttp import ClientSession, ClientResponse
+from aiohttp import ClientSession
 from typing import Any, Callable, Coroutine
 
 from loguru import logger
@@ -18,7 +19,7 @@ def parse_http_properties(params: dict[str, str]) -> dict:
         elif key == "jsonpath":
             if value.startswith("$"):
                 parsed_params["jsonpath"] = parse(value)
-            if value.startswith("."):
+            else:
                 parsed_params["jq"] = jq.compile(value)
         elif key.startswith("json."):
             parsed_params["json"][key.split(".")[1]] = value
@@ -27,7 +28,7 @@ def parse_http_properties(params: dict[str, str]) -> dict:
     return parsed_params
 
 
-async def request(
+async def async_request(
     client: ClientSession,
     url: str,
     jsonpath: Any = None,
@@ -47,7 +48,8 @@ async def request(
             logger.debug(f"response for {url}: {response.status}")
 
             if response.ok:
-                return await parse_response(response, jsonpath, jq)
+                data = await response.json()
+                return parse_response(data, jsonpath, jq)
 
             # TODO: add retry on fail here
             try:
@@ -60,11 +62,37 @@ async def request(
         return []
 
 
-async def parse_response(
-    response: ClientResponse, jsonpath: Any = None, jq: Any = None
+def sync_request(
+    client: httpx.Client,
+    url: str,
+    jsonpath: Any = None,
+    jq: Any = None,
+    method: str = "GET",
+    headers: dict = {"Content-Type": "application/json"},
+    json: dict = {},
+    **kwargs,
 ) -> list[dict]:
-    data = await response.json()
+    try:
+        response = client.request(method=method, url=url, headers=headers, json=json)
+        logger.debug(f"response for {url}: {response.status_code}")
 
+        if response.is_success:
+            return parse_response(response.json(), jsonpath, jq)
+
+        # TODO: add retry on fail here
+        try:
+            response.raise_for_status()
+        except Exception as e:
+            logger.warning(f"unable to request: {e}")
+
+    except Exception as e:
+        logger.error(f"HTTP request failed: {e}")
+
+    # TODO: handle failure of sync task
+    return []
+
+
+def parse_response(data: dict, jsonpath: Any = None, jq: Any = None) -> list[dict]:
     if jsonpath:
         matches = jsonpath.find(data)
         return [{str(match.path): match.value} for match in matches]
@@ -85,20 +113,34 @@ async def parse_response(
 
 async def http_requester(properties: dict) -> list[dict]:
     client = ClientSession()
-    res = await request(client, **properties)
+    logger.debug(f"running request with properties: {properties}")
+    res = await async_request(client, **properties)
     await client.close()
     return res
 
 
+def sync_http_requester(properties: dict) -> list[dict]:
+    client = httpx.Client()
+    logger.debug(f"running request with properties: {properties}")
+    return sync_request(client, **properties)
+
+
 def build_http_requester(
-    properties: dict,
-) -> Callable[[], Coroutine[Any, Any, list[dict]]]:
+    properties: dict, is_async: bool = True
+) -> Callable[[], Coroutine[Any, Any, list[dict]]] | Callable[[], list[dict]]:
     http_properties = parse_http_properties(properties)
 
-    def _inner():
-        return http_requester(http_properties)
+    if is_async:
 
-    return _inner
+        def _async_inner():
+            return http_requester(http_properties)
+
+        return _async_inner
+
+    def _sync_inner():
+        return sync_http_requester(http_properties)
+
+    return _sync_inner
 
 
 if __name__ == "__main__":
@@ -111,7 +153,7 @@ if __name__ == "__main__":
         "jsonpath": "$.url",
     }
 
-    _http_requester = build_http_requester(properties)
+    _http_requester = build_http_requester(properties, is_async=True)
 
-    res = asyncio.run(_http_requester())
+    res = asyncio.run(_http_requester())  # type: ignore
     print(res)

@@ -196,11 +196,14 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
     return {}
 
 
-def parse_select(statement: exp.Select) -> tuple[exp.Select, list[str], str, str, str]:
+def parse_select(
+    statement: exp.Select,
+) -> tuple[exp.Select, list[str], str, str, str, list[dict[str, str]]]:
     columns = []
     table_name = ""
     table_alias = ""
     where = ""
+    join_tables = []
 
     statement = statement.copy()
 
@@ -221,9 +224,11 @@ def parse_select(statement: exp.Select) -> tuple[exp.Select, list[str], str, str
     # TODO: change find all with more robust ?
     for table in statement.find_all(exp.Table):
         if isinstance(table.parent, exp.Join):
+            table_exp = table
+            join_tables.append({str(table_exp.name): str(table_exp.alias_or_name)})
             table.set("this", exp.to_identifier(f"${str(table.name)}"))
 
-    return statement, columns, table_name, table_alias, where
+    return statement, columns, table_name, table_alias, where, join_tables
 
 
 def process_select_statement(statement: exp.Select) -> dict[str, Any]:
@@ -238,12 +243,15 @@ def process_select_statement(statement: exp.Select) -> dict[str, Any]:
         f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
     )
     select_dict = {}
-    updated_select_statement, columns, table, alias, where = parse_select(statement)
+    updated_select_statement, columns, table, alias, where, joins = parse_select(
+        statement
+    )
 
     select_dict["columns"] = columns
     select_dict["table"] = table
     select_dict["alias"] = alias
     select_dict["where"] = where
+    select_dict["joins"] = joins
     select_dict["query"] = get_duckdb_sql(updated_select_statement)
 
     return select_dict

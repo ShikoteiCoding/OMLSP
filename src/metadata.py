@@ -41,3 +41,21 @@ def create_macro_definition(
     VALUES ('{macro_name}', {fields});
     """
     con.sql(query)
+
+
+def get_lookup_tables(con: DuckDBPyConnection) -> list:
+    query = """
+        SELECT table_name FROM duckdb_tables WHERE temporary IS TRUE;
+        """
+    temp_tables = [str(table_name[0]) for table_name in con.sql(query).fetchall()]
+
+    return temp_tables
+
+
+def get_tables(con: DuckDBPyConnection) -> list:
+    query = """
+        SELECT table_name FROM duckdb_tables WHERE temporary IS FALSE;
+        """
+    tables = [str(table_name[0]) for table_name in con.sql(query).fetchall()]
+
+    return tables
