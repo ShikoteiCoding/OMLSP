@@ -31,18 +31,7 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
                 # TODO: handle multiple queries
                 first_query = select_queries[0]
                 output = handle_select(con, first_query)
-
                 writer.write(f"{output}\n\n".encode())
-
-                # query = select_queries[0].get("query", sql_content.strip())
-                # cursor = con.execute(query)
-                # rows = cursor.fetchall()
-                # if cursor.description and len(rows) > 0:
-                #    columns = [desc[0] for desc in cursor.description]
-                #    df = pl.DataFrame(rows, schema=columns, orient="row")
-                #    writer.write(f"{df}\n\n".encode())
-                # else:
-                #    writer.write("No rows returned\n\n".encode())
 
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
