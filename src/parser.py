@@ -196,9 +196,10 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
     return {}
 
 
-def parse_select(statement: exp.Select) -> tuple[exp.Select, list[str], str, str]:
+def parse_select(statement: exp.Select) -> tuple[exp.Select, list[str], str, str, str]:
     columns = []
-    table = ""
+    table_name = ""
+    table_alias = ""
     where = ""
 
     statement = statement.copy()
@@ -209,7 +210,9 @@ def parse_select(statement: exp.Select) -> tuple[exp.Select, list[str], str, str
 
     from_clause = statement.args.get("from")
     if from_clause:
-        table = str(get_name(from_clause.this))
+        table_expr = from_clause.this
+        table_name = str(table_expr.name)
+        table_alias = str(table_expr.alias_or_name)
 
     where_clause = statement.args.get("where")
     if where_clause:
@@ -220,7 +223,7 @@ def parse_select(statement: exp.Select) -> tuple[exp.Select, list[str], str, str
         if isinstance(table.parent, exp.Join):
             table.set("this", exp.to_identifier(f"${str(table.name)}"))
 
-    return statement, columns, table, where
+    return statement, columns, table_name, table_alias, where
 
 
 def process_select_statement(statement: exp.Select) -> dict[str, Any]:
@@ -235,11 +238,11 @@ def process_select_statement(statement: exp.Select) -> dict[str, Any]:
         f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
     )
     select_dict = {}
-    updated_select_statement, columns, table, where = parse_select(statement)
-    logger.warning(updated_select_statement)
+    updated_select_statement, columns, table, alias, where = parse_select(statement)
 
     select_dict["columns"] = columns
     select_dict["table"] = table
+    select_dict["alias"] = alias
     select_dict["where"] = where
     select_dict["query"] = get_duckdb_sql(updated_select_statement)
 

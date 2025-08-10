@@ -2,6 +2,7 @@ import asyncio
 import polars as pl
 import pyarrow as pa
 import time
+import re
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.job import Job
@@ -12,10 +13,12 @@ from datetime import datetime, timezone
 from loguru import logger
 from typing import Any, Callable, Coroutine
 
+from string import Template
+
 from inout import persist
+from metadata import create_macro_definition, get_macro_definition_by_name
 from utils import MutableInteger
 from requester import build_http_requester
-from string import Template
 
 
 def infer_properties(
@@ -182,19 +185,22 @@ def register_lookup_table_executable(
     )
     logger.debug(f"registered function: {func_name}")
 
+    # TODO: wrap SQL in function
     # register macro (to be injected in place of sql)
+    func_def = f"{func_name}({','.join(dynamic_columns)})"
+    macro_def = f"{macro_name}(table_name, {','.join(dynamic_columns)})"
     connection.sql(f"""
-        CREATE OR REPLACE MACRO {macro_name}(table_name, {",".join(dynamic_columns)}) AS TABLE
+        CREATE OR REPLACE MACRO {macro_def} AS TABLE
         SELECT
             {output_cols}
         FROM (
         SELECT
-            {func_name}({",".join(dynamic_columns)}) AS struct
+            {func_def} AS struct
         FROM query_table(table_name)
         );
     """)
     logger.debug(f"registered macro: {macro_name}")
-    # TODO: save macro into metadata table
+    create_macro_definition(connection, macro_name, dynamic_columns)
 
     return macro_name
 
@@ -250,21 +256,57 @@ def select_query_to_duckdb(
     tables: list[str],
 ) -> str:
     mapping = dict(zip(tables, tables))
-
-    for lookup_table in lookup_tables:
-        mapping[lookup_table] = f"{lookup_table}_macro"
-
-    # TODO: substitute table names with mapping values
-    # TODO: find macro and their substitute
-
-    return ""
-
-
-# TODO: rename
-def handle_select(con: DuckDBPyConnection, select_query: dict[str, Any]) -> str:
-    logger.warning(select_query)
     table_name = select_query["table"]
+    table_alias = select_query["alias"]
+    original_query = select_query["query"]
 
+    # For each lookup table, get macro definition
+    for lookup_table in lookup_tables:
+        macro_name, fields = get_macro_definition_by_name(con, f"{lookup_table}_macro")
+        # TODO: move to func ?
+        dynamic_macro_stmt = f'{macro_name}("{table_name}", {",".join([f"{table_alias}.{field}" for field in fields])})'
+        mapping[lookup_table] = dynamic_macro_stmt
+
+    # Substritute lookup table name with query
+    query = Template(original_query).substitute(mapping)
+
+    # Remove surrounding quote from parse_select
+    # And add AS statement in join from placeholder name
+    # TODO: AS statement in join should be table OR alias
+    for lookup_table in lookup_tables:
+        subst_string = mapping[lookup_table]
+        matches = [
+            (m.start(), m.end()) for m in re.finditer(re.escape(subst_string), query)
+        ][0]
+        query = (
+            query[0 : matches[0] - 1]
+            + query[matches[0] : matches[1]]
+            + f" AS {lookup_table}"
+            + query[matches[1] + 1 : len(query)]
+        )
+
+    logger.debug(f"new overwritten select statement: {query}")
+    return query
+
+
+def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
+    query = duckdb_sql.strip()
+    cursor = con.execute(query)
+    rows = cursor.fetchall()
+    # TODO: get schema from metadata
+    if cursor.description:
+        logger.warning(cursor.description)
+        columns = [desc[0] for desc in cursor.description]
+        df = pl.DataFrame(rows, orient="row", schema=columns)
+        return df
+
+    return pl.DataFrame()
+
+
+def handle_select(
+    con: DuckDBPyConnection, select_query: dict[str, Any]
+) -> str | pl.DataFrame:
+    table_name = select_query["table"]
     lookup_tables = get_lookup_tables(con)
     tables = get_tables(con)
 
@@ -274,8 +316,7 @@ def handle_select(con: DuckDBPyConnection, select_query: dict[str, Any]) -> str:
         return msg
 
     duckdb_sql = select_query_to_duckdb(con, select_query, lookup_tables, tables)
-
-    return duckdb_sql
+    return duckdb_to_pl(con, duckdb_sql)
 
 
 if __name__ == "__main__":

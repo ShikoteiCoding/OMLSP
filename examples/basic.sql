@@ -33,7 +33,14 @@ WITH (
 
 -- TODO
 SELECT 
-    *
+    ALT.symbol,
+    start_time,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    amount
 FROM all_tickers AS ALT
 LEFT JOIN ohlc ON
     ALT.symbol = ohlc.symbol;

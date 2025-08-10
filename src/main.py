@@ -7,6 +7,7 @@ from pathlib import Path
 from parser import parse_sql_statements
 from engine import run_executables
 from entrypoint import start_server
+from metadata import init_metadata
 
 
 async def main():
@@ -21,6 +22,7 @@ async def main():
 
     # TODO: persist on disk
     con: DuckDBPyConnection = connect(database=":memory:")
+    init_metadata(con)
 
     with open(sql_filepath, "rb") as fo:
         sql_content = fo.read().decode("utf-8")
