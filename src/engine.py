@@ -64,7 +64,8 @@ def build_scalar_udf(
             # need different scalar udf return type to handle
             # and most likely an explode in macro
             if isinstance(response, list):
-                return default_response | response[-1]
+                if len(response) >= 1:
+                    default_response |= response[-1]
 
         except Exception as e:
             logger.exception(f"HTTP request failed: {e}")
