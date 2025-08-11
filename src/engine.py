@@ -2,12 +2,13 @@ import asyncio
 import polars as pl
 import time
 import re
+import pyarrow as pa
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.job import Job
 from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
-from duckdb.typing import VARCHAR
+from duckdb.typing import VARCHAR, DuckDBPyType
 from datetime import datetime, timezone
 from loguru import logger
 from typing import Any, Callable, Coroutine
@@ -24,6 +25,14 @@ from metadata import (
 from utils import MutableInteger
 from requester import build_http_requester
 from parser import CreateTableParams, CreateLookupTableParams, SelectParams
+from concurrent.futures import ThreadPoolExecutor
+
+# TODO: enrich with more type
+DUCKDB_TO_PYARROW_PYTYPE = {
+    "VARCHAR": pa.string(),
+    "TIMESTAMP": pa.timestamp("us"),
+    "FLOAT": pa.float32(),  # TODO: verify duckdb internal floating point
+}
 
 
 def build_lookup_properties(
@@ -42,9 +51,24 @@ def build_lookup_properties(
 
 
 def build_scalar_udf(
-    properties: dict[str, str], dynamic_columns: list[str]
+    properties: dict[str, str],
+    dynamic_columns: list[str],
+    pyarrow: bool = False,
+    return_type: DuckDBPyType = VARCHAR,
 ) -> Callable:
     arity = len(dynamic_columns)
+
+    if pyarrow:
+        # pyarrow_return_type = pa.struct()
+        pyarrow_child_types = []
+        for subtype in return_type.children:
+            logger.info(subtype)
+            pyarrow_child_types.append(
+                pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
+            )
+        pyarrow_return_type = pa.struct(pyarrow_child_types)
+
+        logger.info(pyarrow_child_types)
 
     def udf1(a1):
         # TODO: build default response from lookup table schema
@@ -72,7 +96,47 @@ def build_scalar_udf(
 
         return default_response
 
+    def udf1pyarrow(a1):
+        els = []
+        for chunk in a1.chunks:
+            els.extend(chunk.to_pylist())
+
+        def _inner(el):
+            context = dict(zip(dynamic_columns, [el]))
+            logger.info(type(context))
+            logger.info(context)
+            lookup_properties = build_lookup_properties(properties, context)
+            default_response = context.copy()
+
+            requester = build_http_requester(lookup_properties, is_async=False)
+
+            try:
+                response = requester()
+
+                if isinstance(response, dict):
+                    return context | response
+
+                # TODO: handle array jq responses
+                # need different scalar udf return type to handle
+                # and most likely an explode in macro
+                if isinstance(response, list):
+                    if len(response) >= 1:
+                        default_response |= response[-1]
+
+            except Exception as e:
+                logger.exception(f"HTTP request failed: {e}")
+
+            return default_response
+
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(_inner, els))
+
+        logger.info(results)
+        return pa.array(results, type=pyarrow_return_type)
+
     if arity == 1:
+        if pyarrow:
+            return udf1pyarrow
         return udf1
     else:
         raise ValueError("Too many dynamic columns (max 1 supported)")
@@ -161,10 +225,12 @@ def register_lookup_table_executable(
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
-    func = build_scalar_udf(properties, dynamic_columns)
-
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
+
+    # TODO: move all "create_function" arguments inside build_scalar_udf
+    # to avoid verbose function here
+    func = build_scalar_udf(properties, dynamic_columns, True, return_type)
 
     # register scalar for row to row http call
     connection.create_function(
@@ -172,7 +238,7 @@ def register_lookup_table_executable(
         function=func,  # type: ignore
         parameters=[VARCHAR for _ in range(len(dynamic_columns))],  # type: ignore
         return_type=return_type,  # type: ignore
-        type="native",  # type: ignore
+        type="arrow",  # type: ignore
     )
     logger.debug(f"registered function: {func_name}")
 
