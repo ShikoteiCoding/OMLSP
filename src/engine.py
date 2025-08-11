@@ -1,7 +1,7 @@
 import asyncio
 import polars as pl
-import pyarrow as pa
 import time
+import re
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.job import Job
@@ -12,13 +12,20 @@ from datetime import datetime, timezone
 from loguru import logger
 from typing import Any, Callable, Coroutine
 
-from inout import persist
-from utils import MutableInteger
-from requester import build_http_requester
 from string import Template
 
+from inout import persist
+from metadata import (
+    create_macro_definition,
+    get_macro_definition_by_name,
+    get_lookup_tables,
+    get_tables,
+)
+from utils import MutableInteger
+from requester import build_http_requester
 
-def infer_properties(
+
+def build_lookup_properties(
     properties: dict[str, str], context: dict[str, str]
 ) -> dict[str, str]:
     new_props = {}
@@ -39,47 +46,34 @@ def build_scalar_udf(
     arity = len(dynamic_columns)
 
     def udf1(a1):
-        context = dict(zip(dynamic_columns, a1))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+        # TODO: build default response from lookup table schema
+        context = dict(zip(dynamic_columns, [a1]))
+        lookup_properties = build_lookup_properties(properties, context)
+        default_response = context.copy()
 
-    def udf2(a1, a2):
-        context = dict(zip(dynamic_columns, a1 + a2))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+        requester = build_http_requester(lookup_properties, is_async=False)
 
-    def udf3(a1, a2, a3):
-        context = dict(zip(dynamic_columns, a1 + a2 + a3))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+        try:
+            response = requester()
 
-    def udf4(a1, a2, a3, a4):
-        context = dict(zip(dynamic_columns, a1 + a2 + a3 + a4))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+            if isinstance(response, dict):
+                return context | response
 
-    def udf5(a1, a2, a3, a4, a5):
-        context = dict(zip(dynamic_columns, a1 + a2 + a3 + a4 + a5))
-        inferred_properties = infer_properties(properties, context)
-        requester = build_http_requester(inferred_properties)
-        return pa.array(requester(), type=pa.string())
+            # TODO: handle array jq responses
+            # need different scalar udf return type to handle
+            # and most likely an explode in macro
+            if isinstance(response, list):
+                return default_response | response[-1]
+
+        except Exception as e:
+            logger.exception(f"HTTP request failed: {e}")
+
+        return default_response
 
     if arity == 1:
         return udf1
-    elif arity == 2:
-        return udf2
-    elif arity == 3:
-        return udf3
-    elif arity == 4:
-        return udf4
-    elif arity == 5:
-        return udf5
     else:
-        raise ValueError("Too many dynamic columns (max 5 supported)")
+        raise ValueError("Too many dynamic columns (max 1 supported)")
 
 
 async def processor(
@@ -103,7 +97,6 @@ async def processor(
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
-        print(df)
         await persist(df, batch_id, epoch, table_name, connection)
 
     batch_id.increment()
@@ -164,13 +157,10 @@ def register_lookup_table_executable(
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
-
     func = build_scalar_udf(properties, dynamic_columns)
 
+    # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
-    output_cols = ", ".join(
-        [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
-    )
 
     # register scalar for row to row http call
     connection.create_function(
@@ -182,18 +172,26 @@ def register_lookup_table_executable(
     )
     logger.debug(f"registered function: {func_name}")
 
+    # TODO: wrap SQL in function
     # register macro (to be injected in place of sql)
+    func_def = f"{func_name}({','.join(dynamic_columns)})"
+    macro_def = f"{macro_name}(table_name, {','.join(dynamic_columns)})"
+    output_cols = ", ".join(
+        [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
+    )
+
     connection.sql(f"""
-        CREATE OR REPLACE MACRO {macro_name}(table_name, {",".join(dynamic_columns)}) AS TABLE
+        CREATE OR REPLACE MACRO {macro_def} AS TABLE
         SELECT
             {output_cols}
         FROM (
-        SELECT
-            {func_name}({",".join(dynamic_columns)}) AS struct
-        FROM query_table(table_name)
+            SELECT
+                {func_def} AS struct
+            FROM query_table(table_name)
         );
     """)
     logger.debug(f"registered macro: {macro_name}")
+    create_macro_definition(connection, macro_name, dynamic_columns)
 
     return macro_name
 
@@ -222,6 +220,80 @@ async def run_executables(parsed_queries: list[dict], connection: DuckDBPyConnec
             logger.debug(macro_name)
 
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+
+
+def select_query_to_duckdb(
+    con: DuckDBPyConnection,
+    select_query: dict[str, Any],
+    lookup_tables: list[str],
+    tables: list[str],
+) -> str:
+    original_query = select_query["query"]
+    join_tables = select_query["joins"]
+
+    # no lookup query case
+    if len(join_tables) == 0:
+        return original_query
+
+    # lookup query case
+    mapping = dict(zip(tables, tables))
+    table_name = select_query["table"]
+    table_alias = select_query["alias"]
+    for lookup_table in lookup_tables:
+        macro_name, fields = get_macro_definition_by_name(con, f"{lookup_table}_macro")
+        # TODO: move to func ?
+        dynamic_macro_stmt = f'{macro_name}("{table_name}", {",".join([f"{table_alias}.{field}" for field in fields])})'
+        mapping[lookup_table] = dynamic_macro_stmt
+
+    # Substritute lookup table name with query
+    query = Template(original_query).substitute(mapping)
+
+    # Remove surrounding quote from parse_select
+    # And add AS statement in join from placeholder name
+    # TODO: AS statement in join should be table OR alias
+    for lookup_table in lookup_tables:
+        subst_string = mapping[lookup_table]
+        matches = [
+            (m.start(), m.end()) for m in re.finditer(re.escape(subst_string), query)
+        ][0]
+        query = (
+            query[0 : matches[0] - 1]
+            + query[matches[0] : matches[1]]
+            + f" AS {lookup_table}"
+            + query[matches[1] + 1 : len(query)]
+        )
+
+    logger.debug(f"new overwritten select statement: {query}")
+    return query
+
+
+def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
+    query = duckdb_sql.strip()
+    cursor = con.execute(query)
+    rows = cursor.fetchall()
+    # TODO: get schema from metadata
+    if cursor.description:
+        columns = [desc[0] for desc in cursor.description]
+        df = pl.DataFrame(rows, orient="row", schema=columns)
+        return df
+
+    return pl.DataFrame()
+
+
+def handle_select(
+    con: DuckDBPyConnection, select_query: dict[str, Any]
+) -> str | pl.DataFrame:
+    table_name = select_query["table"]
+    lookup_tables = get_lookup_tables(con)
+    tables = get_tables(con)
+
+    if table_name in lookup_tables:
+        msg = f"{table_name} is a lookup table, you cannot use it in FROM."
+        logger.error(msg)
+        return msg
+
+    duckdb_sql = select_query_to_duckdb(con, select_query, lookup_tables, tables)
+    return duckdb_to_pl(con, duckdb_sql)
 
 
 if __name__ == "__main__":

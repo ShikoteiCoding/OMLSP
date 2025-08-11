@@ -18,6 +18,7 @@ dependencies = [
   "pyarrow>=21.0.0",
   "sqlglot==27.1.0",
   "prompt-toolkit>=3.0",
+  "httpx>=0.28.1",
 ]
 
 [dependency-groups]
