@@ -17,19 +17,19 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
         sql_content, writer, client_id = await query_queue.get()
         try:
             logger.info(f"Client {client_id} - Received query: {sql_content.strip()}")
-            create_queries, select_queries = parse_sql_statements(
+            create_param_list, select_params_list = parse_sql_statements(
                 sql_content, properties_schema
             )
             logger.debug(
-                f"Client {client_id} - Create queries: {create_queries} - Select queries: {select_queries}"
+                f"Client {client_id} - Create queries: {create_param_list} - Select queries: {select_params_list}"
             )
 
-            if create_queries:
-                asyncio.create_task(run_executables(create_queries, con))
+            if create_param_list:
+                asyncio.create_task(run_executables(create_param_list, con))
                 writer.write("query sent\n\n".encode())
-            if select_queries:
+            if select_params_list:
                 # TODO: handle multiple queries
-                first_query = select_queries[0]
+                first_query = select_params_list[0]
                 output = handle_select(con, first_query)
                 writer.write(f"{output}\n\n".encode())
 

@@ -1,8 +1,9 @@
 import jsonschema
 
-from sqlglot import parse, exp
-from typing import Any
+from collections import namedtuple
 from loguru import logger
+from sqlglot import parse, exp
+
 
 TYPE_MAPPING = {
     "TEXT": ("str", "VARCHAR"),
@@ -19,6 +20,15 @@ TYPE_MAPPING = {
 VALID_STATEMENTS = (
     exp.Create,
     exp.Select,
+)
+
+CreateTableParams = namedtuple("CreateParams", ["name", "properties", "query"])
+CreateLookupTableParams = namedtuple(
+    "CreateLookupTableParams",
+    ["name", "properties", "query", "dynamic_columns", "columns"],
+)
+SelectParams = namedtuple(
+    "SelectParams", ["columns", "table", "alias", "where", "joins", "query"]
 )
 
 
@@ -143,7 +153,9 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
     return [prop for prop in statement.args.get("properties", [])]
 
 
-def process_create_statement(statement: exp.Create, properties_schema: dict) -> dict:
+def process_create_statement(
+    statement: exp.Create, properties_schema: dict
+) -> CreateTableParams | CreateLookupTableParams | None:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
     is_temp = isinstance(
         get_properties_from_create(statement)[0], exp.TemporaryProperty
@@ -165,10 +177,11 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
             "this", updated_table_statement
         )  # overwrite modified table statement
 
-        table_dict["name"] = table_name
-        table_dict["properties"] = properties
-        table_dict["query"] = get_duckdb_sql(updated_create_statement)
-        return table_dict
+        return CreateTableParams(
+            name=table_name,
+            properties=properties,
+            query=get_duckdb_sql(updated_create_statement),
+        )
 
     # process separately to handle the udft logic here
     elif str(statement.kind) == "TABLE" and is_temp:
@@ -190,10 +203,16 @@ def process_create_statement(statement: exp.Create, properties_schema: dict) -> 
         table_dict["dynamic_columns"] = dynamic_columns
         table_dict["columns"] = columns
 
-        return table_dict
+        return CreateLookupTableParams(
+            name=table_name,
+            properties=properties,
+            query=get_duckdb_sql(updated_create_statement),
+            dynamic_columns=dynamic_columns,
+            columns=columns,
+        )
 
     # TODO: Process views, materialized views, sinks and functions here
-    return {}
+    return None
 
 
 def parse_select(
@@ -231,7 +250,7 @@ def parse_select(
     return statement, columns, table_name, table_alias, where, join_tables
 
 
-def process_select_statement(statement: exp.Select) -> dict[str, Any]:
+def process_select_statement(statement: exp.Select) -> SelectParams:
     """
     Parse a SELECT query into a dictionary
     Args:
@@ -242,24 +261,23 @@ def process_select_statement(statement: exp.Select) -> dict[str, Any]:
     assert isinstance(statement, exp.Select), (
         f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
     )
-    select_dict = {}
     updated_select_statement, columns, table, alias, where, joins = parse_select(
         statement
     )
 
-    select_dict["columns"] = columns
-    select_dict["table"] = table
-    select_dict["alias"] = alias
-    select_dict["where"] = where
-    select_dict["joins"] = joins
-    select_dict["query"] = get_duckdb_sql(updated_select_statement)
-
-    return select_dict
+    return SelectParams(
+        columns=columns,
+        table=table,
+        alias=alias,
+        where=where,
+        joins=joins,
+        query=get_duckdb_sql(updated_select_statement),
+    )
 
 
 def parse_sql_statements(
     query: str, properties_schema: dict
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[CreateTableParams | CreateLookupTableParams], list[SelectParams]]:
     """
     Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries
 

@@ -23,6 +23,7 @@ from metadata import (
 )
 from utils import MutableInteger
 from requester import build_http_requester
+from parser import CreateTableParams, CreateLookupTableParams, SelectParams
 
 
 def build_lookup_properties(
@@ -63,7 +64,8 @@ def build_scalar_udf(
             # need different scalar udf return type to handle
             # and most likely an explode in macro
             if isinstance(response, list):
-                return default_response | response[-1]
+                if len(response) >= 1:
+                    default_response |= response[-1]
 
         except Exception as e:
             logger.exception(f"HTTP request failed: {e}")
@@ -111,18 +113,20 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
         await asyncio.sleep(3600)
 
 
-def register_table(query_config: dict, connection: DuckDBPyConnection) -> None:
-    query = query_config["query"]
-    connection.execute(query_config["query"])
-    logger.debug(query)
+def register_table(
+    create_table_params: CreateTableParams, connection: DuckDBPyConnection
+) -> None:
+    query = create_table_params.query
+    connection.execute(query)
+    logger.debug(f"running query: {query}")
 
 
 def build_one_runner(
-    query_as_dict: dict, connection: DuckDBPyConnection
+    create_table_params: CreateTableParams, connection: DuckDBPyConnection
 ) -> Coroutine[Any, Any, None]:
-    properties = query_as_dict["properties"]
-    table_name = query_as_dict["name"]
-    cron_expr = str(properties.get("schedule"))
+    properties = create_table_params.properties
+    table_name = create_table_params.name
+    cron_expr = str(properties["schedule"])
     scheduler = AsyncIOScheduler()
 
     # TODO:  keep batch_id in metastore
@@ -148,12 +152,12 @@ def build_one_runner(
 
 
 def register_lookup_table_executable(
-    query_as_dict: dict, connection: DuckDBPyConnection
+    create_table_params: CreateLookupTableParams, connection: DuckDBPyConnection
 ) -> str:
-    properties = query_as_dict["properties"]
-    table_name = query_as_dict["name"]
-    dynamic_columns = query_as_dict["dynamic_columns"]
-    columns = query_as_dict["columns"]
+    properties = create_table_params.properties
+    table_name = create_table_params.name
+    dynamic_columns = create_table_params.dynamic_columns
+    columns = create_table_params.columns
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
@@ -196,40 +200,39 @@ def register_lookup_table_executable(
     return macro_name
 
 
-async def run_executables(parsed_queries: list[dict], connection: DuckDBPyConnection):
+async def run_executables(
+    statement_params: list[CreateTableParams | CreateLookupTableParams],
+    connection: DuckDBPyConnection,
+):
     tasks = []
 
-    for table_config in parsed_queries:
-        properties = table_config["properties"]
-        name = table_config["name"]
+    for table_params in statement_params:
+        name = table_params.name
 
         # register table, temp tables (TODO: views / materialized views / sink)
-        register_table(table_config, connection)
-
-        # start runner for non lookup tables
-        if properties["connector"] == "http":
+        if isinstance(table_params, CreateTableParams):
+            register_table(table_params, connection)
             tasks.append(
                 asyncio.create_task(
-                    build_one_runner(table_config, connection), name=f"{name}_runner"
+                    build_one_runner(table_params, connection), name=f"{name}_runner"
                 )
             )
 
         # handle lookup table
-        if properties["connector"] == "lookup-http":
-            macro_name = register_lookup_table_executable(table_config, connection)
-            logger.debug(macro_name)
+        if isinstance(table_params, CreateLookupTableParams):
+            register_lookup_table_executable(table_params, connection)
 
     _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
 
 def select_query_to_duckdb(
     con: DuckDBPyConnection,
-    select_query: dict[str, Any],
+    select_query: SelectParams,
     lookup_tables: list[str],
     tables: list[str],
 ) -> str:
-    original_query = select_query["query"]
-    join_tables = select_query["joins"]
+    original_query = select_query.query
+    join_tables = select_query.joins
 
     # no lookup query case
     if len(join_tables) == 0:
@@ -237,8 +240,8 @@ def select_query_to_duckdb(
 
     # lookup query case
     mapping = dict(zip(tables, tables))
-    table_name = select_query["table"]
-    table_alias = select_query["alias"]
+    table_name = select_query.table
+    table_alias = select_query.alias
     for lookup_table in lookup_tables:
         macro_name, fields = get_macro_definition_by_name(con, f"{lookup_table}_macro")
         # TODO: move to func ?
@@ -281,9 +284,9 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
 
 def handle_select(
-    con: DuckDBPyConnection, select_query: dict[str, Any]
+    con: DuckDBPyConnection, select_query: SelectParams
 ) -> str | pl.DataFrame:
-    table_name = select_query["table"]
+    table_name = select_query.table
     lookup_tables = get_lookup_tables(con)
     tables = get_tables(con)
 
