@@ -51,7 +51,7 @@ SELECT
     amount
 FROM all_tickers AS ALT
 LEFT JOIN ohlc ON
-    ALT.symbol = ohlc.symbol
+    ALT.symbol = ohlc.symbol;
 
 -- Simple query on non lookup table
 SELECT * 

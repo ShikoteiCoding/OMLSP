@@ -117,10 +117,12 @@ def build_http_requester(
 
         return _async_inner
 
-    def _sync_inner():
-        return sync_http_requester(http_properties)
+    else:
 
-    return _sync_inner
+        def _sync_inner():
+            return sync_http_requester(http_properties)
+
+        return _sync_inner
 
 
 if __name__ == "__main__":

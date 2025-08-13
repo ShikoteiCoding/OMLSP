@@ -9,9 +9,11 @@ from apscheduler.job import Job
 from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.typing import VARCHAR, DuckDBPyType
+from duckdb.functional import ARROW, SPECIAL
 from datetime import datetime, timezone
 from loguru import logger
-from typing import Any, Callable, Coroutine
+from typing import Any, Coroutine, Callable
+from types import FunctionType
 
 from string import Template
 
@@ -55,7 +57,7 @@ def build_scalar_udf(
     dynamic_columns: list[str],
     pyarrow: bool = False,
     return_type: DuckDBPyType = VARCHAR,
-) -> Callable:
+) -> Callable[..., pa.Array]:
     arity = len(dynamic_columns)
 
     if pyarrow:
@@ -92,7 +94,7 @@ def build_scalar_udf(
 
         return default_response
 
-    def udf1pyarrow(a1):
+    def udf1pyarrow(a1: Any) -> pa.Array:
         els = []
         for chunk in a1.chunks:
             els.extend(chunk.to_pylist())
@@ -139,7 +141,7 @@ async def processor(
     table_name: str,
     batch_id: MutableInteger,
     start_time: datetime,
-    http_requester: Callable,
+    http_requester: FunctionType,
     connection: Any,
 ) -> None:
     # TODO: no provided api execution_time
@@ -229,11 +231,11 @@ def register_lookup_table_executable(
     # register scalar for row to row http call
     connection.create_function(
         name=func_name,
-        function=func,  # type: ignore
-        parameters=[VARCHAR for _ in range(len(dynamic_columns))],  # type: ignore
-        return_type=return_type,  # type: ignore
-        type="arrow",  # type: ignore
-        null_handling="SPECIAL",
+        function=func, # type: ignore
+        parameters=[VARCHAR for _ in range(len(dynamic_columns))],
+        return_type=return_type,
+        type=ARROW,
+        null_handling=SPECIAL,
     )
     logger.debug(f"registered function: {func_name}")
 
