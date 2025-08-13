@@ -9,7 +9,7 @@ WITH (
     'url' = 'https://api.kucoin.com/api/v1/market/allTickers',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'jsonpath' = '.data.ticker[:10][] | {symbol, symbolName, buy, sell}',
+    'jq' = '.data.ticker[:10][] | {symbol, symbolName, buy, sell}',
     'headers.Content-Type' = 'application/json'
 );
 
@@ -27,7 +27,7 @@ WITH (
     'connector' = 'lookup-http',
     'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1753977000&endAt=1753977300',
     'method' = 'GET',
-    'jsonpath' = '.data[] | {
+    'jq' = '.data[] | {
         start_time: (.[0] | tonumber),
         open: (.[1] | tonumber),
         high: (.[2] | tonumber),
@@ -52,7 +52,6 @@ SELECT
 FROM all_tickers AS ALT
 LEFT JOIN ohlc ON
     ALT.symbol = ohlc.symbol
-WHERE ALT.symbol LIKE '%MNDE';
 
 -- Simple query on non lookup table
 SELECT * 
