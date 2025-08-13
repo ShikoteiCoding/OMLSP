@@ -131,7 +131,6 @@ def build_scalar_udf(
         with ThreadPoolExecutor() as executor:
             results = list(executor.map(_inner, els))
 
-        logger.info(results)
         return pa.array(results, type=pyarrow_return_type)
 
     if arity == 1:
@@ -239,6 +238,7 @@ def register_lookup_table_executable(
         parameters=[VARCHAR for _ in range(len(dynamic_columns))],  # type: ignore
         return_type=return_type,  # type: ignore
         type="arrow",  # type: ignore
+        null_handling="SPECIAL",
     )
     logger.debug(f"registered function: {func_name}")
 
