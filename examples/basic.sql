@@ -28,7 +28,7 @@ WITH (
     'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1753977000&endAt=1753977300',
     'method' = 'GET',
     'jsonpath' = '.data[] | {
-        start_time: (.[0] | tonumber | . as $ts | ($ts | todate)),
+        start_time: (.[0] | tonumber),
         open: (.[1] | tonumber),
         high: (.[2] | tonumber),
         low: (.[3] | tonumber),
