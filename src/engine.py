@@ -9,9 +9,11 @@ from apscheduler.job import Job
 from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.typing import VARCHAR, DuckDBPyType
+from duckdb.functional import ARROW, SPECIAL
 from datetime import datetime, timezone
 from loguru import logger
-from typing import Any, Callable, Coroutine
+from typing import Any, Coroutine, Callable
+from types import FunctionType
 
 from string import Template
 
@@ -41,7 +43,7 @@ def build_lookup_properties(
     new_props = {}
 
     for key, value in properties.items():
-        if key in ["jsonpath", "method"]:  # TODO: ignore jsonpath for now
+        if key in ["jq", "method"]:  # TODO: ignore jq for now
             new_props[key] = value
             continue
         template = Template(value)
@@ -55,20 +57,16 @@ def build_scalar_udf(
     dynamic_columns: list[str],
     pyarrow: bool = False,
     return_type: DuckDBPyType = VARCHAR,
-) -> Callable:
+) -> Callable[..., pa.Array]:
     arity = len(dynamic_columns)
 
     if pyarrow:
-        # pyarrow_return_type = pa.struct()
         pyarrow_child_types = []
         for subtype in return_type.children:
-            logger.info(subtype)
             pyarrow_child_types.append(
                 pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
             )
         pyarrow_return_type = pa.struct(pyarrow_child_types)
-
-        logger.info(pyarrow_child_types)
 
     def udf1(a1):
         # TODO: build default response from lookup table schema
@@ -96,15 +94,13 @@ def build_scalar_udf(
 
         return default_response
 
-    def udf1pyarrow(a1):
+    def udf1pyarrow(a1: Any) -> pa.Array:
         els = []
         for chunk in a1.chunks:
             els.extend(chunk.to_pylist())
 
         def _inner(el):
             context = dict(zip(dynamic_columns, [el]))
-            logger.info(type(context))
-            logger.info(context)
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
 
@@ -145,7 +141,7 @@ async def processor(
     table_name: str,
     batch_id: MutableInteger,
     start_time: datetime,
-    http_requester: Callable,
+    http_requester: FunctionType,
     connection: Any,
 ) -> None:
     # TODO: no provided api execution_time
@@ -177,7 +173,8 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
 
 
 def register_table(
-    create_table_params: CreateTableParams, connection: DuckDBPyConnection
+    create_table_params: CreateTableParams | CreateLookupTableParams,
+    connection: DuckDBPyConnection,
 ) -> None:
     query = create_table_params.query
     connection.execute(query)
@@ -234,11 +231,11 @@ def register_lookup_table_executable(
     # register scalar for row to row http call
     connection.create_function(
         name=func_name,
-        function=func,  # type: ignore
-        parameters=[VARCHAR for _ in range(len(dynamic_columns))],  # type: ignore
-        return_type=return_type,  # type: ignore
-        type="arrow",  # type: ignore
-        null_handling="SPECIAL",
+        function=func, # type: ignore
+        parameters=[VARCHAR for _ in range(len(dynamic_columns))],
+        return_type=return_type,
+        type=ARROW,
+        null_handling=SPECIAL,
     )
     logger.debug(f"registered function: {func_name}")
 
@@ -274,10 +271,10 @@ async def run_executables(
 
     for table_params in statement_params:
         name = table_params.name
+        register_table(table_params, connection)
 
         # register table, temp tables (TODO: views / materialized views / sink)
         if isinstance(table_params, CreateTableParams):
-            register_table(table_params, connection)
             tasks.append(
                 asyncio.create_task(
                     build_one_runner(table_params, connection), name=f"{name}_runner"

@@ -6,7 +6,6 @@ from aiohttp import ClientSession
 from typing import Any, Callable, Coroutine
 
 from loguru import logger
-from jsonpath_ng import parse
 
 
 def parse_http_properties(params: dict[str, str]) -> dict:
@@ -16,11 +15,8 @@ def parse_http_properties(params: dict[str, str]) -> dict:
     for key, value in params.items():
         if key.startswith("headers."):
             parsed_params["headers"][key.split(".")[1]] = value
-        elif key == "jsonpath":
-            if value.startswith("$"):
-                parsed_params["jsonpath"] = parse(value)
-            else:
-                parsed_params["jq"] = jq.compile(value)
+        elif key == "jq":
+            parsed_params["jq"] = jq.compile(value)
         elif key.startswith("json."):
             parsed_params["json"][key.split(".")[1]] = value
         else:
@@ -31,7 +27,6 @@ def parse_http_properties(params: dict[str, str]) -> dict:
 async def async_request(
     client: ClientSession,
     url: str,
-    jsonpath: Any = None,
     jq: Any = None,
     method: str = "GET",
     headers={"Content-Type": "application/json"},
@@ -49,7 +44,7 @@ async def async_request(
 
             if response.ok:
                 data = await response.json()
-                return parse_response(data, jsonpath, jq)
+                return parse_response(data, jq)
 
             # TODO: add retry on fail here
             try:
@@ -65,7 +60,6 @@ async def async_request(
 def sync_request(
     client: httpx.Client,
     url: str,
-    jsonpath: Any = None,
     jq: Any = None,
     method: str = "GET",
     headers: dict = {"Content-Type": "application/json"},
@@ -77,7 +71,7 @@ def sync_request(
         logger.debug(f"response for {url}: {response.status_code}")
 
         if response.is_success:
-            return parse_response(response.json(), jsonpath, jq)
+            return parse_response(response.json(), jq)
 
         # TODO: add retry on fail here
         try:
@@ -92,23 +86,9 @@ def sync_request(
     return []
 
 
-def parse_response(data: dict, jsonpath: Any = None, jq: Any = None) -> list[dict]:
-    if jsonpath:
-        matches = jsonpath.find(data)
-        return [{str(match.path): match.value} for match in matches]
-
-    # TODO: new jq parsing, might be deprecating jsonpath
-    elif jq:
-        res = jq.input(data).all()
-        return res
-
-    elif isinstance(data, dict):
-        return [data]
-    elif isinstance(data, list):
-        return data
-    else:
-        logger.warning(f"No jsonpath provided or invalid response: {data}")
-        return []
+def parse_response(data: dict, jq: Any = None) -> list[dict]:
+    res = jq.input(data).all()
+    return res
 
 
 async def http_requester(properties: dict) -> list[dict]:
@@ -137,10 +117,12 @@ def build_http_requester(
 
         return _async_inner
 
-    def _sync_inner():
-        return sync_http_requester(http_properties)
+    else:
 
-    return _sync_inner
+        def _sync_inner():
+            return sync_http_requester(http_properties)
+
+        return _sync_inner
 
 
 if __name__ == "__main__":
@@ -150,7 +132,7 @@ if __name__ == "__main__":
         "url": "https://httpbin.org/get",
         "method": "GET",
         "scan.interval": "60s",
-        "jsonpath": "$.url",
+        "jq": ".url",
     }
 
     _http_requester = build_http_requester(properties, is_async=True)
