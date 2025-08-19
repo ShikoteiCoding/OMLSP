@@ -1,8 +1,12 @@
 import json
 import pytest
 
-from jsonschema.exceptions import ValidationError
-from src.parser import parse_sql_statements
+from src.parser import (
+    parse_sql_statements,
+    CreateTableParams,
+    CreateLookupTableParams,
+    SelectParams,
+)
 
 prop_schema_filepath = "src/properties.schema.json"
 
@@ -23,7 +27,7 @@ WITH (
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
     'schedule' = '*/5 * * * *',
-    'jsonpath' = '$.url'
+    'jq' = '.'
 );
 
 CREATE TABLE example_2 (
@@ -34,7 +38,7 @@ WITH (
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'jsonpath' = '$.url'
+    'jq' = '.'
 );
 
 CREATE TEMP TABLE lookup_example (
@@ -45,47 +49,46 @@ WITH (
     'url' = 'https://httpbin.org/get',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'jsonpath' = '$.url'
+    'jq' = '.'
 );
 """
 
 VALID_CREATE_RESULT = [
-    {
-        "name": "example",
-        "properties": {
+    CreateTableParams(
+        name="example",
+        properties={
             "connector": "http",
             "url": "https://httpbin.org/get",
             "method": "GET",
             "schedule": "*/5 * * * *",
-            "jsonpath": "$.url",
+            "jq": ".",
         },
-        "query": "CREATE TABLE example (url TEXT)",
-        "type": "table",
-    },
-    {
-        "name": "example_2",
-        "properties": {
+        query="CREATE TABLE example (url TEXT)",
+    ),
+    CreateTableParams(
+        name="example_2",
+        properties={
             "connector": "http",
             "url": "https://httpbin.org/get",
             "method": "GET",
             "schedule": "*/1 * * * *",
-            "jsonpath": "$.url",
+            "jq": ".",
         },
-        "query": "CREATE TABLE example_2 (url TEXT)",
-        "type": "table",
-    },
-    {
-        "name": "lookup_example",
-        "properties": {
+        query="CREATE TABLE example_2 (url TEXT)",
+    ),
+    CreateLookupTableParams(
+        name="lookup_example",
+        properties={
             "connector": "lookup-http",
             "url": "https://httpbin.org/get",
             "method": "GET",
             "schedule": "*/1 * * * *",
-            "jsonpath": "$.url",
+            "jq": ".",
         },
-        "query": "CREATE TEMPORARY TABLE lookup_example (url TEXT)",
-        "type": "table",
-    },
+        query="CREATE TEMPORARY TABLE lookup_example (url TEXT)",
+        dynamic_columns=["url"],
+        columns={"url": "TEXT"},
+    ),
 ]
 
 VALID_SELECT_QUERY = """
@@ -93,7 +96,14 @@ SELECT * FROM example;
 """
 
 VALID_SELECT_RESULT = [
-    {"columns": [""], "joins": [], "table": "example", "where": None}
+    SelectParams(
+        columns=[""],
+        joins=[],
+        table="example",
+        where="",
+        alias="example",
+        query="SELECT * FROM example",
+    )
 ]
 
 INVALID_QUERY_2 = """

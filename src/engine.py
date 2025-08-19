@@ -10,9 +10,11 @@ from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
+from duckdb.functional import ARROW, SPECIAL
 from datetime import datetime, timezone
 from loguru import logger
-from typing import Any, Callable, Coroutine
+from typing import Any, Coroutine, Callable
+from types import FunctionType
 
 from string import Template
 
@@ -52,7 +54,7 @@ def build_lookup_properties(
     new_props = {}
 
     for key, value in properties.items():
-        if key in ["jsonpath", "method"]:  # TODO: ignore jsonpath for now
+        if key in ["jq", "method"]:  # TODO: ignore jq for now
             new_props[key] = value
             continue
         template = Template(value)
@@ -90,8 +92,6 @@ def build_scalar_udf(
 
         def _inner(el):
             context = dict(zip(dynamic_columns, [el]))
-            logger.info(type(context))
-            logger.info(context)
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
 
@@ -136,7 +136,7 @@ async def processor(
     table_name: str,
     batch_id: MutableInteger,
     start_time: datetime,
-    http_requester: Callable,
+    http_requester: FunctionType,
     connection: Any,
 ) -> None:
     # TODO: no provided api execution_time
@@ -168,7 +168,8 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
 
 
 def register_table(
-    create_table_params: CreateTableParams, connection: DuckDBPyConnection
+    create_table_params: CreateTableParams | CreateLookupTableParams,
+    connection: DuckDBPyConnection,
 ) -> None:
     query = create_table_params.query
     connection.execute(query)
@@ -263,10 +264,10 @@ async def run_executables(
 
     for table_params in statement_params:
         name = table_params.name
+        register_table(table_params, connection)
 
         # register table, temp tables (TODO: views / materialized views / sink)
         if isinstance(table_params, CreateTableParams):
-            register_table(table_params, connection)
             tasks.append(
                 asyncio.create_task(
                     build_one_runner(table_params, connection), name=f"{name}_runner"
