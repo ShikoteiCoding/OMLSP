@@ -3,8 +3,14 @@ import asyncio
 from loguru import logger
 from duckdb import DuckDBPyConnection
 
-from engine import run_executables, handle_select
-from parser import parse_sql_statements
+from engine import start_background_runnners_or_register, handle_select_or_set
+from parser import (
+    extract_sql_params,
+    SelectParams,
+    SetParams,
+    CreateLookupTableParams,
+    CreateTableParams,
+)
 
 query_queue = asyncio.Queue()
 
@@ -17,21 +23,21 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
         sql_content, writer, client_id = await query_queue.get()
         try:
             logger.info(f"Client {client_id} - Received query: {sql_content.strip()}")
-            create_param_list, select_params_list = parse_sql_statements(
-                sql_content, properties_schema
-            )
+            ordered_parameters = extract_sql_params(sql_content, properties_schema)
             logger.debug(
-                f"Client {client_id} - Create queries: {create_param_list} - Select queries: {select_params_list}"
+                f"Client {client_id} - Submitted statements: {ordered_parameters}"
             )
 
-            if create_param_list:
-                asyncio.create_task(run_executables(create_param_list, con))
-                writer.write("query sent\n\n".encode())
-            if select_params_list:
-                # TODO: handle multiple queries
-                first_query = select_params_list[0]
-                output = handle_select(con, first_query)
-                writer.write(f"{output}\n\n".encode())
+            for parameters in ordered_parameters:
+                if isinstance(parameters, (CreateTableParams, CreateLookupTableParams)):
+                    # TODO: wrap in handle_create func
+                    asyncio.create_task(
+                        start_background_runnners_or_register(parameters, con)
+                    )
+                    writer.write("query sent\n\n".encode())
+                elif isinstance(parameters, (SelectParams, SetParams)):
+                    output = handle_select_or_set(con, parameters)
+                    writer.write(f"{output}\n\n".encode())
 
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
