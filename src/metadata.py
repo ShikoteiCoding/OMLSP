@@ -1,7 +1,10 @@
 from duckdb import DuckDBPyConnection
+from loguru import logger
+
+from parser import CreateTableParams, CreateLookupTableParams
 
 
-def init_metadata(con: DuckDBPyConnection) -> None:
+def init_metadata_store(con: DuckDBPyConnection) -> None:
     # Create table for lookup macro definition
     macro_table_to_def = """
     CREATE TABLE macro_metadata (
@@ -10,6 +13,32 @@ def init_metadata(con: DuckDBPyConnection) -> None:
     );
     """
     con.sql(macro_table_to_def)
+
+    table_metadata = """
+    CREATE TABLE table_metadata (
+        table_name STRING,
+        last_batch_id INTEGER,
+        is_lookup BOOLEAN
+    )
+    """
+    con.sql(table_metadata)
+
+
+def insert_table_metadata(
+    con: DuckDBPyConnection, params: CreateTableParams | CreateLookupTableParams
+) -> None:
+    table_name = params.name
+    if isinstance(params, CreateTableParams):
+        insert = f"""
+        INSERT INTO table_metadata (table_name, last_batch_id, is_lookup)
+        VALUES ('{table_name}', 0, false);
+        """
+    elif isinstance(params, CreateLookupTableParams):
+        insert = f"""
+        INSERT INTO table_metadata (table_name, last_batch_id, is_lookup)
+        VALUES ('{table_name}', 0, true);
+        """
+    con.sql(insert)
 
 
 def get_macro_definition_by_name(
@@ -59,3 +88,34 @@ def get_tables(con: DuckDBPyConnection) -> list:
     tables = [str(table_name[0]) for table_name in con.sql(query).fetchall()]
 
     return tables
+
+
+def create_table(
+    con: DuckDBPyConnection,
+    create_table_params: CreateTableParams | CreateLookupTableParams,
+) -> None:
+    query = create_table_params.query
+    con.execute(query)
+    insert_table_metadata(con, create_table_params)
+    logger.debug(f"Registered table: {create_table_params.name}")
+
+
+def get_batch_id_from_table_metadata(con: DuckDBPyConnection, table_name: str) -> int:
+    query = f"""
+        SELECT *
+        FROM table_metadata
+        WHERE table_name = '{table_name}';
+    """
+    res = con.sql(query).fetchall()
+    return res[0][1]
+
+
+def update_batch_id_in_table_metadata(
+    con: DuckDBPyConnection, table_name: str, batch_id: int
+) -> None:
+    query = f"""
+    UPDATE table_metadata
+    SET last_batch_id={batch_id}
+    WHERE table_name = '{table_name}';
+    """
+    con.execute(query)

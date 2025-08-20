@@ -4,10 +4,10 @@ import json
 
 from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
-from parser import parse_sql_statements
-from engine import run_executables
+from parser import extract_sql_params, CreateLookupTableParams, CreateTableParams
+from engine import start_background_runnners_or_register
 from entrypoint import start_server
-from metadata import init_metadata
+from metadata import init_metadata_store
 
 
 async def main():
@@ -22,17 +22,19 @@ async def main():
 
     # TODO: persist on disk
     con: DuckDBPyConnection = connect(database=":memory:")
-    init_metadata(con)
+    init_metadata_store(con)
 
     with open(sql_filepath, "rb") as fo:
         sql_content = fo.read().decode("utf-8")
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    tables, _ = parse_sql_statements(sql_content, properties_schema)
+    tables = extract_sql_params(sql_content, properties_schema)
 
     async with asyncio.TaskGroup() as tg:
-        tg.create_task(run_executables(tables, con))
+        for table in tables:
+            if isinstance(table, (CreateTableParams, CreateLookupTableParams)):
+                tg.create_task(start_background_runnners_or_register(table, con))
         tg.create_task(start_server(con, properties_schema))
 
 

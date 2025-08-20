@@ -2,7 +2,7 @@ import json
 import pytest
 
 from src.parser import (
-    parse_sql_statements,
+    extract_sql_params,
     CreateTableParams,
     CreateLookupTableParams,
     SelectParams,
@@ -137,25 +137,25 @@ WITH (
 
 
 def test_valid_create_table_with_columns_and_properties(properties_schema: dict):
-    result, _ = parse_sql_statements(VALID_CREATE_QUERY, properties_schema)
-    assert result == VALID_CREATE_RESULT
+    results = extract_sql_params(VALID_CREATE_QUERY, properties_schema)
+    assert results == VALID_CREATE_RESULT
 
 
 def test_valid_select_statement(properties_schema: dict):
-    _, result = parse_sql_statements(VALID_SELECT_QUERY, properties_schema)
-    assert result == VALID_SELECT_RESULT
+    results = extract_sql_params(VALID_SELECT_QUERY, properties_schema)
+    assert results == VALID_SELECT_RESULT
 
 
 def test_invalid_property_not_literal_timestamp(properties_schema: dict):
     with pytest.raises(Exception):
-        parse_sql_statements(INVALID_QUERY_2, properties_schema)
+        extract_sql_params(INVALID_QUERY_2, properties_schema)
 
 
 def test_invalid_property_null_value(properties_schema: dict):
     with pytest.raises(Exception):
-        parse_sql_statements(INVALID_QUERY_3, properties_schema)
+        extract_sql_params(INVALID_QUERY_3, properties_schema)
 
 
 def test_invalid_expression(properties_schema: dict):
     with pytest.raises(Exception):
-        parse_sql_statements(INVALID_QUERY_4, properties_schema)
+        extract_sql_params(INVALID_QUERY_4, properties_schema)

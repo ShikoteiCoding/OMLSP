@@ -17,10 +17,7 @@ TYPE_MAPPING = {
     "BOOLEAN": ("bool", "BOOLEAN"),
 }
 
-VALID_STATEMENTS = (
-    exp.Create,
-    exp.Select,
-)
+VALID_STATEMENTS = (exp.Create, exp.Select, exp.Set)
 
 CreateTableParams = namedtuple("CreateParams", ["name", "properties", "query"])
 CreateLookupTableParams = namedtuple(
@@ -30,6 +27,7 @@ CreateLookupTableParams = namedtuple(
 SelectParams = namedtuple(
     "SelectParams", ["columns", "table", "alias", "where", "joins", "query"]
 )
+SetParams = namedtuple("SetParams", ["query"])
 
 
 def get_name(expression: exp.Expression) -> str:
@@ -137,9 +135,9 @@ def parse_create_properties(
     return statement, custom_properties
 
 
-def get_duckdb_sql(statement: exp.Create | exp.Select) -> str:
-    assert isinstance(statement, (exp.Create, exp.Select)), (
-        f"Expected {type(exp.Create)} not {type(statement)}"
+def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set) -> str:
+    assert isinstance(statement, VALID_STATEMENTS), (
+        f"Expected {VALID_STATEMENTS} not {type(statement)}"
     )
 
     statement = statement.copy()
@@ -153,7 +151,7 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
     return [prop for prop in statement.args.get("properties", [])]
 
 
-def process_create_statement(
+def extract_create_params(
     statement: exp.Create, properties_schema: dict
 ) -> CreateTableParams | CreateLookupTableParams | None:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
@@ -250,7 +248,7 @@ def parse_select(
     return statement, columns, table_name, table_alias, where, join_tables
 
 
-def process_select_statement(statement: exp.Select) -> SelectParams:
+def extract_select_params(statement: exp.Select) -> SelectParams:
     """
     Parse a SELECT query into a dictionary
     Args:
@@ -275,24 +273,32 @@ def process_select_statement(statement: exp.Select) -> SelectParams:
     )
 
 
-def parse_sql_statements(
+def extract_set_params(statement: exp.Set) -> SetParams:
+    assert isinstance(statement, exp.Set), (
+        f"Unexpected statement of type {type(statement)}, expected exp.Set statement"
+    )
+
+    return SetParams(query=get_duckdb_sql(statement))
+
+
+def extract_sql_params(
     query: str, properties_schema: dict
-) -> tuple[list[CreateTableParams | CreateLookupTableParams], list[SelectParams]]:
+) -> list[CreateTableParams | CreateLookupTableParams | SelectParams | SetParams]:
     """
-    Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries
+    Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries.
+    This keeps ordering
 
     Args:
         query (str): SQL query string containing one or more CREATE TABLE statements
 
     Returns:
-        list[dict]: list of dictionaries, each with table name, columns, and properties
+        list[dict]: list of parameters for each sql statement
 
     Raises:
         sqlglot.errors.ParseError: If any query cannot be parsed
         ValueError: If any query structure is invalid
     """
-    tables = []
-    selects = []
+    param_list = []
 
     parsed_statements = parse(query)
 
@@ -302,12 +308,17 @@ def parse_sql_statements(
         )
 
         if isinstance(parsed_statement, exp.Create):
-            tables.append(process_create_statement(parsed_statement, properties_schema))
+            param_list.append(
+                extract_create_params(parsed_statement, properties_schema)
+            )
 
         elif isinstance(parsed_statement, exp.Select):
-            selects.append(process_select_statement(parsed_statement))
+            param_list.append(extract_select_params(parsed_statement))
 
-    return tables, selects
+        elif isinstance(parsed_statement, exp.Set):
+            param_list.append(extract_set_params(parsed_statement))
+
+    return param_list
 
 
 if __name__ == "__main__":
@@ -326,9 +337,6 @@ if __name__ == "__main__":
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    tables, selects = parse_sql_statements(sql_content, properties_schema)
-    for query in tables:
-        logger.warning(query)
-
-    for select in selects:
-        logger.warning(select)
+    ordered_statements = extract_sql_params(sql_content, properties_schema)
+    for params in ordered_statements:
+        logger.info(ordered_statements)

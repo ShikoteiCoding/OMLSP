@@ -24,10 +24,12 @@ from metadata import (
     get_macro_definition_by_name,
     get_lookup_tables,
     get_tables,
+    create_table,
+    get_batch_id_from_table_metadata,
+    update_batch_id_in_table_metadata,
 )
-from utils import MutableInteger
 from requester import build_http_requester
-from parser import CreateTableParams, CreateLookupTableParams, SelectParams
+from parser import CreateTableParams, CreateLookupTableParams, SelectParams, SetParams
 from concurrent.futures import ThreadPoolExecutor
 
 DUCKDB_TO_PYARROW_PYTYPE = {
@@ -134,14 +136,14 @@ def build_scalar_udf(
 
 async def processor(
     table_name: str,
-    batch_id: MutableInteger,
     start_time: datetime,
     http_requester: FunctionType,
-    connection: Any,
+    con: DuckDBPyConnection,
 ) -> None:
     # TODO: no provided api execution_time
     # using trigger.get_next_fire_time is costly (see code)
     execution_time = start_time
+    batch_id = get_batch_id_from_table_metadata(con, table_name)
     logger.info(f"[{table_name}{{{batch_id}}}] @ {execution_time}")
 
     records = await http_requester()
@@ -153,9 +155,9 @@ async def processor(
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
-        await persist(df, batch_id, epoch, table_name, connection)
+        await persist(df, batch_id, epoch, table_name, con)
 
-    batch_id.increment()
+    update_batch_id_in_table_metadata(con, table_name, batch_id + 1)
 
 
 async def execute(scheduler: AsyncIOScheduler, job: Job):
@@ -167,25 +169,14 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
         await asyncio.sleep(3600)
 
 
-def register_table(
-    create_table_params: CreateTableParams | CreateLookupTableParams,
-    connection: DuckDBPyConnection,
-) -> None:
-    query = create_table_params.query
-    connection.execute(query)
-    logger.debug(f"running query: {query}")
-
-
 def build_one_runner(
-    create_table_params: CreateTableParams, connection: DuckDBPyConnection
+    create_table_params: CreateTableParams, con: DuckDBPyConnection
 ) -> Coroutine[Any, Any, None]:
     properties = create_table_params.properties
     table_name = create_table_params.name
     cron_expr = str(properties["schedule"])
     scheduler = AsyncIOScheduler()
 
-    # TODO:  keep batch_id in metastore
-    batch_id = MutableInteger(0)
     trigger = CronTrigger.from_crontab(cron_expr, timezone=timezone.utc)
     start_time = datetime.now(timezone.utc)
     http_requester = build_http_requester(properties)
@@ -196,10 +187,9 @@ def build_one_runner(
         name=table_name,
         kwargs={
             "table_name": table_name,
-            "batch_id": batch_id,
             "start_time": start_time,
             "http_requester": http_requester,
-            "connection": connection,
+            "con": con,
         },
     )
 
@@ -240,6 +230,7 @@ def register_lookup_table_executable(
         [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
     )
 
+    # TODO: move to metadata func
     connection.sql(f"""
         CREATE OR REPLACE MACRO {macro_def} AS TABLE
         SELECT
@@ -256,29 +247,28 @@ def register_lookup_table_executable(
     return macro_name
 
 
-async def run_executables(
-    statement_params: list[CreateTableParams | CreateLookupTableParams],
+async def start_background_runnners_or_register(
+    table_params: CreateTableParams | CreateLookupTableParams,
     connection: DuckDBPyConnection,
 ):
-    tasks = []
+    task: asyncio.Task | None = None
+    task: asyncio.Task | None = None
 
-    for table_params in statement_params:
-        name = table_params.name
-        register_table(table_params, connection)
+    name = table_params.name
+    create_table(connection, table_params)
 
-        # register table, temp tables (TODO: views / materialized views / sink)
-        if isinstance(table_params, CreateTableParams):
-            tasks.append(
-                asyncio.create_task(
-                    build_one_runner(table_params, connection), name=f"{name}_runner"
-                )
-            )
+    # register table, temp tables (TODO: views / materialized views / sink)
+    if isinstance(table_params, CreateTableParams):
+        task = asyncio.create_task(
+            build_one_runner(table_params, connection), name=f"{name}_runner"
+        )
 
-        # handle lookup table
-        if isinstance(table_params, CreateLookupTableParams):
-            register_lookup_table_executable(table_params, connection)
+    # handle lookup table
+    if isinstance(table_params, CreateLookupTableParams):
+        register_lookup_table_executable(table_params, connection)
 
-    _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+    if task:
+        _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
 
 
 def select_query_to_duckdb(
@@ -339,20 +329,27 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
     return pl.DataFrame()
 
 
-def handle_select(
-    con: DuckDBPyConnection, select_query: SelectParams
+def handle_select_or_set(
+    con: DuckDBPyConnection, params: SelectParams | SetParams
 ) -> str | pl.DataFrame:
-    table_name = select_query.table
-    lookup_tables = get_lookup_tables(con)
-    tables = get_tables(con)
+    if isinstance(params, SelectParams):
+        table_name = params.table
+        lookup_tables = get_lookup_tables(con)
+        tables = get_tables(con)
 
-    if table_name in lookup_tables:
-        msg = f"{table_name} is a lookup table, you cannot use it in FROM."
-        logger.error(msg)
-        return msg
+        if table_name in lookup_tables:
+            msg = f"{table_name} is a lookup table, you cannot use it in FROM."
+            logger.error(msg)
+            return msg
 
-    duckdb_sql = select_query_to_duckdb(con, select_query, lookup_tables, tables)
-    return duckdb_to_pl(con, duckdb_sql)
+        duckdb_sql = select_query_to_duckdb(con, params, lookup_tables, tables)
+        return duckdb_to_pl(con, duckdb_sql)
+    else:
+        try:
+            con.sql(params.query)
+        except Exception as e:
+            return str(e)  # TODO: handle duckdb configs and omlsp custom configs
+        return "SET"  # psql syntax
 
 
 if __name__ == "__main__":

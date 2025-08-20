@@ -5,12 +5,11 @@ import polars as pl
 from typing import Any
 
 from loguru import logger
-from utils import MutableInteger
 
 
 async def persist(
     df: pl.DataFrame,
-    batch_id: MutableInteger,
+    batch_id: int,
     epoch: int,
     table_name: str,
     connection: Any,
@@ -27,15 +26,16 @@ async def read_all(store_location: str, table_name: str) -> pl.DataFrame:
 
 if __name__ == "__main__":
     import time
+    from metadata import get_batch_id_from_table_metadata
 
     store_location = "local-store"
     table_name = "example"
     records = [{"url": "https://httpbin.org/get"} for _ in range(10)]
     df = pl.from_records(records)
     epoch = int(time.time() * 1_000)
-    batch_id = MutableInteger()
     con = duckdb.connect(database=":memory:")
     con.execute(f"CREATE TABLE IF NOT EXISTS {table_name} (url TEXT)")
+    batch_id = get_batch_id_from_table_metadata(con, table_name)
 
     async def _test():
         _ = await persist(df, batch_id, epoch, table_name, con)
