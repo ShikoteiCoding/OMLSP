@@ -259,6 +259,7 @@ async def start_background_runnners_or_register(
     connection: DuckDBPyConnection,
 ):
     task: asyncio.Task | None = None
+    task: asyncio.Task | None = None
 
     name = table_params.name
     create_table(connection, table_params)
