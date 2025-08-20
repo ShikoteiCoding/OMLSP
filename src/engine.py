@@ -10,7 +10,6 @@ from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
-from duckdb.functional import ARROW, SPECIAL
 from datetime import datetime, timezone
 from loguru import logger
 from typing import Any, Coroutine, Callable
@@ -34,19 +33,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
+    "TEXT": pa.string(),
     "TIMESTAMP": pa.timestamp("us"),
+    "DATETIME": pa.timestamp("us"),
     "FLOAT": pa.float32(),
     "DOUBLE": pa.float64(),
     "INTEGER": pa.int32(),
+    "INT": pa.int32(),
     "BIGINT": pa.int64(),
     "SMALLINT": pa.int16(),
     "TINYINT": pa.int8(),
     "BOOLEAN": pa.bool_(),
     "DATE": pa.date32(),
     "DECIMAL": pa.decimal128(18, 2),
-    "INT": pa.int32(),
-    "TEXT": pa.string(),
-    "DATETIME": pa.timestamp("us"),
 }
 
 
@@ -72,17 +71,16 @@ def build_scalar_udf(
 ) -> dict[str, Any]:
     arity = len(dynamic_columns)
 
-    # pyarrow_return_type = pa.struct()
-    pyarrow_child_types = []
+    child_types = []
     for subtype in return_type.children:
         logger.info(subtype)
-        pyarrow_child_types.append(
+        child_types.append(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
-    pyarrow_return_type = pa.struct(pyarrow_child_types)
+    return_type_arrow = pa.struct(child_types)
     logger.info(pyarrow_child_types)
 
-    def udf1pyarrow(*args):
+    def udf(*args):
         # Handle single or multiple input arrays
         if len(args) == 1:
             els = []
@@ -93,7 +91,7 @@ def build_scalar_udf(
             els = list(zip(*arrays))
 
         def _inner(el):
-            context = dict(zip(dynamic_columns, [el]))
+            context = dict(zip(dynamic_columns, el if len(dynamic_columns) > 1 else [el]))
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
 
@@ -120,11 +118,11 @@ def build_scalar_udf(
         with ThreadPoolExecutor() as executor:
             results = list(executor.map(_inner, els))
 
-        return pa.array(results, type=pyarrow_return_type)
+        return pa.array(results, type=return_type_arrow)
 
     if arity <= 5:
         return {
-            "function": udf1pyarrow,
+            "function": udf,
             "parameters": [VARCHAR for _ in range(len(dynamic_columns))],
             "return_type": return_type,
             "type": PythonUDFType.ARROW,
@@ -214,7 +212,7 @@ def register_lookup_table_executable(
     # register scalar for row to row http call
     connection.create_function(
         name=func_name,
-        function=udf_params["function"],
+        function=udf_params["function"], # type: ignore
         parameters=udf_params["parameters"],
         return_type=udf_params["return_type"],
         type=udf_params["type"],
