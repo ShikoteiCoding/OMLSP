@@ -26,7 +26,7 @@ from metadata import (
 )
 from utils import MutableInteger
 from requester import build_http_requester
-from parser import CreateTableParams, CreateLookupTableParams, SelectParams
+from parser import CreateTableParams, CreateLookupTableParams, SelectParams, SetParams
 from concurrent.futures import ThreadPoolExecutor
 
 # TODO: enrich with more type
@@ -231,7 +231,7 @@ def register_lookup_table_executable(
     # register scalar for row to row http call
     connection.create_function(
         name=func_name,
-        function=func, # type: ignore
+        function=func,  # type: ignore
         parameters=[VARCHAR for _ in range(len(dynamic_columns))],
         return_type=return_type,
         type=ARROW,
@@ -263,29 +263,27 @@ def register_lookup_table_executable(
     return macro_name
 
 
-async def run_executables(
-    statement_params: list[CreateTableParams | CreateLookupTableParams],
+async def start_background_runnners_or_register(
+    table_params: CreateTableParams | CreateLookupTableParams,
     connection: DuckDBPyConnection,
 ):
-    tasks = []
+    task: asyncio.Task | None = None
 
-    for table_params in statement_params:
-        name = table_params.name
-        register_table(table_params, connection)
+    name = table_params.name
+    register_table(table_params, connection)
 
-        # register table, temp tables (TODO: views / materialized views / sink)
-        if isinstance(table_params, CreateTableParams):
-            tasks.append(
-                asyncio.create_task(
-                    build_one_runner(table_params, connection), name=f"{name}_runner"
-                )
-            )
+    # register table, temp tables (TODO: views / materialized views / sink)
+    if isinstance(table_params, CreateTableParams):
+        task = asyncio.create_task(
+            build_one_runner(table_params, connection), name=f"{name}_runner"
+        )
 
-        # handle lookup table
-        if isinstance(table_params, CreateLookupTableParams):
-            register_lookup_table_executable(table_params, connection)
+    # handle lookup table
+    if isinstance(table_params, CreateLookupTableParams):
+        register_lookup_table_executable(table_params, connection)
 
-    _, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+    if task:
+        _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
 
 
 def select_query_to_duckdb(
@@ -346,20 +344,27 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
     return pl.DataFrame()
 
 
-def handle_select(
-    con: DuckDBPyConnection, select_query: SelectParams
+def handle_select_or_set(
+    con: DuckDBPyConnection, params: SelectParams | SetParams
 ) -> str | pl.DataFrame:
-    table_name = select_query.table
-    lookup_tables = get_lookup_tables(con)
-    tables = get_tables(con)
+    if isinstance(params, SelectParams):
+        table_name = params.table
+        lookup_tables = get_lookup_tables(con)
+        tables = get_tables(con)
 
-    if table_name in lookup_tables:
-        msg = f"{table_name} is a lookup table, you cannot use it in FROM."
-        logger.error(msg)
-        return msg
+        if table_name in lookup_tables:
+            msg = f"{table_name} is a lookup table, you cannot use it in FROM."
+            logger.error(msg)
+            return msg
 
-    duckdb_sql = select_query_to_duckdb(con, select_query, lookup_tables, tables)
-    return duckdb_to_pl(con, duckdb_sql)
+        duckdb_sql = select_query_to_duckdb(con, params, lookup_tables, tables)
+        return duckdb_to_pl(con, duckdb_sql)
+    else:
+        try:
+            con.sql(params.query)
+        except Exception as e:
+            return str(e)  # TODO: handle duckdb configs and omlsp custom configs
+        return "SET"  # psql syntax
 
 
 if __name__ == "__main__":
