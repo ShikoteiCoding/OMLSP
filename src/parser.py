@@ -213,14 +213,18 @@ def extract_create_params(
     return None
 
 
+def get_table_name_placeholder(table_name: str):
+    return "$" + table_name
+
+
 def parse_select(
     statement: exp.Select,
-) -> tuple[exp.Select, list[str], str, str, str, list[dict[str, str]]]:
+) -> tuple[exp.Select, list[str], str, str, str, dict[str, str]]:
     columns = []
     table_name = ""
     table_alias = ""
     where = ""
-    join_tables = []
+    join_tables = {}  # can be unique
 
     statement = statement.copy()
 
@@ -241,9 +245,10 @@ def parse_select(
     # TODO: change find all with more robust ?
     for table in statement.find_all(exp.Table):
         if isinstance(table.parent, exp.Join):
-            table_exp = table
-            join_tables.append({str(table_exp.name): str(table_exp.alias_or_name)})
-            table.set("this", exp.to_identifier(f"${str(table.name)}"))
+            join_tables[str(table.name)] = str(table.alias_or_name)
+            table.set(
+                "this", exp.to_identifier(get_table_name_placeholder(table.name), False)
+            )
 
     return statement, columns, table_name, table_alias, where, join_tables
 

@@ -1,7 +1,6 @@
 import asyncio
 import polars as pl
 import time
-import re
 import pyarrow as pa
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -45,7 +44,7 @@ def build_lookup_properties(
     new_props = {}
 
     for key, value in properties.items():
-        if key in ["jq", "method"]:  # TODO: ignore jq for now
+        if key in ["method"]:  # TODO: ignore jq for now
             new_props[key] = value
             continue
         template = Template(value)
@@ -278,48 +277,55 @@ async def start_background_runnners_or_register(
         _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
 
 
-def select_query_to_duckdb(
+def build_substitute_macro_definition(
+    con: DuckDBPyConnection,
+    join_table: str,
+    from_table: str,
+    from_table_or_alias: str,
+    join_table_or_alias: str,
+) -> str:
+    macro_name, fields = get_macro_definition_by_name(con, f"{join_table}_macro")
+    scalar_func_fields = ",".join(
+        [f"{from_table_or_alias}.{field}" for field in fields]
+    )
+    macro_definition = f"""
+    {macro_name}("{from_table}", {scalar_func_fields})
+    """
+    if join_table_or_alias == join_table:
+        # TODO: fix bug, if table_name == alias
+        # JOIN ohlc AS ohlc
+        # -> this writes the AS statements and fails
+        macro_definition += f"AS {join_table_or_alias}"
+    return macro_definition
+
+
+def select_sql_substitution(
     con: DuckDBPyConnection,
     select_query: SelectParams,
-    lookup_tables: list[str],
     tables: list[str],
 ) -> str:
+    """Substitutes select statement query with lookup references to macro references."""
     original_query = select_query.query
     join_tables = select_query.joins
 
-    # no lookup query case
+    # no join query
     if len(join_tables) == 0:
         return original_query
 
-    # lookup query case
-    mapping = dict(zip(tables, tables))
-    table_name = select_query.table
-    table_alias = select_query.alias
-    for lookup_table in lookup_tables:
-        macro_name, fields = get_macro_definition_by_name(con, f"{lookup_table}_macro")
-        # TODO: move to func ?
-        dynamic_macro_stmt = f'{macro_name}("{table_name}", {",".join([f"{table_alias}.{field}" for field in fields])})'
-        mapping[lookup_table] = dynamic_macro_stmt
+    # join query
+    substitute_mapping = dict(zip(tables, tables))
+    from_table = select_query.table
+    from_table_or_alias = select_query.alias
 
-    # Substritute lookup table name with query
-    query = Template(original_query).substitute(mapping)
-
-    # Remove surrounding quote from parse_select
-    # And add AS statement in join from placeholder name
-    # TODO: AS statement in join should be table OR alias
-    for lookup_table in lookup_tables:
-        subst_string = mapping[lookup_table]
-        matches = [
-            (m.start(), m.end()) for m in re.finditer(re.escape(subst_string), query)
-        ][0]
-        query = (
-            query[0 : matches[0] - 1]
-            + query[matches[0] : matches[1]]
-            + f" AS {lookup_table}"
-            + query[matches[1] + 1 : len(query)]
+    for join_table, join_table_or_alias in join_tables.items():
+        substitute_mapping[join_table] = build_substitute_macro_definition(
+            con, join_table, from_table, from_table_or_alias, join_table_or_alias
         )
 
-    logger.debug(f"new overwritten select statement: {query}")
+    # Substritute lookup table name with query
+    query = Template(original_query).substitute(substitute_mapping)
+
+    logger.debug(f"New overwritten select statement: {query}")
     return query
 
 
@@ -349,7 +355,7 @@ def handle_select_or_set(
             logger.error(msg)
             return msg
 
-        duckdb_sql = select_query_to_duckdb(con, params, lookup_tables, tables)
+        duckdb_sql = select_sql_substitution(con, params, tables)
         return duckdb_to_pl(con, duckdb_sql)
     else:
         try:
