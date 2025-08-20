@@ -1,7 +1,7 @@
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from parser import CreateTableParams, CreateLookupTableParams
+from parser import CreateTableContext, CreateLookupTableContext
 
 
 def init_metadata_store(con: DuckDBPyConnection) -> None:
@@ -25,15 +25,15 @@ def init_metadata_store(con: DuckDBPyConnection) -> None:
 
 
 def insert_table_metadata(
-    con: DuckDBPyConnection, params: CreateTableParams | CreateLookupTableParams
+    con: DuckDBPyConnection, context: CreateTableContext | CreateLookupTableContext
 ) -> None:
-    table_name = params.name
-    if isinstance(params, CreateTableParams):
+    table_name = context.name
+    if isinstance(context, CreateTableContext):
         insert = f"""
         INSERT INTO table_metadata (table_name, last_batch_id, is_lookup)
         VALUES ('{table_name}', 0, false);
         """
-    elif isinstance(params, CreateLookupTableParams):
+    elif isinstance(context, CreateLookupTableContext):
         insert = f"""
         INSERT INTO table_metadata (table_name, last_batch_id, is_lookup)
         VALUES ('{table_name}', 0, true);
@@ -92,12 +92,12 @@ def get_tables(con: DuckDBPyConnection) -> list:
 
 def create_table(
     con: DuckDBPyConnection,
-    create_table_params: CreateTableParams | CreateLookupTableParams,
+    context: CreateTableContext | CreateLookupTableContext,
 ) -> None:
-    query = create_table_params.query
+    query = context.query
     con.execute(query)
-    insert_table_metadata(con, create_table_params)
-    logger.debug(f"Registered table: {create_table_params.name}")
+    insert_table_metadata(con, context)
+    logger.debug(f"Registered table: {context.name}")
 
 
 def get_batch_id_from_table_metadata(con: DuckDBPyConnection, table_name: str) -> int:

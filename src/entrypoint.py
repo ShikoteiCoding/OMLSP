@@ -5,11 +5,12 @@ from duckdb import DuckDBPyConnection
 
 from engine import start_background_runnners_or_register, handle_select_or_set
 from parser import (
-    extract_sql_params,
-    SelectParams,
-    SetParams,
-    CreateLookupTableParams,
-    CreateTableParams,
+    extract_query_contexts,
+    CreateLookupTableContext,
+    CreateTableContext,
+    InvalidContext,
+    SelectContext,
+    SetContext,
 )
 
 query_queue = asyncio.Queue()
@@ -23,20 +24,26 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
         sql_content, writer, client_id = await query_queue.get()
         try:
             logger.info(f"Client {client_id} - Received query: {sql_content.strip()}")
-            ordered_parameters = extract_sql_params(sql_content, properties_schema)
+            ordered_query_contexts = extract_query_contexts(
+                sql_content, properties_schema
+            )
             logger.debug(
-                f"Client {client_id} - Submitted statements: {ordered_parameters}"
+                f"Client {client_id} - Submitted statements: {ordered_query_contexts}"
             )
 
-            for parameters in ordered_parameters:
-                if isinstance(parameters, (CreateTableParams, CreateLookupTableParams)):
+            for context in ordered_query_contexts:
+                if isinstance(context, (CreateTableContext, CreateLookupTableContext)):
                     # TODO: wrap in handle_create func
                     asyncio.create_task(
-                        start_background_runnners_or_register(parameters, con)
+                        start_background_runnners_or_register(context, con)
                     )
                     writer.write("query sent\n\n".encode())
-                elif isinstance(parameters, (SelectParams, SetParams)):
-                    output = handle_select_or_set(con, parameters)
+                elif isinstance(context, (SelectContext, SetContext)):
+                    output = handle_select_or_set(con, context)
+                    writer.write(f"{output}\n\n".encode())
+
+                elif isinstance(context, InvalidContext):
+                    output = context.reason
                     writer.write(f"{output}\n\n".encode())
 
         except Exception as e:

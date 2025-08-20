@@ -50,12 +50,19 @@ SELECT
     volume,
     amount
 FROM all_tickers AS ALT
-LEFT JOIN ohlc ON
-    ALT.symbol = ohlc.symbol;
+LEFT JOIN ohlc AS oh
+    ON ALT.symbol = oh.symbol;
 
--- Simple query on non lookup table
-SELECT * 
-FROM all_tickers;
+-- CTE example
+WITH test AS (
+    SELECT * 
+    FROM all_tickers
+)
+SELECT * FROM test;
+
+-- Subquery example
+SELECT *
+FROM (SELECT * FROM all_tickers);
 
 -- Test function registered from lookup
 SELECT ohlc_func('MNDE-USDT');

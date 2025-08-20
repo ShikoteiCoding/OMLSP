@@ -1,7 +1,6 @@
 import asyncio
 import polars as pl
 import time
-import re
 import pyarrow as pa
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -28,7 +27,12 @@ from metadata import (
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
-from parser import CreateTableParams, CreateLookupTableParams, SelectParams, SetParams
+from parser import (
+    CreateTableContext,
+    CreateLookupTableContext,
+    SelectContext,
+    SetContext,
+)
 from concurrent.futures import ThreadPoolExecutor
 
 # TODO: enrich with more type
@@ -45,7 +49,7 @@ def build_lookup_properties(
     new_props = {}
 
     for key, value in properties.items():
-        if key in ["jq", "method"]:  # TODO: ignore jq for now
+        if key in ["method"]:  # TODO: ignore jq for now
             new_props[key] = value
             continue
         template = Template(value)
@@ -175,10 +179,10 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
 
 
 def build_one_runner(
-    create_table_params: CreateTableParams, con: DuckDBPyConnection
+    create_table_context: CreateTableContext, con: DuckDBPyConnection
 ) -> Coroutine[Any, Any, None]:
-    properties = create_table_params.properties
-    table_name = create_table_params.name
+    properties = create_table_context.properties
+    table_name = create_table_context.name
     cron_expr = str(properties["schedule"])
     scheduler = AsyncIOScheduler()
 
@@ -202,12 +206,12 @@ def build_one_runner(
 
 
 def register_lookup_table_executable(
-    create_table_params: CreateLookupTableParams, connection: DuckDBPyConnection
+    create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
-    properties = create_table_params.properties
-    table_name = create_table_params.name
-    dynamic_columns = create_table_params.dynamic_columns
-    columns = create_table_params.columns
+    properties = create_table_context.properties
+    table_name = create_table_context.name
+    dynamic_columns = create_table_context.dynamic_columns
+    columns = create_table_context.columns
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
@@ -255,71 +259,78 @@ def register_lookup_table_executable(
 
 
 async def start_background_runnners_or_register(
-    table_params: CreateTableParams | CreateLookupTableParams,
+    table_context: CreateTableContext | CreateLookupTableContext,
     connection: DuckDBPyConnection,
 ):
     task: asyncio.Task | None = None
     task: asyncio.Task | None = None
 
-    name = table_params.name
-    create_table(connection, table_params)
+    name = table_context.name
+    create_table(connection, table_context)
 
     # register table, temp tables (TODO: views / materialized views / sink)
-    if isinstance(table_params, CreateTableParams):
+    if isinstance(table_context, CreateTableContext):
         task = asyncio.create_task(
-            build_one_runner(table_params, connection), name=f"{name}_runner"
+            build_one_runner(table_context, connection), name=f"{name}_runner"
         )
 
     # handle lookup table
-    if isinstance(table_params, CreateLookupTableParams):
-        register_lookup_table_executable(table_params, connection)
+    if isinstance(table_context, CreateLookupTableContext):
+        register_lookup_table_executable(table_context, connection)
 
     if task:
         _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
 
 
-def select_query_to_duckdb(
+def build_substitute_macro_definition(
     con: DuckDBPyConnection,
-    select_query: SelectParams,
-    lookup_tables: list[str],
+    join_table: str,
+    from_table: str,
+    from_table_or_alias: str,
+    join_table_or_alias: str,
+) -> str:
+    macro_name, fields = get_macro_definition_by_name(con, f"{join_table}_macro")
+    scalar_func_fields = ",".join(
+        [f"{from_table_or_alias}.{field}" for field in fields]
+    )
+    macro_definition = f"""
+    {macro_name}("{from_table}", {scalar_func_fields})
+    """
+    if join_table_or_alias == join_table:
+        # TODO: fix bug, if table_name == alias
+        # JOIN ohlc AS ohlc
+        # -> this writes the AS statements and fails
+        macro_definition += f"AS {join_table_or_alias}"
+    return macro_definition
+
+
+def select_sql_substitution(
+    con: DuckDBPyConnection,
+    select_query: SelectContext,
     tables: list[str],
 ) -> str:
+    """Substitutes select statement query with lookup references to macro references."""
     original_query = select_query.query
     join_tables = select_query.joins
 
-    # no lookup query case
+    # no join query
     if len(join_tables) == 0:
         return original_query
 
-    # lookup query case
-    mapping = dict(zip(tables, tables))
-    table_name = select_query.table
-    table_alias = select_query.alias
-    for lookup_table in lookup_tables:
-        macro_name, fields = get_macro_definition_by_name(con, f"{lookup_table}_macro")
-        # TODO: move to func ?
-        dynamic_macro_stmt = f'{macro_name}("{table_name}", {",".join([f"{table_alias}.{field}" for field in fields])})'
-        mapping[lookup_table] = dynamic_macro_stmt
+    # join query
+    substitute_mapping = dict(zip(tables, tables))
+    from_table = select_query.table
+    from_table_or_alias = select_query.alias
 
-    # Substritute lookup table name with query
-    query = Template(original_query).substitute(mapping)
-
-    # Remove surrounding quote from parse_select
-    # And add AS statement in join from placeholder name
-    # TODO: AS statement in join should be table OR alias
-    for lookup_table in lookup_tables:
-        subst_string = mapping[lookup_table]
-        matches = [
-            (m.start(), m.end()) for m in re.finditer(re.escape(subst_string), query)
-        ][0]
-        query = (
-            query[0 : matches[0] - 1]
-            + query[matches[0] : matches[1]]
-            + f" AS {lookup_table}"
-            + query[matches[1] + 1 : len(query)]
+    for join_table, join_table_or_alias in join_tables.items():
+        substitute_mapping[join_table] = build_substitute_macro_definition(
+            con, join_table, from_table, from_table_or_alias, join_table_or_alias
         )
 
-    logger.debug(f"new overwritten select statement: {query}")
+    # Substritute lookup table name with query
+    query = Template(original_query).substitute(substitute_mapping)
+
+    logger.debug(f"New overwritten select statement: {query}")
     return query
 
 
@@ -337,10 +348,10 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
 
 def handle_select_or_set(
-    con: DuckDBPyConnection, params: SelectParams | SetParams
+    con: DuckDBPyConnection, context: SelectContext | SetContext
 ) -> str | pl.DataFrame:
-    if isinstance(params, SelectParams):
-        table_name = params.table
+    if isinstance(context, SelectContext):
+        table_name = context.table
         lookup_tables = get_lookup_tables(con)
         tables = get_tables(con)
 
@@ -349,11 +360,11 @@ def handle_select_or_set(
             logger.error(msg)
             return msg
 
-        duckdb_sql = select_query_to_duckdb(con, params, lookup_tables, tables)
+        duckdb_sql = select_sql_substitution(con, context, tables)
         return duckdb_to_pl(con, duckdb_sql)
     else:
         try:
-            con.sql(params.query)
+            con.sql(context.query)
         except Exception as e:
             return str(e)  # TODO: handle duckdb configs and omlsp custom configs
         return "SET"  # psql syntax

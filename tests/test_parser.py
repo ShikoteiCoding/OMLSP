@@ -2,10 +2,10 @@ import json
 import pytest
 
 from src.parser import (
-    extract_sql_params,
-    CreateTableParams,
-    CreateLookupTableParams,
-    SelectParams,
+    extract_query_contexts,
+    CreateTableContext,
+    CreateLookupTableContext,
+    SelectContext,
 )
 
 prop_schema_filepath = "src/properties.schema.json"
@@ -54,7 +54,7 @@ WITH (
 """
 
 VALID_CREATE_RESULT = [
-    CreateTableParams(
+    CreateTableContext(
         name="example",
         properties={
             "connector": "http",
@@ -65,7 +65,7 @@ VALID_CREATE_RESULT = [
         },
         query="CREATE TABLE example (url TEXT)",
     ),
-    CreateTableParams(
+    CreateTableContext(
         name="example_2",
         properties={
             "connector": "http",
@@ -76,7 +76,7 @@ VALID_CREATE_RESULT = [
         },
         query="CREATE TABLE example_2 (url TEXT)",
     ),
-    CreateLookupTableParams(
+    CreateLookupTableContext(
         name="lookup_example",
         properties={
             "connector": "lookup-http",
@@ -96,7 +96,7 @@ SELECT * FROM example;
 """
 
 VALID_SELECT_RESULT = [
-    SelectParams(
+    SelectContext(
         columns=[""],
         joins=[],
         table="example",
@@ -137,25 +137,25 @@ WITH (
 
 
 def test_valid_create_table_with_columns_and_properties(properties_schema: dict):
-    results = extract_sql_params(VALID_CREATE_QUERY, properties_schema)
+    results = extract_query_contexts(VALID_CREATE_QUERY, properties_schema)
     assert results == VALID_CREATE_RESULT
 
 
 def test_valid_select_statement(properties_schema: dict):
-    results = extract_sql_params(VALID_SELECT_QUERY, properties_schema)
+    results = extract_query_contexts(VALID_SELECT_QUERY, properties_schema)
     assert results == VALID_SELECT_RESULT
 
 
 def test_invalid_property_not_literal_timestamp(properties_schema: dict):
     with pytest.raises(Exception):
-        extract_sql_params(INVALID_QUERY_2, properties_schema)
+        extract_query_contexts(INVALID_QUERY_2, properties_schema)
 
 
 def test_invalid_property_null_value(properties_schema: dict):
     with pytest.raises(Exception):
-        extract_sql_params(INVALID_QUERY_3, properties_schema)
+        extract_query_contexts(INVALID_QUERY_3, properties_schema)
 
 
 def test_invalid_expression(properties_schema: dict):
     with pytest.raises(Exception):
-        extract_sql_params(INVALID_QUERY_4, properties_schema)
+        extract_query_contexts(INVALID_QUERY_4, properties_schema)
