@@ -50,8 +50,8 @@ SELECT
     volume,
     amount
 FROM all_tickers AS ALT
-LEFT JOIN ohlc ON
-    ALT.symbol = ohlc.symbol;
+LEFT JOIN ohlc AS oh
+    ON ALT.symbol = oh.symbol;
 
 -- Simple query on non lookup table
 SELECT * 
