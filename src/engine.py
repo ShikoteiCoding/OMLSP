@@ -8,8 +8,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.job import Job
 from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
+from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
-from duckdb.functional import ARROW, SPECIAL
 from datetime import datetime, timezone
 from loguru import logger
 from typing import Any, Coroutine, Callable
@@ -31,11 +31,21 @@ from requester import build_http_requester
 from parser import CreateTableParams, CreateLookupTableParams, SelectParams, SetParams
 from concurrent.futures import ThreadPoolExecutor
 
-# TODO: enrich with more type
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
+    "TEXT": pa.string(),
     "TIMESTAMP": pa.timestamp("us"),
-    "FLOAT": pa.float32(),  # TODO: verify duckdb internal floating point
+    "DATETIME": pa.timestamp("us"),
+    "FLOAT": pa.float32(),
+    "DOUBLE": pa.float64(),
+    "INTEGER": pa.int32(),
+    "INT": pa.int32(),
+    "BIGINT": pa.int64(),
+    "SMALLINT": pa.int16(),
+    "TINYINT": pa.int8(),
+    "BOOLEAN": pa.bool_(),
+    "DATE": pa.date32(),
+    "DECIMAL": pa.decimal128(18, 2),
 }
 
 
@@ -57,52 +67,56 @@ def build_lookup_properties(
 def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
-    pyarrow: bool = False,
     return_type: DuckDBPyType = VARCHAR,
-) -> Callable[..., pa.Array]:
+    **kwargs,
+) -> dict[str, Any]:
     arity = len(dynamic_columns)
 
-    if pyarrow:
-        pyarrow_child_types = []
-        for subtype in return_type.children:
-            pyarrow_child_types.append(
-                pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
-            )
-        pyarrow_return_type = pa.struct(pyarrow_child_types)
+    child_types = []
+    for subtype in return_type.children:
+        logger.info(subtype)
+        child_types.append(
+            pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
+        )
+    return_type_arrow = pa.struct(child_types)
+    logger.info(child_types)
 
-    def udf1(a1):
-        # TODO: build default response from lookup table schema
-        context = dict(zip(dynamic_columns, [a1]))
-        lookup_properties = build_lookup_properties(properties, context)
-        default_response = context.copy()
+    if arity == 1:
+        def udf(arg1):
+            els = []
+            for chunk in arg1.chunks:
+                els.extend(chunk.to_pylist())
+            context = {dynamic_columns[0]: els}
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 2:
+        def udf(arg1, arg2):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2]]
+            els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 3:
+        def udf(arg1, arg2, arg3):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3]]
+            els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 4:
+        def udf(arg1, arg2, arg3, arg4):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4]]
+            els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 5:
+        def udf(arg1, arg2, arg3, arg4, arg5):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4, arg5]]
+            els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    else:
+        raise ValueError("Too many dynamic columns (max 5 supported)")
 
-        requester = build_http_requester(lookup_properties, is_async=False)
-
-        try:
-            response = requester()
-
-            if isinstance(response, dict):
-                return context | response
-
-            # TODO: handle array jq responses
-            # need different scalar udf return type to handle
-            # and most likely an explode in macro
-            if isinstance(response, list):
-                if len(response) >= 1:
-                    default_response |= response[-1]
-
-        except Exception as e:
-            logger.exception(f"HTTP request failed: {e}")
-
-        return default_response
-
-    def udf1pyarrow(a1: Any) -> pa.Array:
-        els = []
-        for chunk in a1.chunks:
-            els.extend(chunk.to_pylist())
-
-        def _inner(el):
-            context = dict(zip(dynamic_columns, [el]))
+    def process_elements(context_list, properties, return_type_arrow):
+        def _inner(context):
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
 
@@ -110,33 +124,29 @@ def build_scalar_udf(
 
             try:
                 response = requester()
-
                 if isinstance(response, dict):
                     return context | response
-
-                # TODO: handle array jq responses
-                # need different scalar udf return type to handle
-                # and most likely an explode in macro
-                if isinstance(response, list):
-                    if len(response) >= 1:
-                        default_response |= response[-1]
-
+                if isinstance(response, list) and len(response) >= 1:
+                    default_response |= response[-1]
             except Exception as e:
                 logger.exception(f"HTTP request failed: {e}")
 
             return default_response
 
         with ThreadPoolExecutor() as executor:
-            results = list(executor.map(_inner, els))
+            results = list(executor.map(_inner, context_list))
 
-        return pa.array(results, type=pyarrow_return_type)
+        return pa.array(results, type=return_type_arrow)
 
-    if arity == 1:
-        if pyarrow:
-            return udf1pyarrow
-        return udf1
-    else:
-        raise ValueError("Too many dynamic columns (max 1 supported)")
+    return {
+        "name": kwargs.get("name"),
+        "function": udf,
+        "parameters": [VARCHAR for _ in range(arity)],
+        "return_type": return_type,
+        "type": PythonUDFType.ARROW,
+        "null_handling": FunctionNullHandling.SPECIAL,
+        **kwargs
+    }
 
 
 async def processor(
@@ -214,19 +224,9 @@ def register_lookup_table_executable(
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
 
-    # TODO: move all "create_function" arguments inside build_scalar_udf
-    # to avoid verbose function here
-    func = build_scalar_udf(properties, dynamic_columns, True, return_type)
-
+    udf_params = build_scalar_udf(properties, dynamic_columns, return_type, name=func_name)
     # register scalar for row to row http call
-    connection.create_function(
-        name=func_name,
-        function=func,  # type: ignore
-        parameters=[VARCHAR for _ in range(len(dynamic_columns))],
-        return_type=return_type,
-        type=ARROW,
-        null_handling=SPECIAL,
-    )
+    connection.create_function(**udf_params)
     logger.debug(f"registered function: {func_name}")
 
     # TODO: wrap SQL in function
