@@ -78,20 +78,44 @@ def build_scalar_udf(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
     return_type_arrow = pa.struct(child_types)
-    logger.info(pyarrow_child_types)
+    logger.info(child_types)
 
-    def udf(*args):
-        # Handle single or multiple input arrays
-        if len(args) == 1:
+    if arity == 1:
+        def udf(arg1):
             els = []
-            for chunk in args[0].chunks:
+            for chunk in arg1.chunks:
                 els.extend(chunk.to_pylist())
-        else:
-            arrays = [arg.to_pylist() for arg in args]
+            context = {dynamic_columns[0]: els}
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 2:
+        def udf(arg1, arg2):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2]]
             els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 3:
+        def udf(arg1, arg2, arg3):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3]]
+            els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 4:
+        def udf(arg1, arg2, arg3, arg4):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4]]
+            els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    elif arity == 5:
+        def udf(arg1, arg2, arg3, arg4, arg5):
+            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4, arg5]]
+            els = list(zip(*arrays))
+            context = [dict(zip(dynamic_columns, el)) for el in els]
+            return process_elements(context, properties, return_type_arrow)
+    else:
+        raise ValueError("Too many dynamic columns (max 5 supported)")
 
-        def _inner(el):
-            context = dict(zip(dynamic_columns, el if len(dynamic_columns) > 1 else [el]))
+    def process_elements(context_list, properties, return_type_arrow):
+        def _inner(context):
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
 
@@ -99,37 +123,27 @@ def build_scalar_udf(
 
             try:
                 response = requester()
-
                 if isinstance(response, dict):
                     return context | response
-
-                # TODO: handle array jq responses
-                # need different scalar udf return type to handle
-                # and most likely an explode in macro
-                if isinstance(response, list):
-                    if len(response) >= 1:
-                        default_response |= response[-1]
-
+                if isinstance(response, list) and len(response) >= 1:
+                    default_response |= response[-1]
             except Exception as e:
                 logger.exception(f"HTTP request failed: {e}")
 
             return default_response
 
         with ThreadPoolExecutor() as executor:
-            results = list(executor.map(_inner, els))
+            results = list(executor.map(_inner, context_list))
 
         return pa.array(results, type=return_type_arrow)
 
-    if arity <= 5:
-        return {
-            "function": udf,
-            "parameters": [VARCHAR for _ in range(len(dynamic_columns))],
-            "return_type": return_type,
-            "type": PythonUDFType.ARROW,
-            "null_handling": FunctionNullHandling.SPECIAL,
-        }
-    else:
-        raise ValueError("Too many dynamic columns (max 5 supported)")
+    return {
+        "function": udf,
+        "parameters": [VARCHAR for _ in range(arity)],
+        "return_type": return_type,
+        "type": PythonUDFType.ARROW,
+        "null_handling": FunctionNullHandling.SPECIAL,
+    }
 
 
 async def processor(
@@ -208,7 +222,6 @@ def register_lookup_table_executable(
     return_type = struct_type(columns)  # typed struct from sql statement
 
     udf_params = build_scalar_udf(properties, dynamic_columns, return_type)
-
     # register scalar for row to row http call
     connection.create_function(
         name=func_name,
