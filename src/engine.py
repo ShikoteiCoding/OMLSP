@@ -68,6 +68,7 @@ def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
     return_type: DuckDBPyType = VARCHAR,
+    **kwargs,
 ) -> dict[str, Any]:
     arity = len(dynamic_columns)
 
@@ -138,11 +139,13 @@ def build_scalar_udf(
         return pa.array(results, type=return_type_arrow)
 
     return {
+        "name": kwargs.get("name"),
         "function": udf,
         "parameters": [VARCHAR for _ in range(arity)],
         "return_type": return_type,
         "type": PythonUDFType.ARROW,
         "null_handling": FunctionNullHandling.SPECIAL,
+        **kwargs
     }
 
 
@@ -221,16 +224,9 @@ def register_lookup_table_executable(
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
 
-    udf_params = build_scalar_udf(properties, dynamic_columns, return_type)
+    udf_params = build_scalar_udf(properties, dynamic_columns, return_type, name=func_name)
     # register scalar for row to row http call
-    connection.create_function(
-        name=func_name,
-        function=udf_params["function"], # type: ignore
-        parameters=udf_params["parameters"],
-        return_type=udf_params["return_type"],
-        type=udf_params["type"],
-        null_handling=udf_params["null_handling"],
-    )
+    connection.create_function(**udf_params)
     logger.debug(f"registered function: {func_name}")
 
     # TODO: wrap SQL in function
