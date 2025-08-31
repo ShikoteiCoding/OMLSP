@@ -85,9 +85,7 @@ def build_scalar_udf(
 
     if arity == 1:
         def udf(arg1):
-            elements = []
-            for chunk in arg1.chunks:
-                elements.extend(chunk.to_pylist())
+            elements = [chunk.to_pylist() for chunk in arg1.chunks]
             context = {dynamic_columns[0]: elements}
             return process_elements(context, properties, return_type_arrow)
     elif arity == 2:
