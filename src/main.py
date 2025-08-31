@@ -4,10 +4,17 @@ import json
 
 from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
-from parser import extract_sql_params, CreateLookupTableParams, CreateTableParams
+from parser import (
+    extract_query_contexts,
+    CreateLookupTableContext,
+    CreateTableContext,
+    SelectContext,
+)
 from engine import start_background_runnners_or_register
 from entrypoint import start_server
 from metadata import init_metadata_store
+
+from loguru import logger
 
 
 async def main():
@@ -29,12 +36,20 @@ async def main():
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    tables = extract_sql_params(sql_content, properties_schema)
+    contexts = extract_query_contexts(sql_content, properties_schema)
 
     async with asyncio.TaskGroup() as tg:
-        for table in tables:
-            if isinstance(table, (CreateTableParams, CreateLookupTableParams)):
-                tg.create_task(start_background_runnners_or_register(table, con))
+        for query_context in contexts:
+            if isinstance(
+                query_context, (CreateTableContext, CreateLookupTableContext)
+            ):
+                tg.create_task(
+                    start_background_runnners_or_register(query_context, con)
+                )
+
+            if isinstance(query_context, SelectContext):
+                logger.warning("Ignoring select statement at startup")
+
         tg.create_task(start_server(con, properties_schema))
 
 

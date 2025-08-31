@@ -2,7 +2,8 @@ CREATE TABLE all_tickers (
     symbol STRING,
     symbolName STRING,
     buy FLOAT,
-    sell FLOAT
+    sell FLOAT,
+    date STRING,
 )
 WITH (
     'connector' = 'http',
@@ -14,7 +15,8 @@ WITH (
 );
 
 CREATE TEMP TABLE ohlc (
-    $symbol STRING, -- from calling table
+    $symbol STRING,
+    $date STRING,
     start_time TIMESTAMP,
     open FLOAT,
     high FLOAT,
@@ -25,7 +27,7 @@ CREATE TEMP TABLE ohlc (
 )
 WITH (
     'connector' = 'lookup-http',
-    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1753977000&endAt=1753977300',
+    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=$date&endAt=$date',
     'method' = 'GET',
     'jq' = '.data[] | {
         start_time: (.[0] | tonumber),
@@ -50,14 +52,21 @@ SELECT
     volume,
     amount
 FROM all_tickers AS ALT
-LEFT JOIN ohlc ON
-    ALT.symbol = ohlc.symbol;
+LEFT JOIN ohlc AS oh
+    ON ALT.symbol = oh.symbol;
 
--- Simple query on non lookup table
-SELECT * 
-FROM all_tickers;
+-- CTE example
+WITH test AS (
+    SELECT * 
+    FROM all_tickers
+)
+SELECT * FROM test;
+
+-- Subquery example
+SELECT *
+FROM (SELECT * FROM all_tickers);
 
 -- Test function registered from lookup
-SELECT ohlc_func('MNDE-USDT');
+SELECT ohlc_func('MNDE-USDT', '1697059200');
 -- Test macro wrapping the udf
-SELECT * FROM ohlc_macro("all_tickers", symbol);
+SELECT * FROM ohlc_macro("all_tickers", symbol, date);
