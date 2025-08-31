@@ -1,7 +1,7 @@
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from parser import CreateTableContext, CreateLookupTableContext
+from sqlparser.context import CreateTableContext, CreateLookupTableContext
 
 
 def init_metadata_store(con: DuckDBPyConnection) -> None:

@@ -1,49 +1,20 @@
 import jsonschema
 
-from collections import namedtuple
 from loguru import logger
 from sqlglot import parse, exp
 
-
-TYPE_MAPPING = {
-    "TEXT": ("str", "VARCHAR"),
-    "VARCHAR": ("str", "VARCHAR"),
-    "CHAR": ("str", "CHAR"),
-    "INT": ("int", "INTEGER"),
-    "BIGINT": ("int", "BIGINT"),
-    "SMALLINT": ("int", "SMALLINT"),
-    "FLOAT": ("float", "FLOAT"),
-    "DOUBLE": ("float", "DOUBLE"),
-    "BOOLEAN": ("bool", "BOOLEAN"),
-}
-
-VALID_STATEMENTS = (exp.Create, exp.Select, exp.Set)
-
-CreateTableParams = namedtuple("CreateParams", ["name", "properties", "query"])
-CreateLookupTableParams = namedtuple(
-    "CreateLookupTableParams",
-    ["name", "properties", "query", "dynamic_columns", "columns"],
+from sqlparser.context import (
+    CreateTableContext,
+    CreateLookupTableContext,
+    SelectContext,
+    SetContext,
+    QueryContext,
+    InvalidContext,
 )
-CreateViewParams = namedtuple("CreateViewParams", ["name", "upstream"])
-CreateMaterializedViewParams = namedtuple("CreateViewParams", ["name", "upstream"])
-SelectParams = namedtuple(
-    "SelectParams", ["columns", "table", "alias", "where", "joins", "query"]
-)
-SetParams = namedtuple("SetParams", ["query"])
-
-SQLParams = CreateTableParams | CreateLookupTableParams | SelectParams | SetParams
 
 
 def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
-
-
-def get_type(expression: exp.ColumnDef) -> tuple[str, str, str]:
-    type_name = getattr(
-        getattr(getattr(expression, "kind", None), "this", None), "name", ""
-    )
-    python_type, duckdb_type = TYPE_MAPPING.get(type_name, ("", ""))
-    return python_type, duckdb_type, type_name
 
 
 def get_property(expression: exp.Property) -> exp.Expression | None:
@@ -140,10 +111,6 @@ def parse_create_properties(
 
 
 def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set) -> str:
-    assert isinstance(statement, VALID_STATEMENTS), (
-        f"Expected {VALID_STATEMENTS} not {type(statement)}"
-    )
-
     statement = statement.copy()
     if statement.args.get("properties"):
         del statement.args["properties"]
@@ -155,9 +122,9 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
     return [prop for prop in statement.args.get("properties", [])]
 
 
-def extract_create_params(
+def extract_create_context(
     statement: exp.Create, properties_schema: dict
-) -> CreateTableParams | CreateLookupTableParams | None:
+) -> CreateTableContext | CreateLookupTableContext | InvalidContext:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
     is_temp = isinstance(
         get_properties_from_create(statement)[0], exp.TemporaryProperty
@@ -179,7 +146,7 @@ def extract_create_params(
             "this", updated_table_statement
         )  # overwrite modified table statement
 
-        return CreateTableParams(
+        return CreateTableContext(
             name=table_name,
             properties=properties,
             query=get_duckdb_sql(updated_create_statement),
@@ -205,7 +172,7 @@ def extract_create_params(
         table_dict["dynamic_columns"] = dynamic_columns
         table_dict["columns"] = columns
 
-        return CreateLookupTableParams(
+        return CreateLookupTableContext(
             name=table_name,
             properties=properties,
             query=get_duckdb_sql(updated_create_statement),
@@ -214,17 +181,21 @@ def extract_create_params(
         )
 
     # TODO: Process views, materialized views, sinks and functions here
-    return None
+    return InvalidContext(reason=f"Not known statement kind: {statement.kind}")
+
+
+def get_table_name_placeholder(table_name: str):
+    return "$" + table_name
 
 
 def parse_select(
     statement: exp.Select,
-) -> tuple[exp.Select, list[str], str, str, str, list[dict[str, str]]]:
+) -> tuple[exp.Select, list[str], str, str, str, dict[str, str]]:
     columns = []
     table_name = ""
     table_alias = ""
     where = ""
-    join_tables = []
+    join_tables = {}  # can be unique
 
     statement = statement.copy()
 
@@ -245,14 +216,15 @@ def parse_select(
     # TODO: change find all with more robust ?
     for table in statement.find_all(exp.Table):
         if isinstance(table.parent, exp.Join):
-            table_exp = table
-            join_tables.append({str(table_exp.name): str(table_exp.alias_or_name)})
-            table.set("this", exp.to_identifier(f"${str(table.name)}"))
+            join_tables[str(table.name)] = str(table.alias_or_name)
+            table.set(
+                "this", exp.to_identifier(get_table_name_placeholder(table.name), False)
+            )
 
     return statement, columns, table_name, table_alias, where, join_tables
 
 
-def extract_select_params(statement: exp.Select) -> SelectParams:
+def extract_select_context(statement: exp.Select) -> SelectContext | InvalidContext:
     """
     Parse a SELECT query into a dictionary
     Args:
@@ -263,11 +235,20 @@ def extract_select_params(statement: exp.Select) -> SelectParams:
     assert isinstance(statement, exp.Select), (
         f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
     )
+    has_cte = statement.args.get("with") is not None
+    has_subquery = any(
+        isinstance(node, exp.Subquery) for node in statement.find_all(exp.Subquery)
+    )
+    if has_cte or has_subquery:
+        return InvalidContext(
+            reason="Detected invalid WITH statement or subquery usage."
+        )
+
     updated_select_statement, columns, table, alias, where, joins = parse_select(
         statement
     )
 
-    return SelectParams(
+    return SelectContext(
         columns=columns,
         table=table,
         alias=alias,
@@ -277,17 +258,17 @@ def extract_select_params(statement: exp.Select) -> SelectParams:
     )
 
 
-def extract_set_params(statement: exp.Set) -> SetParams:
+def extract_set_context(statement: exp.Set) -> SetContext:
     assert isinstance(statement, exp.Set), (
         f"Unexpected statement of type {type(statement)}, expected exp.Set statement"
     )
 
-    return SetParams(query=get_duckdb_sql(statement))
+    return SetContext(query=get_duckdb_sql(statement))
 
 
-def build_sql_params(
+def extract_query_contexts(
     query: str, properties_schema: dict
-) -> list[SQLParams]:
+) -> list[QueryContext | InvalidContext]:
     """
     Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries.
     This keeps ordering
@@ -296,27 +277,32 @@ def build_sql_params(
         query (str): SQL query string containing one or more CREATE TABLE statements
 
     Returns:
-        list[SQLParams]: list of parameters for each sql statement
+        list[dict]: list of parameters for each sql statement
+
+    Raises:
+        sqlglot.errors.ParseError: If any query cannot be parsed
+        ValueError: If any query structure is invalid
     """
     param_list = []
 
     parsed_statements = parse(query)
 
     for parsed_statement in parsed_statements:
-        assert isinstance(parsed_statement, VALID_STATEMENTS), (
-            f"Invalid statement {type(parsed_statement)}, expected: {VALID_STATEMENTS}"
-        )
-
         if isinstance(parsed_statement, exp.Create):
             param_list.append(
-                extract_create_params(parsed_statement, properties_schema)
+                extract_create_context(parsed_statement, properties_schema)
             )
 
         elif isinstance(parsed_statement, exp.Select):
-            param_list.append(extract_select_params(parsed_statement))
+            param_list.append(extract_select_context(parsed_statement))
 
         elif isinstance(parsed_statement, exp.Set):
-            param_list.append(extract_set_params(parsed_statement))
+            param_list.append(extract_set_context(parsed_statement))
+
+        elif isinstance(parsed_statement, exp.With):
+            param_list.append(
+                InvalidContext(reason="CTE statements (i.e WITH ...) are not accepted")
+            )
 
     return param_list
 
@@ -337,6 +323,6 @@ if __name__ == "__main__":
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    ordered_statements = build_sql_params(sql_content, properties_schema)
-    for params in ordered_statements:
+    ordered_statements = extract_query_contexts(sql_content, properties_schema)
+    for context in ordered_statements:
         logger.info(ordered_statements)

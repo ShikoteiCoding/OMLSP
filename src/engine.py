@@ -11,7 +11,7 @@ from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from datetime import datetime, timezone
 from loguru import logger
-from typing import Any, Coroutine, Callable
+from typing import Any, Coroutine
 from types import FunctionType
 
 from string import Template
@@ -27,7 +27,7 @@ from metadata import (
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
-from parser import (
+from sqlparser.context import (
     CreateTableContext,
     CreateLookupTableContext,
     SelectContext,
@@ -71,7 +71,7 @@ def build_lookup_properties(
 def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
-    return_type: DuckDBPyType = VARCHAR,
+    return_type: DuckDBPyType,
     **kwargs,
 ) -> dict[str, Any]:
     arity = len(dynamic_columns)
@@ -84,29 +84,34 @@ def build_scalar_udf(
     return_type_arrow = pa.struct(child_types)
 
     if arity == 1:
+
         def udf(arg1):
             elements = [chunk.to_pylist() for chunk in arg1.chunks]
             context = {dynamic_columns[0]: elements}
             return process_elements(context, properties, return_type_arrow)
     elif arity == 2:
+
         def udf(arg1, arg2):
             arrays = [arg.to_pylist() for arg in [arg1, arg2]]
             els = list(zip(*arrays))
             context = [dict(zip(dynamic_columns, el)) for el in els]
             return process_elements(context, properties, return_type_arrow)
     elif arity == 3:
+
         def udf(arg1, arg2, arg3):
             arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3]]
             els = list(zip(*arrays))
             context = [dict(zip(dynamic_columns, el)) for el in els]
             return process_elements(context, properties, return_type_arrow)
     elif arity == 4:
+
         def udf(arg1, arg2, arg3, arg4):
             arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4]]
             els = list(zip(*arrays))
             context = [dict(zip(dynamic_columns, el)) for el in els]
             return process_elements(context, properties, return_type_arrow)
     elif arity == 5:
+
         def udf(arg1, arg2, arg3, arg4, arg5):
             arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4, arg5]]
             els = list(zip(*arrays))
@@ -145,7 +150,7 @@ def build_scalar_udf(
         "return_type": return_type,
         "type": PythonUDFType.ARROW,
         "null_handling": FunctionNullHandling.SPECIAL,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -224,7 +229,9 @@ def register_lookup_table_executable(
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
 
-    udf_params = build_scalar_udf(properties, dynamic_columns, return_type, name=func_name)
+    udf_params = build_scalar_udf(
+        properties, dynamic_columns, return_type, name=func_name
+    )
     # register scalar for row to row http call
     connection.create_function(**udf_params)
     logger.debug(f"registered function: {func_name}")

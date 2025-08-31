@@ -1,76 +1,144 @@
-import networkx as nx # to replace by owned one ?
+from collections import defaultdict, deque
 
-from collections import defaultdict, OrderedDict, deque
+from sqlparser.context import (
+    QueryContext,
+    CreateTableContext,
+    CreateViewContext,
+    CreateMaterializedViewContext,
+    TaskContext,
+    InvalidContext,
+)
 
-from sqlparser.parser import SQLParams, CreateTableParams, CreateLookupTableParams, SelectParams, SetParams
 
-from typing import Any
-from loguru import logger
+class ContextNode:
+    def __init__(self, context: TaskContext):
+        self.context = context
+        self.name = context.name
 
-class OrderedDefaultDict(OrderedDict, defaultdict):
-    def __init__(self, default_factory=None, *args, **kwargs):
-        super(OrderedDefaultDict, self).__init__(*args, **kwargs)
-        self.default_factory = default_factory
+    def __getitem__(self):
+        return self.context.name
+
+    def __repr__(self):
+        return f"Node({self.context.name!r})"
+
+    def __hash__(self):
+        return hash(self.context.name)
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, ContextNode) and self.context.name == other.context.name
+        )
+
 
 class DataFlowDAG:
-    _adj_list: OrderedDict[Any, list[Any]] = OrderedDefaultDict(list)
+    def __init__(self):
+        self._adj_list: dict[ContextNode, list[ContextNode]] = defaultdict(list)
 
-    def add_edge(self, source: Any, dest: Any):
+    def add_edge(self, source: ContextNode, dest: ContextNode):
         self._adj_list[source].append(dest)
+        # ensure dest also exists in adj_list (even if no outgoing edges)
+        if dest not in self._adj_list:
+            self._adj_list[dest] = []
 
-    def _bfs(self) -> list[Any]:
-        vertices = len(self._adj_list)
-
+    def _bfs(self, start: ContextNode) -> list[ContextNode]:
         res = []
-        s = 0
+        visited = set()
         q = deque()
-        
-        visited = [False] * vertices
-        visited[s] = True
-        q.append(s)
-        
+
+        visited.add(start)
+        q.append(start)
+
         while q:
             curr = q.popleft()
             res.append(curr)
-            
-            for x in self._adj_list[curr]:
-                if not visited[x]:
-                    visited[x] = True
-                    q.append(x)
-                    
+
+            for neighbor in self._adj_list[curr]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    q.append(neighbor)
+
         return res
 
+    def merge(self, other: "DataFlowDAG") -> None:
+        """Merge another DAG into this one."""
+        for node, neighbors in other._adj_list.items():
+            if node not in self._adj_list:
+                self._adj_list[node] = []
+            self._adj_list[node].extend(neighbors)
+
     def __repr__(self):
-        bfs = self._bfs()
-        return bfs
-        
+        out = []
+        for src, dests in self._adj_list.items():
+            out.append(f"{src} -> {dests}")
+        return "\n".join(out)
 
-#def find_tables_in_expression(expression):
-#    """Recursively finds all table/view references in a sqlglot expression."""
-#    tables = set()
-#    # Use find_all(Table) to capture all tables, views, etc.
-#    for sub_expression in expression.find_all(Table):
-#        tables.add(sub_expression.name)
-#    return tables
 
-def build_dataflows(sql_params: list[SQLParams]) -> list[DataFlowDAG]:
+def build_dataflows(query_contexts: list[QueryContext]) -> list[DataFlowDAG]:
     """
+    Build DAGs from SQLContext (sources and derived views).
     """
-    dags: list[DataFlowDAG]  = []
-    sources: list[CreateTableParams] = []
+    # Node -> DAG mapping
+    node_to_dag: dict[ContextNode, DataFlowDAG] = {}
+    dags: list[DataFlowDAG] = []
 
-    for sql_param in sql_params:
+    for query_ctx in query_contexts:
+        if not isinstance(query_ctx, TaskContext):
+            continue
 
-        if isinstance(sql_param, CreateTableParams):
-            sources.append(sql_param)
+        node = ContextNode(query_ctx)
 
-        if isinstance(sql_param, )
+        if isinstance(query_ctx, CreateTableContext):
+            dag = DataFlowDAG()
+            dag._adj_list[node] = []
+            dags.append(dag)
+            node_to_dag[node] = dag
+
+        elif isinstance(query_ctx, (CreateViewContext, CreateMaterializedViewContext)):
+            upstream_nodes = [ContextNode(up) for up in query_ctx.upstreams]
+            new_node = node
+
+            # collect all dags involved
+            involved_dags = {
+                node_to_dag[up] for up in upstream_nodes if up in node_to_dag
+            }
+
+            if not involved_dags:
+                # no upstream in existing DAGs → create fresh DAG
+                dag = DataFlowDAG()
+                for up in upstream_nodes:
+                    dag._adj_list[up] = []
+                    dag.add_edge(up, new_node)
+                dags.append(dag)
+                node_to_dag[new_node] = dag
+                for up in upstream_nodes:
+                    node_to_dag[up] = dag
+
+            else:
+                # merge all dags if >1
+                dag = involved_dags.pop()
+                while involved_dags:
+                    other = involved_dags.pop()
+                    dag.merge(other)
+                    dags.remove(other)
+                    # update node→dag mapping
+                    for n in other._adj_list.keys():
+                        node_to_dag[n] = dag
+
+                # now add edges from upstreams
+                for up in upstream_nodes:
+                    if up not in dag._adj_list:
+                        dag._adj_list[up] = []
+                    dag.add_edge(up, new_node)
+                    node_to_dag[up] = dag
+
+                node_to_dag[new_node] = dag
 
     return dags
 
+
 if __name__ == "__main__":
     from pathlib import Path
-    from sqlparser.parser import build_sql_params
+    from sqlparser.parser import extract_query_contexts
     import json
 
     file = "examples/basic.sql"
@@ -85,6 +153,13 @@ if __name__ == "__main__":
     with open(prop_schema_filepath, "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
 
-    ordered_statements = build_sql_params(sql_content, properties_schema)
+    query_contexts = extract_query_contexts(sql_content, properties_schema)
 
-    
+    dags = build_dataflows(
+        [
+            query_context
+            for query_context in query_contexts
+            if not isinstance(query_context, InvalidContext)
+        ]
+    )
+    print(dags)

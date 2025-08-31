@@ -16,7 +16,6 @@ WITH (
 
 CREATE TEMP TABLE ohlc (
     $symbol STRING,
-    $date STRING,
     start_time TIMESTAMP,
     open FLOAT,
     high FLOAT,
@@ -27,7 +26,7 @@ CREATE TEMP TABLE ohlc (
 )
 WITH (
     'connector' = 'lookup-http',
-    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=$date&endAt=$date',
+    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1756637760&endAt=1756637820',
     'method' = 'GET',
     'jq' = '.data[] | {
         start_time: (.[0] | tonumber),
