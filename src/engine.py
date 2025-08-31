@@ -27,7 +27,12 @@ from metadata import (
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
-from parser import CreateTableParams, CreateLookupTableParams, SelectParams, SetParams
+from parser import (
+    CreateTableContext,
+    CreateLookupTableContext,
+    SelectContext,
+    SetContext,
+)
 from concurrent.futures import ThreadPoolExecutor
 
 DUCKDB_TO_PYARROW_PYTYPE = {
@@ -73,19 +78,15 @@ def build_scalar_udf(
 
     child_types = []
     for subtype in return_type.children:
-        logger.info(subtype)
         child_types.append(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
     return_type_arrow = pa.struct(child_types)
-    logger.info(child_types)
 
     if arity == 1:
         def udf(arg1):
-            els = []
-            for chunk in arg1.chunks:
-                els.extend(chunk.to_pylist())
-            context = {dynamic_columns[0]: els}
+            elements = [chunk.to_pylist() for chunk in arg1.chunks]
+            context = {dynamic_columns[0]: elements}
             return process_elements(context, properties, return_type_arrow)
     elif arity == 2:
         def udf(arg1, arg2):
@@ -184,10 +185,10 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
 
 
 def build_one_runner(
-    create_table_params: CreateTableParams, con: DuckDBPyConnection
+    create_table_context: CreateTableContext, con: DuckDBPyConnection
 ) -> Coroutine[Any, Any, None]:
-    properties = create_table_params.properties
-    table_name = create_table_params.name
+    properties = create_table_context.properties
+    table_name = create_table_context.name
     cron_expr = str(properties["schedule"])
     scheduler = AsyncIOScheduler()
 
@@ -211,12 +212,12 @@ def build_one_runner(
 
 
 def register_lookup_table_executable(
-    create_table_params: CreateLookupTableParams, connection: DuckDBPyConnection
+    create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
-    properties = create_table_params.properties
-    table_name = create_table_params.name
-    dynamic_columns = create_table_params.dynamic_columns
-    columns = create_table_params.columns
+    properties = create_table_context.properties
+    table_name = create_table_context.name
+    dynamic_columns = create_table_context.dynamic_columns
+    columns = create_table_context.columns
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
@@ -254,24 +255,24 @@ def register_lookup_table_executable(
 
 
 async def start_background_runnners_or_register(
-    table_params: CreateTableParams | CreateLookupTableParams,
+    table_context: CreateTableContext | CreateLookupTableContext,
     connection: DuckDBPyConnection,
 ):
     task: asyncio.Task | None = None
     task: asyncio.Task | None = None
 
-    name = table_params.name
-    create_table(connection, table_params)
+    name = table_context.name
+    create_table(connection, table_context)
 
     # register table, temp tables (TODO: views / materialized views / sink)
-    if isinstance(table_params, CreateTableParams):
+    if isinstance(table_context, CreateTableContext):
         task = asyncio.create_task(
-            build_one_runner(table_params, connection), name=f"{name}_runner"
+            build_one_runner(table_context, connection), name=f"{name}_runner"
         )
 
     # handle lookup table
-    if isinstance(table_params, CreateLookupTableParams):
-        register_lookup_table_executable(table_params, connection)
+    if isinstance(table_context, CreateLookupTableContext):
+        register_lookup_table_executable(table_context, connection)
 
     if task:
         _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
@@ -301,7 +302,7 @@ def build_substitute_macro_definition(
 
 def select_sql_substitution(
     con: DuckDBPyConnection,
-    select_query: SelectParams,
+    select_query: SelectContext,
     tables: list[str],
 ) -> str:
     """Substitutes select statement query with lookup references to macro references."""
@@ -343,10 +344,10 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
 
 def handle_select_or_set(
-    con: DuckDBPyConnection, params: SelectParams | SetParams
+    con: DuckDBPyConnection, context: SelectContext | SetContext
 ) -> str | pl.DataFrame:
-    if isinstance(params, SelectParams):
-        table_name = params.table
+    if isinstance(context, SelectContext):
+        table_name = context.table
         lookup_tables = get_lookup_tables(con)
         tables = get_tables(con)
 
@@ -355,11 +356,11 @@ def handle_select_or_set(
             logger.error(msg)
             return msg
 
-        duckdb_sql = select_sql_substitution(con, params, tables)
+        duckdb_sql = select_sql_substitution(con, context, tables)
         return duckdb_to_pl(con, duckdb_sql)
     else:
         try:
-            con.sql(params.query)
+            con.sql(context.query)
         except Exception as e:
             return str(e)  # TODO: handle duckdb configs and omlsp custom configs
         return "SET"  # psql syntax
