@@ -1,6 +1,6 @@
 from collections import defaultdict, deque
 
-from sqlparser.context import (
+from context.context import (
     QueryContext,
     CreateTableContext,
     CreateViewContext,
@@ -8,7 +8,17 @@ from sqlparser.context import (
     TaskContext,
     InvalidContext,
 )
+from dag.channel import Channel
 
+
+class DagManager:
+    _ctx_channel: Channel
+
+    def register_channel(self):
+        pass
+
+    def register(self, context: QueryContext):
+        print("hi")
 
 class ContextNode:
     def __init__(self, context: TaskContext):
@@ -138,7 +148,7 @@ def build_dataflows(query_contexts: list[QueryContext]) -> list[DataFlowDAG]:
 
 if __name__ == "__main__":
     from pathlib import Path
-    from sqlparser.parser import extract_query_contexts
+    from sql.sqlparser.parser import extract_query_contexts
     import json
 
     file = "examples/basic.sql"

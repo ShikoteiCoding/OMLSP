@@ -4,7 +4,7 @@ import json
 
 from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
-from sqlparser.parser import (
+from sql.sqlparser.parser import (
     extract_query_contexts,
     CreateLookupTableContext,
     CreateTableContext,

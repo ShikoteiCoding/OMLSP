@@ -3,7 +3,7 @@ import jsonschema
 from loguru import logger
 from sqlglot import parse, exp
 
-from sqlparser.context import (
+from context.context import (
     CreateTableContext,
     CreateLookupTableContext,
     SelectContext,

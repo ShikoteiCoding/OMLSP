@@ -27,7 +27,7 @@ from metadata import (
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
-from sqlparser.context import (
+from context.context import (
     CreateTableContext,
     CreateLookupTableContext,
     SelectContext,
