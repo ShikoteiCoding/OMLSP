@@ -177,9 +177,6 @@ async def processor(
     )
 
     if len(records) > 0:
-        logger.debug(
-        f"{records}"
-        )
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
@@ -207,7 +204,6 @@ def build_one_runner(
 
     trigger = CronTrigger.from_crontab(cron_expr, timezone=timezone.utc)
     start_time = datetime.now(timezone.utc)
-    logger.info(f"registered test: {properties}")
     http_requester = build_http_requester(properties)
 
     job = scheduler.add_job(
