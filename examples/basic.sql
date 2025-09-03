@@ -3,7 +3,6 @@ CREATE TABLE all_tickers (
     symbolName STRING,
     buy FLOAT,
     sell FLOAT,
-    date STRING,
 )
 WITH (
     'connector' = 'http',
@@ -16,7 +15,7 @@ WITH (
 
 CREATE TEMP TABLE ohlc (
     $symbol STRING,
-    $date STRING,
+    $symbolName STRING,
     start_time TIMESTAMP,
     open FLOAT,
     high FLOAT,
@@ -27,7 +26,7 @@ CREATE TEMP TABLE ohlc (
 )
 WITH (
     'connector' = 'lookup-http',
-    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=$date&endAt=$date',
+    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1753977000&endAt=1753977300',
     'method' = 'GET',
     'jq' = '.data[] | {
         start_time: (.[0] | tonumber),
@@ -67,6 +66,6 @@ SELECT *
 FROM (SELECT * FROM all_tickers);
 
 -- Test function registered from lookup
-SELECT ohlc_func('MNDE-USDT', '1697059200');
+SELECT ohlc_func('MNDE-USDT');
 -- Test macro wrapping the udf
-SELECT * FROM ohlc_macro("all_tickers", symbol, date);
+SELECT * FROM ohlc_macro("all_tickers", symbol, symbolName);
