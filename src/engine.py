@@ -11,7 +11,7 @@ from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from datetime import datetime, timezone
 from loguru import logger
-from typing import Any, Coroutine
+from typing import Any, Coroutine, Iterable
 from types import FunctionType
 
 from string import Template
@@ -54,7 +54,7 @@ DUCKDB_TO_PYARROW_PYTYPE = {
 
 
 def build_lookup_properties(
-    properties: dict[str, str], context: dict[str, str]
+    properties: dict[str, str], context: dict[str, Any]
 ) -> dict[str, str]:
     new_props = {}
 
@@ -82,49 +82,54 @@ def build_scalar_udf(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
     return_type_arrow = pa.struct(child_types)
-
+    results = []
     if arity == 1:
-
-        def udf(arg1):
-            elements = [chunk.to_pylist() for chunk in arg1.chunks]
-            context = {dynamic_columns[0]: elements}
-            return process_elements(context, properties, return_type_arrow)
+        def udf(a1: pa.ChunkedArray) -> pa.Array:
+            for chunk1 in a1.chunks:
+                chunk_rows = [(value,) for value in chunk1.to_pylist()]
+                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                results.extend(chunk_results.to_pylist())
+            return pa.array(results, type=return_type_arrow)
     elif arity == 2:
-
-        def udf(arg1, arg2):
-            arrays = [arg.to_pylist() for arg in [arg1, arg2]]
-            els = list(zip(*arrays))
-            context = [dict(zip(dynamic_columns, el)) for el in els]
-            return process_elements(context, properties, return_type_arrow)
+        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray) -> pa.Array:
+            for chunk1, chunk2 in zip(a1.chunks, a2.chunks):
+                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist())
+                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                results.extend(chunk_results.to_pylist())
+            return pa.array(results, type=return_type_arrow)
     elif arity == 3:
-
-        def udf(arg1, arg2, arg3):
-            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3]]
-            els = list(zip(*arrays))
-            context = [dict(zip(dynamic_columns, el)) for el in els]
-            return process_elements(context, properties, return_type_arrow)
+        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray) -> pa.Array:
+            for chunk1, chunk2, chunk3 in zip(a1.chunks, a2.chunks, a3.chunks):
+                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist())
+                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                results.extend(chunk_results.to_pylist())
+            return pa.array(results, type=return_type_arrow)
     elif arity == 4:
-
-        def udf(arg1, arg2, arg3, arg4):
-            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4]]
-            els = list(zip(*arrays))
-            context = [dict(zip(dynamic_columns, el)) for el in els]
-            return process_elements(context, properties, return_type_arrow)
+        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray, 
+                a4: pa.ChunkedArray) -> pa.Array:
+            for chunk1, chunk2, chunk3, chunk4 in zip(a1.chunks, a2.chunks, a3.chunks, a4.chunks):
+                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist(), chunk4.to_pylist())
+                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                results.extend(chunk_results.to_pylist())
+            return pa.array(results, type=return_type_arrow)
     elif arity == 5:
+        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray, 
+                a4: pa.ChunkedArray, a5: pa.ChunkedArray) -> pa.Array:
+            for chunk1, chunk2, chunk3, chunk4, chunk5 in zip(a1.chunks, a2.chunks, a3.chunks, a4.chunks, a5.chunks):
+                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist(), chunk4.to_pylist(), chunk5.to_pylist())
+                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                results.extend(chunk_results.to_pylist())
+            return pa.array(results, type=return_type_arrow)
 
-        def udf(arg1, arg2, arg3, arg4, arg5):
-            arrays = [arg.to_pylist() for arg in [arg1, arg2, arg3, arg4, arg5]]
-            els = list(zip(*arrays))
-            context = [dict(zip(dynamic_columns, el)) for el in els]
-            return process_elements(context, properties, return_type_arrow)
-    else:
-        raise ValueError("Too many dynamic columns (max 5 supported)")
-
-    def process_elements(context_list, properties, return_type_arrow):
-        def _inner(context):
+    def process_elements(
+        rows: Iterable[tuple[Any, ...]], 
+        properties: dict[str, str], 
+        return_type_arrow: pa.DataType
+    ) -> pa.Array:
+        def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
+            context = dict(zip(dynamic_columns, row))
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
-
             requester = build_http_requester(lookup_properties, is_async=False)
 
             try:
@@ -139,7 +144,7 @@ def build_scalar_udf(
             return default_response
 
         with ThreadPoolExecutor() as executor:
-            results = list(executor.map(_inner, context_list))
+            results = list(executor.map(_inner, rows))
 
         return pa.array(results, type=return_type_arrow)
 
