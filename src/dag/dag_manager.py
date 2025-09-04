@@ -1,3 +1,5 @@
+import trio
+
 from collections import defaultdict, deque
 
 from context.context import (
@@ -8,17 +10,6 @@ from context.context import (
     TaskContext,
     InvalidContext,
 )
-from dag.channel import Channel
-
-
-class DagManager:
-    _ctx_channel: Channel
-
-    def register_channel(self):
-        pass
-
-    def register(self, context: QueryContext):
-        print("hi")
 
 class ContextNode:
     def __init__(self, context: TaskContext):
@@ -81,6 +72,67 @@ class DataFlowDAG:
         for src, dests in self._adj_list.items():
             out.append(f"{src} -> {dests}")
         return "\n".join(out)
+
+
+class DagManager:
+    node_to_dag: dict[ContextNode, DataFlowDAG] = {}
+    dags: list[DataFlowDAG] = []
+    sources: list[ContextNode] = []
+
+    def update(self, query_ctx: TaskContext, nursery: trio.Nursery):
+        node = ContextNode(query_ctx)
+
+        if isinstance(query_ctx, CreateTableContext):
+            dag = DataFlowDAG()
+            dag._adj_list[node] = []
+            dags.append(dag)
+            self.node_to_dag[node] = dag
+
+        elif isinstance(query_ctx, (CreateViewContext, CreateMaterializedViewContext)):
+            upstream_nodes = [ContextNode(up) for up in query_ctx.upstreams]
+            new_node = node
+
+            # collect all dags involved
+            involved_dags = {
+                self.node_to_dag[up] for up in upstream_nodes if up in self.node_to_dag
+            }
+
+            if not involved_dags:
+                # no upstream in existing DAGs → create fresh DAG
+                dag = DataFlowDAG()
+                for up in upstream_nodes:
+                    dag._adj_list[up] = []
+                    dag.add_edge(up, new_node)
+                dags.append(dag)
+                self.node_to_dag[new_node] = dag
+                for up in upstream_nodes:
+                    self.node_to_dag[up] = dag
+
+            else:
+                # merge all dags if >1
+                dag = involved_dags.pop()
+                while involved_dags:
+                    other = involved_dags.pop()
+                    dag.merge(other)
+                    dags.remove(other)
+                    # update node→dag mapping
+                    for n in other._adj_list.keys():
+                        self.node_to_dag[n] = dag
+
+                # now add edges from upstreams
+                for up in upstream_nodes:
+                    if up not in dag._adj_list:
+                        dag._adj_list[up] = []
+                    dag.add_edge(up, new_node)
+                    self.node_to_dag[up] = dag
+
+                self.node_to_dag[new_node] = dag
+                
+        self.run(nursery)
+
+    def run(self, nursery: trio.Nursery):
+        pass
+        
 
 
 def build_dataflows(query_contexts: list[QueryContext]) -> list[DataFlowDAG]:

@@ -2,7 +2,7 @@ import sqlglot
 from typing import Generator
 
 
-def read_sql_statements(filepath: str) -> Generator[str, None, None]:
+def iter_sql_statements(filepath: str) -> Generator[str, None, None]:
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
@@ -25,7 +25,7 @@ if __name__ == "__main__":
         """)
 
     try:
-        for i, sql_statement in enumerate(read_sql_statements("example.sql")):
+        for i, sql_statement in enumerate(iter_sql_statements("example.sql")):
             print(sql_statement)
     except (FileNotFoundError, IOError) as e:
         print(e)

@@ -27,9 +27,11 @@ InvalidContext = namedtuple("InvalidContext", ["reason"])
 # --- Unions for type hints ---
 TaskContext = Union[
     CreateTableContext,
-    CreateLookupTableContext,
     CreateViewContext,
     CreateMaterializedViewContext,
+]
+SourceTaskContext = Union[
+    CreateTableContext
 ]
 
 QueryContext = Union[

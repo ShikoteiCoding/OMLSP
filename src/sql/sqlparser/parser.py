@@ -1,7 +1,7 @@
 import jsonschema
 
 from loguru import logger
-from sqlglot import parse, exp
+from sqlglot import parse, parse_one, exp
 
 from context.context import (
     CreateTableContext,
@@ -264,6 +264,22 @@ def extract_set_context(statement: exp.Set) -> SetContext:
     )
 
     return SetContext(query=get_duckdb_sql(statement))
+
+def extract_one_query_context(query: str, properties_schema: dict) -> QueryContext | InvalidContext:
+    parsed_statement = parse_one(query)
+    if isinstance(parsed_statement, exp.Create):
+        return extract_create_context(parsed_statement, properties_schema)
+
+    elif isinstance(parsed_statement, exp.Select):
+        return extract_select_context(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.Set):
+        return extract_set_context(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.With):
+        return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
+    
+    return InvalidContext(reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}")
 
 
 def extract_query_contexts(

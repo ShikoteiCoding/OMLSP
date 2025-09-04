@@ -1,15 +1,9 @@
-from dag.channel import Channel
+from commons.utils import Channel
 from context.context import QueryContext, InvalidContext
+from sql.sqlparser.parser import extract_one_query_context
 
 class ContextManager:
-    _sql_channel: Channel
     
-    def register_channel(self, channel: Channel):
-        if not hasattr(self, "_sql_channel"):
-            self._sql_channel = channel
-        else:
-            raise Exception("Attempt to submit sql channel to ContextManager, but one already exists")
-        
-    
-    def parse(self, sql: str) -> QueryContext | InvalidContext:
-        pass
+    @staticmethod
+    def parse(sql: str, properties_schema: dict) -> QueryContext | InvalidContext:
+        return extract_one_query_context(sql, properties_schema)
