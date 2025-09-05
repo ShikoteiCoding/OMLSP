@@ -3,8 +3,7 @@ import polars as pl
 import time
 import pyarrow as pa
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.job import Job
+from apscheduler import AsyncScheduler
 from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.functional import FunctionNullHandling, PythonUDFType
@@ -82,44 +81,22 @@ def build_scalar_udf(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
     return_type_arrow = pa.struct(child_types)
-    results = []
-    if arity == 1:
-        def udf(a1: pa.ChunkedArray) -> pa.Array:
-            for chunk1 in a1.chunks:
-                chunk_rows = [(value,) for value in chunk1.to_pylist()]
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 2:
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray) -> pa.Array:
-            for chunk1, chunk2 in zip(a1.chunks, a2.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 3:
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray) -> pa.Array:
-            for chunk1, chunk2, chunk3 in zip(a1.chunks, a2.chunks, a3.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 4:
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray, 
-                a4: pa.ChunkedArray) -> pa.Array:
-            for chunk1, chunk2, chunk3, chunk4 in zip(a1.chunks, a2.chunks, a3.chunks, a4.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist(), chunk4.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 5:
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray, 
-                a4: pa.ChunkedArray, a5: pa.ChunkedArray) -> pa.Array:
-            for chunk1, chunk2, chunk3, chunk4, chunk5 in zip(a1.chunks, a2.chunks, a3.chunks, a4.chunks, a5.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist(), chunk4.to_pylist(), chunk5.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
+
+    arg_names = [f"a{i}" for i in range(1, arity + 1)]
+
+    def core_udf(*arrays: pa.ChunkedArray) -> pa.Array:
+        results = []
+        for chunks in zip(*(arr.chunks for arr in arrays)):
+            py_chunks = [chunk.to_pylist() for chunk in chunks]
+            chunk_rows = zip(*py_chunks)
+            chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+            results.extend(chunk_results.to_pylist())
+        return pa.array(results, type=return_type_arrow)
+
+    udf = eval(
+        f"lambda {', '.join(arg_names)}: core_udf({', '.join(arg_names)})",
+        {"core_udf": core_udf}
+    )
 
     def process_elements(
         rows: Iterable[tuple[Any, ...]], 
@@ -184,41 +161,37 @@ async def processor(
 
     update_batch_id_in_table_metadata(con, table_name, batch_id + 1)
 
-
-async def execute(scheduler: AsyncIOScheduler, job: Job):
-    scheduler.start()
-    logger.info(f"[{job.name}] - next schedule: {job.next_run_time}")
-
-    # TODO: Dirty
-    while True:
-        await asyncio.sleep(3600)
+async def source_executable(task_context: CreateTableContext):
+    ...
 
 
-def build_one_runner(
+
+async def build_one_runner(
     create_table_context: CreateTableContext, con: DuckDBPyConnection
-) -> Coroutine[Any, Any, None]:
+) -> Coroutine[Any, Any, Any]:
     properties = create_table_context.properties
     table_name = create_table_context.name
     cron_expr = str(properties["schedule"])
-    scheduler = AsyncIOScheduler()
+    scheduler = AsyncScheduler()
 
     trigger = CronTrigger.from_crontab(cron_expr, timezone=timezone.utc)
     start_time = datetime.now(timezone.utc)
     http_requester = build_http_requester(properties)
 
-    job = scheduler.add_job(
-        processor,
-        trigger,
-        name=table_name,
-        kwargs={
-            "table_name": table_name,
-            "start_time": start_time,
-            "http_requester": http_requester,
-            "con": con,
-        },
-    )
+    async with scheduler as s:
+        await s.start_in_background()
 
-    return execute(scheduler, job)
+        return s.add_schedule(
+            processor,
+            trigger,
+            id=table_name,
+            kwargs={
+                "table_name": table_name,
+                "start_time": start_time,
+                "http_requester": http_requester,
+                "con": con,
+            },
+        )
 
 
 def register_lookup_table_executable(
@@ -279,7 +252,7 @@ async def start_background_runnners_or_register(
     # register table, temp tables (TODO: views / materialized views / sink)
     if isinstance(table_context, CreateTableContext):
         task = asyncio.create_task(
-            build_one_runner(table_context, connection), name=f"{name}_runner"
+            await build_one_runner(table_context, connection), name=f"{name}_runner"
         )
 
     # handle lookup table

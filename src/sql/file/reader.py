@@ -6,7 +6,7 @@ def iter_sql_statements(filepath: str) -> Generator[str, None, None]:
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
-    statements = sqlglot.transpile(content)
+    statements = [stmt.lstrip() for stmt in content.split(";") if stmt != ""]
 
     for statement in statements:
         yield statement

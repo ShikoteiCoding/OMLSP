@@ -85,7 +85,7 @@ class DagManager:
         if isinstance(query_ctx, CreateTableContext):
             dag = DataFlowDAG()
             dag._adj_list[node] = []
-            dags.append(dag)
+            self.dags.append(dag)
             self.node_to_dag[node] = dag
 
         elif isinstance(query_ctx, (CreateViewContext, CreateMaterializedViewContext)):
@@ -103,7 +103,7 @@ class DagManager:
                 for up in upstream_nodes:
                     dag._adj_list[up] = []
                     dag.add_edge(up, new_node)
-                dags.append(dag)
+                self.dags.append(dag)
                 self.node_to_dag[new_node] = dag
                 for up in upstream_nodes:
                     self.node_to_dag[up] = dag
@@ -114,7 +114,7 @@ class DagManager:
                 while involved_dags:
                     other = involved_dags.pop()
                     dag.merge(other)
-                    dags.remove(other)
+                    self.dags.remove(other)
                     # update node→dag mapping
                     for n in other._adj_list.keys():
                         self.node_to_dag[n] = dag
@@ -127,7 +127,7 @@ class DagManager:
                     self.node_to_dag[up] = dag
 
                 self.node_to_dag[new_node] = dag
-                
+
         self.run(nursery)
 
     def run(self, nursery: trio.Nursery):

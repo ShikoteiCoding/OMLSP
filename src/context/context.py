@@ -25,15 +25,23 @@ InvalidContext = namedtuple("InvalidContext", ["reason"])
 
 
 # --- Unions for type hints ---
+# Context to eval once
+EvalContext = Union[
+    SelectContext,
+    SetContext
+]
+# Context part of task flow
 TaskContext = Union[
+    CreateLookupTableContext,
     CreateTableContext,
     CreateViewContext,
     CreateMaterializedViewContext,
 ]
-SourceTaskContext = Union[
-    CreateTableContext
+QueryContext = Union[
+   EvalContext, TaskContext
 ]
 
-QueryContext = Union[
-    CreateTableContext, CreateLookupTableContext, SelectContext, SetContext
+# Sub type of TaskContext
+SourceTaskContext = Union[
+    CreateTableContext
 ]

@@ -6,21 +6,27 @@ TaskOutput: TypeAlias = Any
 TaskId = int | str
 
 class Task:
+    _running = False
+
     def __init__(
         self,
         task_id: TaskId,
-        executable: Callable[..., TaskOutput],
         receivers: list[Channel],
         sender: Channel,
     ):
         self.task_id = task_id
-        self.executable = executable
+        
         self._receivers = receivers
         self._sender = sender
+        self._executable = None
 
     @property
     def sender(self):
         return self._sender
+    
+    def register(self, executable: Callable):
+        self.executable = executable
+        return self
 
     def subscribe(self, recv: Channel):
         self._receivers.append(recv)
@@ -33,3 +39,6 @@ class Task:
         result = await self.executable(self.task_id, *inputs)
 
         await self._sender.send(result)
+
+    def __repr__(self):
+        return f"Node({self.task_id!r})"

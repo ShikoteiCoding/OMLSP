@@ -1,87 +1,100 @@
 import asyncio
+import trio
 
-from typing import Any, Callable, TypeAlias
-from sql.sqlparser.dag import DataFlowDAG
 from commons.utils import Channel
+from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
+from engine.engine import source_executable
 from task.task import TaskId, TaskOutput, Task
-from context.context import TaskContext, SourceTaskContext
 
+from apscheduler import AsyncScheduler
+from duckdb import DuckDBPyConnection
+
+
+from loguru import logger
 
 class TaskManager:
-    sources: dict[TaskId, Task]
-    task_id_to_task: dict[TaskId, Task]
+    conn: DuckDBPyConnection
+    scheduler: AsyncScheduler
 
-    def append(self, ctx: TaskContext):
+    _sources: dict[TaskId, Task] = {}
+    _task_id_to_task: dict[TaskId, Task] = {}
+    _nursery: trio.Nursery
+    _taskctx_channel: Channel[TaskContext]
+
+    def __init__(self, conn: DuckDBPyConnection, scheduler: AsyncScheduler):
+        self.scheduler = scheduler
+
+    async def add_taskctx_channel(self, channel: Channel[TaskContext]):
+        self._taskctx_channel = channel
+
+    def appoint(self, nursery: trio.Nursery):
+        if hasattr(self, "nursery"):
+            raise Exception(f"TaskManager has already been appointed.")
+        self._nursery = nursery
+
+    def register_task(self, ctx: TaskContext):
         task_id = ctx.name
 
         task = Task(
             task_id=task_id,
-            executable=lambda x: x, # TODO: plug executable here
             receivers=[],
             sender=Channel(0),
         )
 
+        if isinstance(ctx, CreateLookupTableContext):
+            logger.warning("not handling CreateLookupTableContext in task manager yet")
+            return
+
         if isinstance(ctx, SourceTaskContext):
-            self.sources[task_id] = task
+            # TODO: should it be register to scheduler instead ?
+            self._sources[task_id] = task.register(source_executable)
         
         else:
             for upstream in ctx.upstreams:
-                upstream_task = self.task_id_to_task[upstream]
+                upstream_task = self._task_id_to_task[upstream]
                 task.subscribe(upstream_task.sender)
         
-        self.task_id_to_task[task_id] = task
+        self._task_id_to_task[task_id] = task
+
+    async def process(self):
+        async for taskctx in self._taskctx_channel:
+            pass
+
+    async def schedule(self):
+        pass
 
 
-    async def run(self, entry_points: dict[TaskId, TaskOutput]):
-        """Run DAG: seed entrypoint tasks, then run everything concurrently."""
-        # seed entrypoints (sources) with their initial data
-        for task_id, data in entry_points.items():
-            for ch in self.tasks[task_id].senders:
-                await ch.send(data)
+    async def run(self):
+        """Main loop for the TaskManager, runs forever."""
+        self._running = True
 
-        # run all tasks concurrently
-        await asyncio.gather(*(t.run() for t in self.tasks.values()))
+        async with trio.open_nursery() as nursery:
+            self._nursery = nursery
 
+            async with self.scheduler as scheduler:
+                await self.scheduler.start_in_background()
+                nursery.start_soon(self.process)
+                nursery.start_soon(self.schedule)
 
-if __name__ == "__main__":
+            print("[TaskManager] Started.")
+            while self._running:
+                await trio.sleep(1)
 
-    async def fetch_service_a(task_id) -> TaskOutput:
-        await asyncio.sleep(1)
-        data = {"a": 1}
-        print(f"[{task_id}]: {data}")
-        return data
-
-    async def fetch_service_b(task_id) -> TaskOutput:
-        await asyncio.sleep(1)
-        data = {"b": 2}
-        print(f"[{task_id}]: {data}")
-        return data
-
-    async def join_data(task_id, a, b) -> TaskOutput:
-        await asyncio.sleep(1)
-        data = {**a, **b}
-        print(f"[{task_id}]: {data}")
-        return data
-
-    async def write_to_kafka(task_id, c) -> TaskOutput:
-        print(f"[{task_id}]: saving kafka {c}")
-        return None
-
-    async def write_to_db(task_id, d) -> TaskOutput:
-        print(f"[{task_id}]: saving db {d}")
-        return None
-
-    chan_a = Channel()
-    chan_b = Channel()
-    chan_join_out = Channel()
-    chan_save_out = Channel()
-    taska = Task("fetchA", fetch_service_a, [], [chan_a])
-    taskb = Task("fetchB", fetch_service_b, [], [chan_b])
-    taskjoin = Task("join", join_data, [chan_a, chan_b], [chan_join_out, chan_save_out])
-    taskkafka = Task("kafka", write_to_kafka, [chan_join_out], [])
-    taskdb = Task("db", write_to_db, [chan_save_out], [])
-
-    async def run_tasks(tasks):
-        await asyncio.gather(*(task.run() for task in tasks))
-
-    asyncio.run(run_tasks([taska, taskb, taskjoin, taskkafka, taskdb]))
+        print("[TaskManager] Stopped.")
+        
+    async def _watch_for_shutdown(self):
+        try:
+            while self._running:
+                await trio.sleep(1)
+        finally:
+            logger.info("[Runner] Shutdown initiated.")
+            self._running = False
+    
+    def __repr__(self) -> str:
+        s = ["sources:"]
+        for _, task in self._sources.items():
+            s.append(str(task))
+        s.append("dags:")
+        for _, task in self._task_id_to_task.items():
+            s.append(str(task))
+        return "\n".join(s)

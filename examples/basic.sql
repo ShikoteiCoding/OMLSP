@@ -2,7 +2,7 @@ CREATE TABLE all_tickers (
     symbol STRING,
     symbolName STRING,
     buy FLOAT,
-    sell FLOAT,
+    sell FLOAT
 )
 WITH (
     'connector' = 'http',
@@ -54,14 +54,14 @@ FROM all_tickers AS ALT
 LEFT JOIN ohlc AS oh
     ON ALT.symbol = oh.symbol;
 
--- CTE example
+-- Invalid example: CTE
 WITH test AS (
     SELECT * 
     FROM all_tickers
 )
 SELECT * FROM test;
 
--- Subquery example
+-- Invalid example: subquery
 SELECT *
 FROM (SELECT * FROM all_tickers);
 

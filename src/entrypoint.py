@@ -3,7 +3,7 @@ import asyncio
 from loguru import logger
 from duckdb import DuckDBPyConnection
 
-from engine import start_background_runnners_or_register, handle_select_or_set
+from engine.engine import start_background_runnners_or_register, handle_select_or_set
 from sql.sqlparser.parser import (
     extract_query_contexts,
     CreateLookupTableContext,

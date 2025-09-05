@@ -1,58 +1,69 @@
 import trio
 
-from typing import Any
-
-from sql.file.reader import iter_sql_statements
-from common.utils import Channel
-from dag.dag_manager import DagManager
+from commons.utils import Channel
 from context.context_manager import ContextManager
-from context.context import InvalidContext, QueryContext
+from context.context import EvalContext, TaskContext
+from sql.file.reader import iter_sql_statements
 
+from apscheduler import AsyncScheduler
+from duckdb import DuckDBPyConnection, connect
 from loguru import logger
+from task.task_manager import TaskManager
 
 
 class Runner:
-    def __init__(self, context_manager: ContextManager, dag_manager: DagManager, executors: dict[str, Any], properties_schema: dict[str, Any]):
+    def __init__(self, 
+                 context_manager: ContextManager,
+                 task_manager: TaskManager):
         self.context_manager = context_manager
-        self.dag_manager = dag_manager
-        self.properties_schema = properties_schema
-        self.executors = executors
-
+        self.task_manager = task_manager
         
-        self._sql_channel = Channel[str](10) # Channels for SQL submissions
-        self._ctx_channel = Channel[QueryContext](10) # Channels for Contexts
+        self._sql_channel = Channel[str](10)
+        self._evalctx_channel = Channel[EvalContext](10)
+        self._taskctx_channel = Channel[TaskContext](10)
         self._nursery = None
         self._running = False
-        
+    
+    async def build(self):
+        await self.context_manager.add_sql_channel(self._sql_channel)
+        await self.context_manager.add_evalctx_channel(self._evalctx_channel)
+        await self.context_manager.add_taskctx_channel(self._taskctx_channel)
+        await self.task_manager.add_taskctx_channel(self._taskctx_channel)
+    
+    # TODO: replace with terminal channel
     async def submit(self, sql: str) -> None:
         await self._sql_channel.send(sql)
 
-    async def _sql_consummer(self) -> None:
-        """Consume SQL statements, parse, and update DAG dynamically."""
-        async for sql in self._sql_channel:
-            ctx = self.context_manager.parse(sql, self.properties_schema)
-
-            if isinstance(ctx, InvalidContext):
-                raise Exception(str(ctx.reason))
-
-            await self._ctx_channel.send(ctx)
-            logger.info(f"[Runner] Registered SQL: {sql}")
-
-    async def _ctx_manager(self, nursery: trio.Nursery) -> None:
-        """Continuously run tasks in the evolving DAG."""
-        async for ctx in self._ctx_channel:
-            self.dag_manager.update(ctx, nursery)
-
-    async def run(self) -> None:
-        """Main entrypoint: start background consumers + DAG scheduler."""
+    async def run(self):
         self._running = True
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
-            # TODO: invert dependency
-            # Makes CM & DM be long lived task 
-            # with nursury management
-            nursery.start_soon(self._sql_consummer)
-            nursery.start_soon(self._ctx_manager, nursery)
+
+            nursery.start_soon(self.context_manager.run)
+            nursery.start_soon(self.task_manager.run)
+
+            nursery.start_soon(self._watch_for_shutdown)
+            logger.info("[Runner] Started and running...")
+            await trio.sleep_forever()
+
+        logger.info("[Runner] Stopped.")
+        
+    async def _watch_for_shutdown(self):
+        try:
+            while self._running:
+                await trio.sleep(1)
+        finally:
+            logger.info("[Runner] Shutdown initiated.")
+            self._running = False
+
+
+#    async def run(self) -> None:
+#        """Main entrypoint: start background consumers + DAG scheduler."""
+#        async with trio.open_nursery() as nursery:
+#            self._nursery = nursery
+#            self.task_manager.appoint(nursery)
+#            nursery.start_soon(self._sql_consummer)
+#            nursery.start_soon(self._ctx_consummer)
 
     async def shutdown(self) -> None:
         """Stop the runner."""
@@ -65,14 +76,17 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    context_manager = ContextManager()
-    dag_manager = DagManager()
-    executors = {}
     with open(Path("src/properties.schema.json"), "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
-    runner = Runner(context_manager, dag_manager, executors, properties_schema)
+    conn: DuckDBPyConnection = connect(database=":memory:")
+    scheduler = AsyncScheduler()
+    context_manager = ContextManager(properties_schema)
+    task_manager = TaskManager(conn, scheduler)
+    executors = {}
+    runner = Runner(context_manager, task_manager)
 
     async def main():
+        await runner.build()
         # preload file SQLs
         for sql in iter_sql_statements("examples/basic.sql"):
             await runner.submit(sql)
@@ -85,5 +99,7 @@ if __name__ == "__main__":
 
             await trio.sleep(5)
             await runner.shutdown()
+        
+        logger.info(task_manager)
 
     trio.run(main)

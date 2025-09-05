@@ -10,7 +10,7 @@ from sql.sqlparser.parser import (
     CreateTableContext,
     SelectContext,
 )
-from engine import start_background_runnners_or_register
+from engine.engine import start_background_runnners_or_register
 from entrypoint import start_server
 from metadata import init_metadata_store
 
