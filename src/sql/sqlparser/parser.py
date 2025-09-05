@@ -1,24 +1,15 @@
 import jsonschema
 
-from collections import namedtuple
 from loguru import logger
-from sqlglot import parse, exp
+from sqlglot import parse, parse_one, exp
 
-VALID_STATEMENTS = (exp.Create, exp.Select, exp.Set)
-
-CreateTableContext = namedtuple("CreateTableContext", ["name", "properties", "query"])
-CreateLookupTableContext = namedtuple(
-    "CreateLookupTableContext",
-    ["name", "properties", "query", "dynamic_columns", "columns"],
-)
-SelectContext = namedtuple(
-    "SelectContext", ["columns", "table", "alias", "where", "joins", "query"]
-)
-SetContext = namedtuple("SetContext", ["query"])
-InvalidContext = namedtuple("InvalidContext", ["reason"])
-
-QueryContext = (
-    CreateTableContext | CreateLookupTableContext | SelectContext | SetContext
+from context.context import (
+    CreateTableContext,
+    CreateLookupTableContext,
+    SelectContext,
+    SetContext,
+    QueryContext,
+    InvalidContext,
 )
 
 
@@ -120,10 +111,6 @@ def parse_create_properties(
 
 
 def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set) -> str:
-    assert isinstance(statement, VALID_STATEMENTS), (
-        f"Expected {VALID_STATEMENTS} not {type(statement)}"
-    )
-
     statement = statement.copy()
     if statement.args.get("properties"):
         del statement.args["properties"]
@@ -137,7 +124,7 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
 
 def extract_create_context(
     statement: exp.Create, properties_schema: dict
-) -> CreateTableContext | CreateLookupTableContext | None:
+) -> CreateTableContext | CreateLookupTableContext | InvalidContext:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
     is_temp = isinstance(
         get_properties_from_create(statement)[0], exp.TemporaryProperty
@@ -194,7 +181,7 @@ def extract_create_context(
         )
 
     # TODO: Process views, materialized views, sinks and functions here
-    return None
+    return InvalidContext(reason=f"Not known statement kind: {statement.kind}")
 
 
 def get_table_name_placeholder(table_name: str):
@@ -278,6 +265,22 @@ def extract_set_context(statement: exp.Set) -> SetContext:
 
     return SetContext(query=get_duckdb_sql(statement))
 
+def extract_one_query_context(query: str, properties_schema: dict) -> QueryContext | InvalidContext:
+    parsed_statement = parse_one(query)
+    if isinstance(parsed_statement, exp.Create):
+        return extract_create_context(parsed_statement, properties_schema)
+
+    elif isinstance(parsed_statement, exp.Select):
+        return extract_select_context(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.Set):
+        return extract_set_context(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.With):
+        return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
+    
+    return InvalidContext(reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}")
+
 
 def extract_query_contexts(
     query: str, properties_schema: dict
@@ -301,10 +304,6 @@ def extract_query_contexts(
     parsed_statements = parse(query)
 
     for parsed_statement in parsed_statements:
-        assert isinstance(parsed_statement, VALID_STATEMENTS), (
-            f"Invalid statement {type(parsed_statement)}, expected: {VALID_STATEMENTS}"
-        )
-
         if isinstance(parsed_statement, exp.Create):
             param_list.append(
                 extract_create_context(parsed_statement, properties_schema)

@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from src.parser import (
+from src.sqlparser.parser import (
     extract_query_contexts,
     CreateTableContext,
     CreateLookupTableContext,
@@ -98,7 +98,7 @@ SELECT * FROM example;
 VALID_SELECT_RESULT = [
     SelectContext(
         columns=[""],
-        joins=[],
+        joins={},
         table="example",
         where="",
         alias="example",

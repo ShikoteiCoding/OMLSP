@@ -20,3 +20,6 @@ dev-entrypoint:
 
 dev-client:
 	PYTHONPATH=src/ uv run --active src/client.py 1
+
+test:
+	PYTHONPATH=src/ pytest tests/ -vv

@@ -27,7 +27,7 @@ from metadata import (
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
-from parser import (
+from context.context import (
     CreateTableContext,
     CreateLookupTableContext,
     SelectContext,
@@ -71,7 +71,7 @@ def build_lookup_properties(
 def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
-    return_type: DuckDBPyType = VARCHAR,
+    return_type: DuckDBPyType,
     **kwargs,
 ) -> dict[str, Any]:
     arity = len(dynamic_columns)
@@ -155,7 +155,7 @@ def build_scalar_udf(
         "return_type": return_type,
         "type": PythonUDFType.ARROW,
         "null_handling": FunctionNullHandling.SPECIAL,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -234,7 +234,9 @@ def register_lookup_table_executable(
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
 
-    udf_params = build_scalar_udf(properties, dynamic_columns, return_type, name=func_name)
+    udf_params = build_scalar_udf(
+        properties, dynamic_columns, return_type, name=func_name
+    )
     # register scalar for row to row http call
     connection.create_function(**udf_params)
     logger.debug(f"registered function: {func_name}")

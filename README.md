@@ -20,3 +20,23 @@ WITH (
     'jsonpath' = '$.url'
 );
 ```
+
+## Architecture
+```
+SQL Statements
+       │
+       ▼
+   SQLContext
+ (parsed representation)
+       │
+       ▼
+ DataFlowDAG
+  (PlanNodes)
+       │
+       ▼
+  TaskManager
+   (Tasks + Channels)
+       │
+       ▼
+ Asynchronous Execution Engine
+```
