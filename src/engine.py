@@ -83,10 +83,10 @@ def build_scalar_udf(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
     return_type_arrow = pa.struct(child_types)
-    results = []
     if arity == 1:
 
         def udf(a1: pa.ChunkedArray) -> pa.Array:
+            results = []
             for chunk1 in a1.chunks:
                 chunk_rows = [(value,) for value in chunk1.to_pylist()]
                 chunk_results = process_elements(
@@ -97,6 +97,7 @@ def build_scalar_udf(
     elif arity == 2:
 
         def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray) -> pa.Array:
+            results = []
             for chunk1, chunk2 in zip(a1.chunks, a2.chunks):
                 chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist())
                 chunk_results = process_elements(
@@ -109,6 +110,7 @@ def build_scalar_udf(
         def udf(
             a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray
         ) -> pa.Array:
+            results = []
             for chunk1, chunk2, chunk3 in zip(a1.chunks, a2.chunks, a3.chunks):
                 chunk_rows = zip(
                     chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist()
@@ -126,6 +128,7 @@ def build_scalar_udf(
             a3: pa.ChunkedArray,
             a4: pa.ChunkedArray,
         ) -> pa.Array:
+            results = []
             for chunk1, chunk2, chunk3, chunk4 in zip(
                 a1.chunks, a2.chunks, a3.chunks, a4.chunks
             ):
@@ -149,6 +152,7 @@ def build_scalar_udf(
             a4: pa.ChunkedArray,
             a5: pa.ChunkedArray,
         ) -> pa.Array:
+            results = []
             for chunk1, chunk2, chunk3, chunk4, chunk5 in zip(
                 a1.chunks, a2.chunks, a3.chunks, a4.chunks, a5.chunks
             ):

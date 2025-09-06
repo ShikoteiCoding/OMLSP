@@ -1,6 +1,6 @@
 import asyncio
 import duckdb
-from confluent_kafka import Producer
+from confluent_kafka import Producer, KafkaException
 from loguru import logger
 import json
 from typing import Any
@@ -35,20 +35,28 @@ async def stream_to_kafka(con: Any, table_name: str, topic: str):
     column_names = [col["name"] for col in schema]
 
     while True:
-        rows = con.execute(f"SELECT * FROM {table_name}").fetchall()
+        try:
+            rows = con.execute(f"SELECT * FROM {table_name}").fetchall()
 
-        messages_to_send = []
-        for row in rows:
-            if row not in last_processed:
-                msg = {column_names[i]: row[i] for i in range(len(column_names))}
-                messages_to_send.append(msg)
+            messages_to_send = []
+            for row in rows:
+                if row not in last_processed:
+                    msg = {column_names[i]: row[i] for i in range(len(column_names))}
+                    messages_to_send.append(msg)
 
-                last_processed.add(row)
+                    last_processed.add(row)
 
-        if messages_to_send:
-            logger.info(
-                f"Found {len(messages_to_send)} new rows in '{table_name}', sending to Kafka"
-            )
-            send_to_kafka(producer, topic, messages_to_send)
+            if messages_to_send:
+                logger.info(
+                    f"Found {len(messages_to_send)} new rows in '{table_name}', sending to Kafka"
+                )
+                send_to_kafka(producer, topic, messages_to_send)
+
+            if producer.fatal_error():
+                break
+
+        except Exception as e:
+            logger.error(f"Kafka not found: {e}")
+            break
 
         await asyncio.sleep(1)
