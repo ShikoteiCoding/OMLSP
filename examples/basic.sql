@@ -66,6 +66,6 @@ SELECT *
 FROM (SELECT * FROM all_tickers);
 
 -- Test function registered from lookup
-SELECT ohlc_func('MNDE-USDT');
+SELECT ohlc_func('MNDE-USDT', 'MNDE-USDT');
 -- Test macro wrapping the udf
 SELECT * FROM ohlc_macro("all_tickers", symbol, symbolName);
