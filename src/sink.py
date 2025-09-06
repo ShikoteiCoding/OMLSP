@@ -33,17 +33,15 @@ async def stream_to_kafka(con: Any, table_name: str, topic: str):
     last_processed = set()
     schema = get_table_schema(con, table_name)
     column_names = [col["name"] for col in schema]
-
+    
     while True:
         try:
             rows = con.execute(f"SELECT * FROM {table_name}").fetchall()
-
             messages_to_send = []
             for row in rows:
                 if row not in last_processed:
                     msg = {column_names[i]: row[i] for i in range(len(column_names))}
                     messages_to_send.append(msg)
-
                     last_processed.add(row)
 
             if messages_to_send:
