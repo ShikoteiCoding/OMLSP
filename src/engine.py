@@ -33,6 +33,7 @@ from parser import (
     SelectContext,
     SetContext,
 )
+from sink import stream_to_kafka
 from concurrent.futures import ThreadPoolExecutor
 
 DUCKDB_TO_PYARROW_PYTYPE = {
@@ -84,47 +85,90 @@ def build_scalar_udf(
     return_type_arrow = pa.struct(child_types)
     results = []
     if arity == 1:
+
         def udf(a1: pa.ChunkedArray) -> pa.Array:
             for chunk1 in a1.chunks:
                 chunk_rows = [(value,) for value in chunk1.to_pylist()]
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                chunk_results = process_elements(
+                    chunk_rows, properties, return_type_arrow
+                )
                 results.extend(chunk_results.to_pylist())
             return pa.array(results, type=return_type_arrow)
     elif arity == 2:
+
         def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray) -> pa.Array:
             for chunk1, chunk2 in zip(a1.chunks, a2.chunks):
                 chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                chunk_results = process_elements(
+                    chunk_rows, properties, return_type_arrow
+                )
                 results.extend(chunk_results.to_pylist())
             return pa.array(results, type=return_type_arrow)
     elif arity == 3:
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray) -> pa.Array:
+
+        def udf(
+            a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray
+        ) -> pa.Array:
             for chunk1, chunk2, chunk3 in zip(a1.chunks, a2.chunks, a3.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+                chunk_rows = zip(
+                    chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist()
+                )
+                chunk_results = process_elements(
+                    chunk_rows, properties, return_type_arrow
+                )
                 results.extend(chunk_results.to_pylist())
             return pa.array(results, type=return_type_arrow)
     elif arity == 4:
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray, 
-                a4: pa.ChunkedArray) -> pa.Array:
-            for chunk1, chunk2, chunk3, chunk4 in zip(a1.chunks, a2.chunks, a3.chunks, a4.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist(), chunk4.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+
+        def udf(
+            a1: pa.ChunkedArray,
+            a2: pa.ChunkedArray,
+            a3: pa.ChunkedArray,
+            a4: pa.ChunkedArray,
+        ) -> pa.Array:
+            for chunk1, chunk2, chunk3, chunk4 in zip(
+                a1.chunks, a2.chunks, a3.chunks, a4.chunks
+            ):
+                chunk_rows = zip(
+                    chunk1.to_pylist(),
+                    chunk2.to_pylist(),
+                    chunk3.to_pylist(),
+                    chunk4.to_pylist(),
+                )
+                chunk_results = process_elements(
+                    chunk_rows, properties, return_type_arrow
+                )
                 results.extend(chunk_results.to_pylist())
             return pa.array(results, type=return_type_arrow)
     elif arity == 5:
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray, 
-                a4: pa.ChunkedArray, a5: pa.ChunkedArray) -> pa.Array:
-            for chunk1, chunk2, chunk3, chunk4, chunk5 in zip(a1.chunks, a2.chunks, a3.chunks, a4.chunks, a5.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist(), chunk4.to_pylist(), chunk5.to_pylist())
-                chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
+
+        def udf(
+            a1: pa.ChunkedArray,
+            a2: pa.ChunkedArray,
+            a3: pa.ChunkedArray,
+            a4: pa.ChunkedArray,
+            a5: pa.ChunkedArray,
+        ) -> pa.Array:
+            for chunk1, chunk2, chunk3, chunk4, chunk5 in zip(
+                a1.chunks, a2.chunks, a3.chunks, a4.chunks, a5.chunks
+            ):
+                chunk_rows = zip(
+                    chunk1.to_pylist(),
+                    chunk2.to_pylist(),
+                    chunk3.to_pylist(),
+                    chunk4.to_pylist(),
+                    chunk5.to_pylist(),
+                )
+                chunk_results = process_elements(
+                    chunk_rows, properties, return_type_arrow
+                )
                 results.extend(chunk_results.to_pylist())
             return pa.array(results, type=return_type_arrow)
 
     def process_elements(
-        rows: Iterable[tuple[Any, ...]], 
-        properties: dict[str, str], 
-        return_type_arrow: pa.DataType
+        rows: Iterable[tuple[Any, ...]],
+        properties: dict[str, str],
+        return_type_arrow: pa.DataType,
     ) -> pa.Array:
         def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
             context = dict(zip(dynamic_columns, row))
@@ -155,7 +199,7 @@ def build_scalar_udf(
         "return_type": return_type,
         "type": PythonUDFType.ARROW,
         "null_handling": FunctionNullHandling.SPECIAL,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -234,7 +278,9 @@ def register_lookup_table_executable(
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
 
-    udf_params = build_scalar_udf(properties, dynamic_columns, return_type, name=func_name)
+    udf_params = build_scalar_udf(
+        properties, dynamic_columns, return_type, name=func_name
+    )
     # register scalar for row to row http call
     connection.create_function(**udf_params)
     logger.debug(f"registered function: {func_name}")
@@ -274,10 +320,14 @@ async def start_background_runnners_or_register(
     name = table_context.name
     create_table(connection, table_context)
 
-    # register table, temp tables (TODO: views / materialized views / sink)
+    # register table, temp tables (TODO: views / materialized views)
     if isinstance(table_context, CreateTableContext):
         task = asyncio.create_task(
             build_one_runner(table_context, connection), name=f"{name}_runner"
+        )
+        _ = asyncio.create_task(
+            stream_to_kafka(connection, table_context.name, "my-topic"),
+            name=f"{name}_streamer",
         )
 
     # handle lookup table
