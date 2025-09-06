@@ -1,6 +1,6 @@
 import asyncio
 import duckdb
-from confluent_kafka import Producer, KafkaException
+from confluent_kafka import Producer
 from loguru import logger
 import json
 from typing import Any

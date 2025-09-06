@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import json
-import time
 
 from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
