@@ -14,10 +14,11 @@ def kafka_producer_config():
 def send_to_kafka(producer: Producer, topic: str, messages: list[dict[str, Any]]):
     for msg in messages:
         value = json.dumps(msg, default=str)
-
         producer.produce(topic, value=value.encode("utf-8"))
 
-    producer.flush()
+    remaining_messages = producer.flush(timeout=5)
+    if remaining_messages > 0:
+        raise KafkaException(f"Failed to deliver {remaining_messages} messages to Kafka")
 
 
 def get_table_schema(
@@ -49,9 +50,6 @@ async def stream_to_kafka(con: Any, table_name: str, topic: str):
                     f"Found {len(messages_to_send)} new rows in '{table_name}', sending to Kafka"
                 )
                 send_to_kafka(producer, topic, messages_to_send)
-
-            if producer.fatal_error():
-                break
 
         except Exception as e:
             logger.error(f"Kafka not found: {e}")
