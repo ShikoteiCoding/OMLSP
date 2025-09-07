@@ -36,7 +36,8 @@ async def send_query(host: str, port: int, client_id: str) -> None:
     style = style_from_pygments_cls(get_style_by_name("monokai"))
     bindings = KeyBindings()
     sql_completer = WordCompleter(
-        ["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "JOIN"], ignore_case=True
+        ["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "JOIN", "SHOW TABLES"],
+        ignore_case=True,
     )
 
     @bindings.add("enter")
