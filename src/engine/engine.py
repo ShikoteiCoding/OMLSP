@@ -36,7 +36,6 @@ from context.context import (
     SetContext,
     SourceTaskContext,
 )
-from sink import stream_to_kafka
 from concurrent.futures import ThreadPoolExecutor
 
 DUCKDB_TO_PYARROW_PYTYPE = {
