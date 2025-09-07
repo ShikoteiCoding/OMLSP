@@ -4,7 +4,7 @@ from collections import namedtuple
 from loguru import logger
 from sqlglot import parse, exp
 
-VALID_STATEMENTS = (exp.Create, exp.Select, exp.Set)
+VALID_STATEMENTS = (exp.Create, exp.Select, exp.Set, exp.Command)
 
 CreateTableContext = namedtuple("CreateTableContext", ["name", "properties", "query"])
 CreateLookupTableContext = namedtuple(
@@ -15,10 +15,15 @@ SelectContext = namedtuple(
     "SelectContext", ["columns", "table", "alias", "where", "joins", "query"]
 )
 SetContext = namedtuple("SetContext", ["query"])
+CommandContext = namedtuple("CommandContext", ["query"])
 InvalidContext = namedtuple("InvalidContext", ["reason"])
 
 QueryContext = (
-    CreateTableContext | CreateLookupTableContext | SelectContext | SetContext
+    CreateTableContext
+    | CreateLookupTableContext
+    | SelectContext
+    | SetContext
+    | CommandContext
 )
 
 
@@ -119,7 +124,7 @@ def parse_create_properties(
     return statement, custom_properties
 
 
-def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set) -> str:
+def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set | exp.Command) -> str:
     assert isinstance(statement, VALID_STATEMENTS), (
         f"Expected {VALID_STATEMENTS} not {type(statement)}"
     )
@@ -279,6 +284,17 @@ def extract_set_context(statement: exp.Set) -> SetContext:
     return SetContext(query=get_duckdb_sql(statement))
 
 
+def extract_command_context(
+    statement: exp.Command,
+) -> CommandContext | InvalidContext:
+    sql_string = get_duckdb_sql(statement).strip().upper()
+
+    if sql_string == "SHOW TABLES":
+        return CommandContext(query=sql_string)
+
+    return InvalidContext("Unsupported command, only 'SHOW TABLES' is supported")
+
+
 def extract_query_contexts(
     query: str, properties_schema: dict
 ) -> list[QueryContext | InvalidContext]:
@@ -320,6 +336,8 @@ def extract_query_contexts(
             param_list.append(
                 InvalidContext(reason="CTE statements (i.e WITH ...) are not accepted")
             )
+        elif isinstance(parsed_statement, exp.Command):
+            param_list.append(extract_command_context(parsed_statement))
 
     return param_list
 
