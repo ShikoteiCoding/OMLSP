@@ -32,7 +32,7 @@ from parser import (
     CreateLookupTableContext,
     SelectContext,
     SetContext,
-    ShowTableContext,
+    CommandContext,
 )
 from sink import stream_to_kafka
 from concurrent.futures import ThreadPoolExecutor
@@ -409,7 +409,7 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
 
 def handle_select_or_set(
-    con: DuckDBPyConnection, context: SelectContext | SetContext | ShowTableContext
+    con: DuckDBPyConnection, context: SelectContext | SetContext | CommandContext
 ) -> str | pl.DataFrame:
     if isinstance(context, SelectContext):
         table_name = context.table
@@ -423,7 +423,7 @@ def handle_select_or_set(
 
         duckdb_sql = select_sql_substitution(con, context, tables)
         return duckdb_to_pl(con, duckdb_sql)
-    elif isinstance(context, ShowTableContext):
+    elif isinstance(context, CommandContext):
         result = con.sql(context.query)
         return result.to_df()
     else:

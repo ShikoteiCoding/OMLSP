@@ -32,7 +32,6 @@ async def send_query(host: str, port: int, client_id: str) -> None:
     writer.write(f"{client_id}\n".encode())
     await writer.drain()
 
-    sql_lexer = PygmentsLexer(SqlLexer)
     style = style_from_pygments_cls(get_style_by_name("monokai"))
     bindings = KeyBindings()
     sql_completer = WordCompleter(
@@ -52,7 +51,6 @@ async def send_query(host: str, port: int, client_id: str) -> None:
         f"Client {client_id} > ",
         multiline=True,
         key_bindings=bindings,
-        lexer=sql_lexer,
         style=style,
         completer=sql_completer,
     )

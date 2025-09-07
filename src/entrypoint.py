@@ -11,7 +11,7 @@ from parser import (
     InvalidContext,
     SelectContext,
     SetContext,
-    ShowTableContext,
+    CommandContext,
 )
 
 query_queue = asyncio.Queue()
@@ -39,7 +39,7 @@ async def process_queries(con: DuckDBPyConnection, properties_schema: dict) -> N
                         start_background_runnners_or_register(context, con)
                     )
                     writer.write("query sent\n\n".encode())
-                elif isinstance(context, (SelectContext, SetContext, ShowTableContext)):
+                elif isinstance(context, (SelectContext, SetContext, CommandContext)):
                     output = handle_select_or_set(con, context)
                     writer.write(f"{output}\n\n".encode())
 

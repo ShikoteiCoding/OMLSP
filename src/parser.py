@@ -15,7 +15,7 @@ SelectContext = namedtuple(
     "SelectContext", ["columns", "table", "alias", "where", "joins", "query"]
 )
 SetContext = namedtuple("SetContext", ["query"])
-ShowTableContext = namedtuple("ShowTableContext", ["query"])
+CommandContext = namedtuple("CommandContext", ["query"])
 InvalidContext = namedtuple("InvalidContext", ["reason"])
 
 QueryContext = (
@@ -23,7 +23,7 @@ QueryContext = (
     | CreateLookupTableContext
     | SelectContext
     | SetContext
-    | ShowTableContext
+    | CommandContext
 )
 
 
@@ -286,11 +286,11 @@ def extract_set_context(statement: exp.Set) -> SetContext:
 
 def extract_command_context(
     statement: exp.Command,
-) -> ShowTableContext | InvalidContext:
+) -> CommandContext | InvalidContext:
     sql_string = get_duckdb_sql(statement).strip().upper()
 
     if sql_string == "SHOW TABLES":
-        return ShowTableContext(query=sql_string)
+        return CommandContext(query=sql_string)
 
     return InvalidContext("Unsupported command, only 'SHOW TABLES' is supported")
 
