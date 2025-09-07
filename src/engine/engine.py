@@ -29,12 +29,14 @@ from metadata.metadata import (
 )
 from requester import build_http_requester
 from context.context import (
+    CommandContext,
     CreateTableContext,
     CreateLookupTableContext,
     SelectContext,
     SetContext,
     SourceTaskContext,
 )
+from sink import stream_to_kafka
 from concurrent.futures import ThreadPoolExecutor
 
 DUCKDB_TO_PYARROW_PYTYPE = {
@@ -229,7 +231,6 @@ def register_lookup_table_executable(
     macro_name = f"{table_name}_macro"
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
-
     udf_params = build_scalar_udf(
         properties, dynamic_columns, return_type, name=func_name
     )
@@ -271,7 +272,7 @@ async def start_background_runnners_or_register(
     name = table_context.name
     create_table(connection, table_context)
 
-    # register table, temp tables (TODO: views / materialized views / sink)
+    # register table, temp tables (TODO: views / materialized views)
     if isinstance(table_context, CreateTableContext):
         task = asyncio.create_task(
             await build_one_runner(table_context, connection), name=f"{name}_runner"
@@ -351,7 +352,7 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
 
 def handle_select_or_set(
-    con: DuckDBPyConnection, context: SelectContext | SetContext
+    con: DuckDBPyConnection, context: SelectContext | SetContext | CommandContext
 ) -> str | pl.DataFrame:
     if isinstance(context, SelectContext):
         table_name = context.table
@@ -365,6 +366,9 @@ def handle_select_or_set(
 
         duckdb_sql = select_sql_substitution(con, context, tables)
         return duckdb_to_pl(con, duckdb_sql)
+    elif isinstance(context, CommandContext):
+        result = con.sql(context.query)
+        return result.to_df() # TODO: fix typing
     else:
         try:
             con.sql(context.query)

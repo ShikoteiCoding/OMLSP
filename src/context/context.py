@@ -22,13 +22,14 @@ SelectContext = namedtuple(
     "SelectContext", ["columns", "table", "alias", "where", "joins", "query"]
 )
 SetContext = namedtuple("SetContext", ["query"])
+CommandContext = namedtuple("CommandContext", ["query"])
 
 InvalidContext = namedtuple("InvalidContext", ["reason"])
 
 
 # --- Unions for type hints ---
 # Context to eval once
-EvalContext = Union[SelectContext, SetContext]
+EvalContext = Union[SelectContext, SetContext, CommandContext]
 # Context part of task flow
 TaskContext = Union[
     CreateLookupTableContext,

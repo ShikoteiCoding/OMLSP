@@ -8,6 +8,7 @@ from sqlglot import parse, parse_one, exp
 from context.context import (
     CreateTableContext,
     CreateLookupTableContext,
+    CommandContext,
     SelectContext,
     SetContext,
     QueryContext,
@@ -112,7 +113,7 @@ def parse_create_properties(
     return statement, custom_properties
 
 
-def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set) -> str:
+def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set | exp.Command) -> str:
     statement = statement.copy()
     if statement.args.get("properties"):
         del statement.args["properties"]
@@ -269,6 +270,17 @@ def extract_set_context(statement: exp.Set) -> SetContext:
     return SetContext(query=get_duckdb_sql(statement))
 
 
+def extract_command_context(
+    statement: exp.Command,
+) -> CommandContext | InvalidContext:
+    sql_string = get_duckdb_sql(statement).strip().upper()
+
+    if sql_string == "SHOW TABLES":
+        return CommandContext(query=sql_string)
+
+    return InvalidContext("Unsupported command, only 'SHOW TABLES' is supported")
+
+
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> QueryContext | InvalidContext:
@@ -284,6 +296,9 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
+    
+    elif isinstance(parsed_statement, exp.Command):
+        return extract_command_context(parsed_statement)
 
     return InvalidContext(
         reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
@@ -327,6 +342,8 @@ def extract_query_contexts(
             param_list.append(
                 InvalidContext(reason="CTE statements (i.e WITH ...) are not accepted")
             )
+        elif isinstance(parsed_statement, exp.Command):
+            param_list.append(extract_command_context(parsed_statement))
 
     return param_list
 
