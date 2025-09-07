@@ -11,6 +11,7 @@ from context.context import (
     InvalidContext,
 )
 
+
 class ContextNode:
     def __init__(self, context: TaskContext):
         self.context = context
@@ -132,7 +133,6 @@ class DagManager:
 
     def run(self, nursery: trio.Nursery):
         pass
-        
 
 
 def build_dataflows(query_contexts: list[QueryContext]) -> list[DataFlowDAG]:

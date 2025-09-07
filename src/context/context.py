@@ -3,7 +3,9 @@ from typing import Union
 
 
 # --- Context definitions ---
-CreateTableContext = namedtuple("CreateTableContext", ["name", "properties", "query"])
+CreateTableContext = namedtuple(
+    "CreateTableContext", ["name", "properties", "query", "trigger"]
+)
 CreateLookupTableContext = namedtuple(
     "CreateLookupTableContext",
     ["name", "properties", "query", "dynamic_columns", "columns"],
@@ -26,10 +28,7 @@ InvalidContext = namedtuple("InvalidContext", ["reason"])
 
 # --- Unions for type hints ---
 # Context to eval once
-EvalContext = Union[
-    SelectContext,
-    SetContext
-]
+EvalContext = Union[SelectContext, SetContext]
 # Context part of task flow
 TaskContext = Union[
     CreateLookupTableContext,
@@ -37,11 +36,7 @@ TaskContext = Union[
     CreateViewContext,
     CreateMaterializedViewContext,
 ]
-QueryContext = Union[
-   EvalContext, TaskContext
-]
+QueryContext = Union[EvalContext, TaskContext]
 
 # Sub type of TaskContext
-SourceTaskContext = Union[
-    CreateTableContext
-]
+SourceTaskContext = Union[CreateTableContext]

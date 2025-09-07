@@ -12,7 +12,7 @@ from sql.sqlparser.parser import (
 )
 from engine.engine import start_background_runnners_or_register
 from entrypoint import start_server
-from metadata import init_metadata_store
+from metadata.metadata import init_metadata_store
 
 from loguru import logger
 

@@ -26,7 +26,7 @@ async def read_all(store_location: str, table_name: str) -> pl.DataFrame:
 
 if __name__ == "__main__":
     import time
-    from metadata import get_batch_id_from_table_metadata
+    from metadata.metadata import get_batch_id_from_table_metadata
 
     store_location = "local-store"
     table_name = "example"

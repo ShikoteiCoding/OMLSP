@@ -3,38 +3,39 @@ import trio
 from commons.utils import Channel
 from context.context_manager import ContextManager
 from context.context import EvalContext, TaskContext
+from metadata.metadata import init_metadata_store
 from sql.file.reader import iter_sql_statements
 
-from apscheduler import AsyncScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
 from task.task_manager import TaskManager
 
 
 class Runner:
-    def __init__(self, 
-                 context_manager: ContextManager,
-                 task_manager: TaskManager):
+    def __init__(self, conn: DuckDBPyConnection, context_manager: ContextManager, task_manager: TaskManager):
+        self.conn = conn
         self.context_manager = context_manager
         self.task_manager = task_manager
-        
+
         self._sql_channel = Channel[str](10)
         self._evalctx_channel = Channel[EvalContext](10)
         self._taskctx_channel = Channel[TaskContext](10)
         self._nursery = None
         self._running = False
-    
+
     async def build(self):
         await self.context_manager.add_sql_channel(self._sql_channel)
         await self.context_manager.add_evalctx_channel(self._evalctx_channel)
         await self.context_manager.add_taskctx_channel(self._taskctx_channel)
         await self.task_manager.add_taskctx_channel(self._taskctx_channel)
-    
+
     # TODO: replace with terminal channel
     async def submit(self, sql: str) -> None:
         await self._sql_channel.send(sql)
 
     async def run(self):
+        init_metadata_store(self.conn)
         self._running = True
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
@@ -47,7 +48,7 @@ class Runner:
             await trio.sleep_forever()
 
         logger.info("[Runner] Stopped.")
-        
+
     async def _watch_for_shutdown(self):
         try:
             while self._running:
@@ -57,21 +58,6 @@ class Runner:
             self._running = False
 
 
-#    async def run(self) -> None:
-#        """Main entrypoint: start background consumers + DAG scheduler."""
-#        async with trio.open_nursery() as nursery:
-#            self._nursery = nursery
-#            self.task_manager.appoint(nursery)
-#            nursery.start_soon(self._sql_consummer)
-#            nursery.start_soon(self._ctx_consummer)
-
-    async def shutdown(self) -> None:
-        """Stop the runner."""
-        self._running = False
-        if self._nursery is not None:
-            self._nursery.cancel_scope.cancel()
-
-
 if __name__ == "__main__":
     import json
     from pathlib import Path
@@ -79,11 +65,11 @@ if __name__ == "__main__":
     with open(Path("src/properties.schema.json"), "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
     conn: DuckDBPyConnection = connect(database=":memory:")
-    scheduler = AsyncScheduler()
+    scheduler = AsyncIOScheduler()
     context_manager = ContextManager(properties_schema)
     task_manager = TaskManager(conn, scheduler)
     executors = {}
-    runner = Runner(context_manager, task_manager)
+    runner = Runner(conn, context_manager, task_manager)
 
     async def main():
         await runner.build()
@@ -98,8 +84,7 @@ if __name__ == "__main__":
             await runner.submit("SELECT * FROM my_table;")
 
             await trio.sleep(5)
-            await runner.shutdown()
-        
+
         logger.info(task_manager)
 
     trio.run(main)

@@ -1,14 +1,16 @@
 import asyncio
 import polars as pl
-import time
 import pyarrow as pa
+import time
 
-from apscheduler import AsyncScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.job import Job
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from datetime import datetime, timezone
+from functools import partial
 from loguru import logger
 from typing import Any, Coroutine, Iterable
 from types import FunctionType
@@ -16,7 +18,7 @@ from types import FunctionType
 from string import Template
 
 from inout import persist
-from metadata import (
+from metadata.metadata import (
     create_macro_definition,
     get_macro_definition_by_name,
     get_lookup_tables,
@@ -31,6 +33,7 @@ from context.context import (
     CreateLookupTableContext,
     SelectContext,
     SetContext,
+    SourceTaskContext,
 )
 from concurrent.futures import ThreadPoolExecutor
 
@@ -95,13 +98,13 @@ def build_scalar_udf(
 
     udf = eval(
         f"lambda {', '.join(arg_names)}: core_udf({', '.join(arg_names)})",
-        {"core_udf": core_udf}
+        {"core_udf": core_udf},
     )
 
     def process_elements(
-        rows: Iterable[tuple[Any, ...]], 
-        properties: dict[str, str], 
-        return_type_arrow: pa.DataType
+        rows: Iterable[tuple[Any, ...]],
+        properties: dict[str, str],
+        return_type_arrow: pa.DataType,
     ) -> pa.Array:
         def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
             context = dict(zip(dynamic_columns, row))
@@ -136,17 +139,20 @@ def build_scalar_udf(
     }
 
 
-async def processor(
+async def source_executable(
     table_name: str,
     start_time: datetime,
     http_requester: FunctionType,
+    task_id: str,
     con: DuckDBPyConnection,
-) -> None:
+    *args,
+    **kwargs
+) -> pl.DataFrame:
     # TODO: no provided api execution_time
     # using trigger.get_next_fire_time is costly (see code)
     execution_time = start_time
     batch_id = get_batch_id_from_table_metadata(con, table_name)
-    logger.info(f"[{table_name}{{{batch_id}}}] @ {execution_time}")
+    logger.info(f"[{table_name}{{{batch_id}}}] / @ {execution_time}")
 
     records = await http_requester()
     logger.debug(
@@ -158,40 +164,53 @@ async def processor(
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
         await persist(df, batch_id, epoch, table_name, con)
+    else:
+        df = pl.DataFrame()
 
     update_batch_id_in_table_metadata(con, table_name, batch_id + 1)
+    return df
+    
 
-async def source_executable(task_context: CreateTableContext):
-    ...
 
+def build_source_executable(ctx: SourceTaskContext):
+    start_time = datetime.now(timezone.utc)
+    properties = ctx.properties
+    return partial(source_executable, table_name=ctx.name, start_time=start_time, http_requester=build_http_requester(properties, is_async=True))
+
+
+async def execute(scheduler: AsyncIOScheduler, job: Job):
+    scheduler.start()
+    logger.info(f"[{job.name}] - next schedule: {job.next_run_time}")
+
+    # TODO: Dirty
+    while True:
+        await asyncio.sleep(3600)
 
 
 async def build_one_runner(
     create_table_context: CreateTableContext, con: DuckDBPyConnection
-) -> Coroutine[Any, Any, Any]:
+) -> Coroutine[Any, Any, None]:
     properties = create_table_context.properties
     table_name = create_table_context.name
     cron_expr = str(properties["schedule"])
-    scheduler = AsyncScheduler()
+    scheduler = AsyncIOScheduler()
 
     trigger = CronTrigger.from_crontab(cron_expr, timezone=timezone.utc)
     start_time = datetime.now(timezone.utc)
     http_requester = build_http_requester(properties)
 
-    async with scheduler as s:
-        await s.start_in_background()
-
-        return s.add_schedule(
-            processor,
-            trigger,
-            id=table_name,
-            kwargs={
-                "table_name": table_name,
-                "start_time": start_time,
-                "http_requester": http_requester,
-                "con": con,
-            },
-        )
+    job = scheduler.add_job(
+        source_executable,
+        trigger,
+        name=table_name,
+        kwargs={
+            "table_name": table_name,
+            "start_time": start_time,
+            "http_requester": http_requester,
+            "con": con,
+        },
+    )
+    return execute(scheduler, job)
 
 
 def register_lookup_table_executable(
@@ -243,7 +262,6 @@ async def start_background_runnners_or_register(
     table_context: CreateTableContext | CreateLookupTableContext,
     connection: DuckDBPyConnection,
 ):
-    task: asyncio.Task | None = None
     task: asyncio.Task | None = None
 
     name = table_context.name

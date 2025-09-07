@@ -1,5 +1,7 @@
 import jsonschema
 
+from apscheduler.triggers.cron import CronTrigger
+from datetime import datetime, timezone, timedelta
 from loguru import logger
 from sqlglot import parse, parse_one, exp
 
@@ -145,11 +147,12 @@ def extract_create_context(
         updated_create_statement.set(
             "this", updated_table_statement
         )  # overwrite modified table statement
-
+        cron_expr = str(properties.pop("schedule"))
         return CreateTableContext(
             name=table_name,
             properties=properties,
             query=get_duckdb_sql(updated_create_statement),
+            trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
         )
 
     # process separately to handle the udft logic here
@@ -265,7 +268,10 @@ def extract_set_context(statement: exp.Set) -> SetContext:
 
     return SetContext(query=get_duckdb_sql(statement))
 
-def extract_one_query_context(query: str, properties_schema: dict) -> QueryContext | InvalidContext:
+
+def extract_one_query_context(
+    query: str, properties_schema: dict
+) -> QueryContext | InvalidContext:
     parsed_statement = parse_one(query)
     if isinstance(parsed_statement, exp.Create):
         return extract_create_context(parsed_statement, properties_schema)
@@ -278,8 +284,10 @@ def extract_one_query_context(query: str, properties_schema: dict) -> QueryConte
 
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
-    
-    return InvalidContext(reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}")
+
+    return InvalidContext(
+        reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
+    )
 
 
 def extract_query_contexts(
