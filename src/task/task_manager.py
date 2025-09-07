@@ -85,7 +85,7 @@ class TaskManager:
         self._running = True
 
         async with trio.open_nursery() as nursery:
-            async with trio_asyncio.open_loop() as loop:
+            async with trio_asyncio.open_loop() as loop: # type: ignore
                 # TODO: create our own scheduler class to wrap event loop logic
                 # Or create our own event loop class
                 self.scheduler._eventloop = loop
