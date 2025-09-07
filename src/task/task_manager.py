@@ -5,7 +5,7 @@ from commons.utils import Channel
 from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
 from engine.engine import build_source_executable
 from metadata.metadata import create_table
-from task.task import TaskId, TaskOutput, Task
+from task.task import TaskId, Task
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import DuckDBPyConnection
@@ -32,19 +32,18 @@ class TaskManager:
 
     def appoint(self, nursery: trio.Nursery):
         if hasattr(self, "_nursery"):
-            raise Exception(f"TaskManager has already been appointed.")
+            raise Exception("TaskManager has already been appointed.")
         self._nursery = nursery
 
     async def _register_one_task(self, ctx: TaskContext):
         task_id = ctx.name
 
-        task = Task(
-            task_id=task_id,
-            conn=self.conn
-        )
+        task = Task(task_id=task_id, conn=self.conn)
 
         if isinstance(ctx, CreateLookupTableContext):
-            logger.warning("[TaskManager] not handling CreateLookupTableContext in task manager yet")
+            logger.warning(
+                "[TaskManager] not handling CreateLookupTableContext in task manager yet"
+            )
             return
 
         if isinstance(ctx, SourceTaskContext):  # register to scheduler
@@ -52,9 +51,7 @@ class TaskManager:
             # But we might want it dynamic later (i.e built at run time)
             create_table(self.conn, ctx)
             self._sources[task_id] = task.register(build_source_executable(ctx))
-            _ = self.scheduler.add_job(
-                func=task.run, trigger=ctx.trigger
-            )
+            _ = self.scheduler.add_job(func=task.run, trigger=ctx.trigger)
             logger.warning(f'[TaskManager] registered source task "{task_id}"')
 
         else:

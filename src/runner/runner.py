@@ -13,7 +13,12 @@ from task.task_manager import TaskManager
 
 
 class Runner:
-    def __init__(self, conn: DuckDBPyConnection, context_manager: ContextManager, task_manager: TaskManager):
+    def __init__(
+        self,
+        conn: DuckDBPyConnection,
+        context_manager: ContextManager,
+        task_manager: TaskManager,
+    ):
         self.conn = conn
         self.context_manager = context_manager
         self.task_manager = task_manager

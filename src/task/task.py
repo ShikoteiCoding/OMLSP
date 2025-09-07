@@ -7,6 +7,7 @@ from commons.utils import Channel
 TaskOutput: TypeAlias = Any
 TaskId = int | str
 
+
 class Task:
     # TODO: type channels and callables
     _running = False

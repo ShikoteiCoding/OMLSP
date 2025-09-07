@@ -1,7 +1,7 @@
 import jsonschema
 
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime, timezone, timedelta
+from datetime import timezone
 from loguru import logger
 from sqlglot import parse, parse_one, exp
 

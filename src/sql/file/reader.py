@@ -1,4 +1,3 @@
-import sqlglot
 from typing import Generator
 from pathlib import Path
 

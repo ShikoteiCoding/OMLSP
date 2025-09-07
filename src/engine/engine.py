@@ -146,7 +146,7 @@ async def source_executable(
     task_id: str,
     con: DuckDBPyConnection,
     *args,
-    **kwargs
+    **kwargs,
 ) -> pl.DataFrame:
     # TODO: no provided api execution_time
     # using trigger.get_next_fire_time is costly (see code)
@@ -169,13 +169,17 @@ async def source_executable(
 
     update_batch_id_in_table_metadata(con, table_name, batch_id + 1)
     return df
-    
 
 
 def build_source_executable(ctx: SourceTaskContext):
     start_time = datetime.now(timezone.utc)
     properties = ctx.properties
-    return partial(source_executable, table_name=ctx.name, start_time=start_time, http_requester=build_http_requester(properties, is_async=True))
+    return partial(
+        source_executable,
+        table_name=ctx.name,
+        start_time=start_time,
+        http_requester=build_http_requester(properties, is_async=True),
+    )
 
 
 async def execute(scheduler: AsyncIOScheduler, job: Job):
