@@ -1,9 +1,10 @@
 import sqlglot
 from typing import Generator
+from pathlib import Path
 
 
-def iter_sql_statements(filepath: str) -> Generator[str, None, None]:
-    with open(filepath, "r", encoding="utf-8") as f:
+def iter_sql_statements(path: Path | str) -> Generator[str, None, None]:
+    with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
     statements = [stmt.lstrip() for stmt in content.split(";") if stmt != ""]
