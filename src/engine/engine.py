@@ -350,9 +350,9 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
     return pl.DataFrame()
 
 
-def handle_select_or_set(
+async def execute_eval_ctx(
     con: DuckDBPyConnection, context: SelectContext | SetContext | CommandContext
-) -> str | pl.DataFrame:
+) -> str:
     if isinstance(context, SelectContext):
         table_name = context.table
         lookup_tables = get_lookup_tables(con)
@@ -364,10 +364,10 @@ def handle_select_or_set(
             return msg
 
         duckdb_sql = select_sql_substitution(con, context, tables)
-        return duckdb_to_pl(con, duckdb_sql)
+        return str(duckdb_to_pl(con, duckdb_sql))
     elif isinstance(context, CommandContext):
         result = con.sql(context.query)
-        return result.to_df() # TODO: fix typing
+        return str(pl.DataFrame(result))
     else:
         try:
             con.sql(context.query)
