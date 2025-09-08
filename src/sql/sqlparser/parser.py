@@ -299,7 +299,7 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.Command):
         return extract_command_context(parsed_statement)
-    
+
     return InvalidContext(
         reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
     )

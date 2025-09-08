@@ -8,7 +8,7 @@ from duckdb import DuckDBPyConnection
 
 from commons.utils import Channel
 from engine.engine import execute_eval_ctx
-from context.context import (EvalContext, InvalidContext)
+from context.context import EvalContext, InvalidContext
 
 
 class ClientManager:
@@ -27,7 +27,6 @@ class ClientManager:
         self._evalctx_channel = channel
 
     async def run(self):
-        logger.error(f"[ClientManager] start")
         self._running = True
 
         async with trio.open_nursery() as nursery:
@@ -35,11 +34,16 @@ class ClientManager:
 
             listeners: list[SocketListener] = await nursery.start(
                 partial(
-                    trio.serve_tcp, handler=self._handle_client, port=8080, host="0.0.0.0"
+                    trio.serve_tcp,
+                    handler=self._handle_client,
+                    port=8080,
+                    host="0.0.0.0",
                 )
             )
 
-            logger.info(f"[ClienManager] Server running on {listeners[0].socket.getsockname()}")
+            logger.info(
+                f"[ClienManager] Server running on {listeners[0].socket.getsockname()}"
+            )
 
             nursery.start_soon(self._watch_for_shutdown)
 
@@ -77,7 +81,7 @@ class ClientManager:
             output_messages = []
 
             # exactly one element
-            eval_ctx = await self._evalctx_channel.recv() 
+            eval_ctx = await self._evalctx_channel.recv()
 
             if isinstance(eval_ctx, InvalidContext):
                 output_messages.append(eval_ctx.reason)
@@ -90,7 +94,7 @@ class ClientManager:
         except Exception as e:
             logger.error(f"Client {client_id} - Error processing query: {e}")
             return f"Error: {str(e)}"
-        
+
     async def _watch_for_shutdown(self):
         try:
             while self._running:

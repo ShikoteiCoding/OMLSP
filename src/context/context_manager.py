@@ -1,7 +1,12 @@
 import trio
 
 from commons.utils import Channel
-from context.context import CreateTableContext, EvalContext, TaskContext, QueryContext, InvalidContext
+from context.context import (
+    EvalContext,
+    QueryContext,
+    TaskContext,
+    InvalidContext,
+)
 from sql.sqlparser.parser import extract_one_query_context
 from typing import Any
 
@@ -32,11 +37,16 @@ class ContextManager:
     async def _process(self):
         async for sql in self._sql_channel:
             ctx = self._parse(sql)
+            # TODO: rework this for clearer workflow
+            # Ideally channel should be consumer agnostic
+            # It is to be avoided to multi type channels
+
             if isinstance(ctx, InvalidContext):
                 logger.warning(f"[ContextManager] {str(ctx.reason)}")
+
             if isinstance(ctx, (EvalContext, InvalidContext)):
-                await self._evalctx_channel.send(ctx)
-            elif isinstance(ctx, (CreateTableContext)):
+                await self._evalctx_channel.send(ctx)  # type: ignore
+            elif isinstance(ctx, (TaskContext)):
                 await self._taskctx_channel.send(ctx)
             logger.info(f"[ContextManager] Registered SQL: {sql}")
 

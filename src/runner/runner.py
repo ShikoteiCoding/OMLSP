@@ -19,7 +19,7 @@ class Runner:
         conn: DuckDBPyConnection,
         context_manager: ContextManager,
         task_manager: TaskManager,
-        client_manager: ClientManager
+        client_manager: ClientManager,
     ):
         self.conn = conn
         self.context_manager = context_manager
