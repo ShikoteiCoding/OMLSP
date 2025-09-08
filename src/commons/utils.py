@@ -10,6 +10,7 @@ class Channel(Generic[T]):
         If size == 0, the channel becomes blocked till closed.
         """
         self._send_ch, self._recv_ch = trio.open_memory_channel[T](size)
+        self.size = size
 
     async def send(self, data: T) -> None:
         await self._send_ch.send(data)
@@ -25,6 +26,9 @@ class Channel(Generic[T]):
 
     def close(self) -> None:
         self._send_ch.close()
+
+    def open(self) -> None:
+        self._send_ch, self._recv_ch = trio.open_memory_channel[T](self.size)
 
     def __aiter__(self):
         return self

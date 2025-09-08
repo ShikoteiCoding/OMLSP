@@ -30,11 +30,6 @@ class TaskManager:
     async def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._taskctx_channel = channel
 
-    def appoint(self, nursery: trio.Nursery):
-        if hasattr(self, "_nursery"):
-            raise Exception("TaskManager has already been appointed.")
-        self._nursery = nursery
-
     async def _register_one_task(self, ctx: TaskContext):
         task_id = ctx.name
 
@@ -52,7 +47,7 @@ class TaskManager:
             create_table(self.conn, ctx)
             self._sources[task_id] = task.register(build_source_executable(ctx))
             _ = self.scheduler.add_job(func=task.run, trigger=ctx.trigger)
-            logger.warning(f'[TaskManager] registered source task "{task_id}"')
+            logger.info(f'[TaskManager] registered source task "{task_id}"')
 
         else:
             for upstream in ctx.upstreams:
@@ -62,10 +57,8 @@ class TaskManager:
         self._task_id_to_task[task_id] = task
 
     async def _process(self):
-        logger.warning("[TaskManager] - Starting task registration")
         async for taskctx in self._taskctx_channel:
             await self._register_one_task(taskctx)
-        logger.warning("[TaskManager] - Finishing task registration")
 
     async def _run_task(self, task: Task):
         task._running = True
@@ -85,7 +78,7 @@ class TaskManager:
         self._running = True
 
         async with trio.open_nursery() as nursery:
-            async with trio_asyncio.open_loop() as loop: # type: ignore
+            async with trio_asyncio.open_loop() as loop:  # type: ignore
                 # TODO: create our own scheduler class to wrap event loop logic
                 # Or create our own event loop class
                 self.scheduler._eventloop = loop

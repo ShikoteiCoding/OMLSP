@@ -2,14 +2,15 @@ import trio
 
 from commons.utils import Channel
 from context.context_manager import ContextManager
-from context.context import EvalContext, TaskContext
-from metadata.metadata import init_metadata_store
+from context.context import EvalContext, TaskContext, InvalidContext
+from client import ClientManager
+from metadata import init_metadata_store
 from sql.file.reader import iter_sql_statements
+from task import TaskManager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
-from task.task_manager import TaskManager
 
 
 class Runner:
@@ -18,20 +19,29 @@ class Runner:
         conn: DuckDBPyConnection,
         context_manager: ContextManager,
         task_manager: TaskManager,
+        client_manager: ClientManager,
     ):
         self.conn = conn
         self.context_manager = context_manager
         self.task_manager = task_manager
+        self.client_manager = client_manager
 
         self._sql_channel = Channel[str](10)
-        self._evalctx_channel = Channel[EvalContext](10)
+        self._evalctx_channel = Channel[EvalContext | InvalidContext](10)
         self._taskctx_channel = Channel[TaskContext](10)
         self._nursery = None
         self._running = False
 
     async def build(self):
+        # SQL channel
         await self.context_manager.add_sql_channel(self._sql_channel)
+        await self.client_manager.add_sql_channel(self._sql_channel)
+
+        # Eval Ctx channel (to execute)
         await self.context_manager.add_evalctx_channel(self._evalctx_channel)
+        await self.client_manager.add_evalctx_channel(self._evalctx_channel)
+
+        # Task Ctx channel (to schedule)
         await self.context_manager.add_taskctx_channel(self._taskctx_channel)
         await self.task_manager.add_taskctx_channel(self._taskctx_channel)
 
@@ -47,6 +57,7 @@ class Runner:
 
             nursery.start_soon(self.context_manager.run)
             nursery.start_soon(self.task_manager.run)
+            nursery.start_soon(self.client_manager.run)
 
             nursery.start_soon(self._watch_for_shutdown)
             logger.info("[Runner] Started and running...")
@@ -73,8 +84,9 @@ if __name__ == "__main__":
     scheduler = AsyncIOScheduler()
     context_manager = ContextManager(properties_schema)
     task_manager = TaskManager(conn, scheduler)
+    client_manager = ClientManager(conn)
     executors = {}
-    runner = Runner(conn, context_manager, task_manager)
+    runner = Runner(conn, context_manager, task_manager, client_manager)
 
     async def main():
         await runner.build()
