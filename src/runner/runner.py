@@ -3,7 +3,7 @@ import trio
 from commons.utils import Channel
 from context.context_manager import ContextManager
 from context.context import EvalContext, TaskContext, InvalidContext
-from client import ClientManager
+from server import ClientManager
 from metadata import init_metadata_store
 from sql.file.reader import iter_sql_statements
 from task import TaskManager
@@ -26,9 +26,10 @@ class Runner:
         self.task_manager = task_manager
         self.client_manager = client_manager
 
-        self._sql_channel = Channel[str](10)
-        self._evalctx_channel = Channel[EvalContext | InvalidContext](10)
+        self._sql_channel = Channel[tuple[str, str]](10)
+        self._evalctx_channel = Channel[tuple[str, EvalContext | InvalidContext]](10)
         self._taskctx_channel = Channel[TaskContext](10)
+
         self._nursery = None
         self._running = False
 
@@ -45,9 +46,9 @@ class Runner:
         await self.context_manager.add_taskctx_channel(self._taskctx_channel)
         await self.task_manager.add_taskctx_channel(self._taskctx_channel)
 
-    # TODO: replace with terminal channel
     async def submit(self, sql: str) -> None:
-        await self._sql_channel.send(sql)
+        # main is main app client_id
+        await self._sql_channel.send(("main", sql))
 
     async def run(self):
         init_metadata_store(self.conn)
@@ -60,7 +61,7 @@ class Runner:
             nursery.start_soon(self.client_manager.run)
 
             nursery.start_soon(self._watch_for_shutdown)
-            logger.info("[Runner] Started and running...")
+            logger.info("[Runner] Started.")
             await trio.sleep_forever()
 
         logger.info("[Runner] Stopped.")

@@ -55,7 +55,9 @@ def get_macro_definition_by_name(
     """
     res = con.sql(query).fetchall()
 
-    assert len(res) > 0
+    assert len(res) > 0, (
+        f"no result for macro definition {macro_name}, has it been registered ?"
+    )
 
     return res[0]
 
