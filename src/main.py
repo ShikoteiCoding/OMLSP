@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
 
-from client import ClientManager
+from server import ClientManager
 from context import ContextManager
 from task import TaskManager
 from runner import Runner
@@ -32,10 +32,10 @@ async def main():
     runner = Runner(conn, context_manager, task_manager, client_manager)
 
     await runner.build()
-    for sql in iter_sql_statements(sql_filepath):
-        await runner.submit(sql)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(runner.run)
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(runner.run)
+        for sql in iter_sql_statements(sql_filepath):
+            await runner.submit(sql)
 
 
 if __name__ == "__main__":

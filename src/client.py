@@ -27,9 +27,6 @@ async def connect(host: str, port: int, client_id: str) -> None:
         f"Client {client_id} connected to {host}:{port}, write SELECT queries or exit to quit:"
     )
 
-    # writer.write(f"{client_id}\n".encode())
-    # await writer.drain()
-
     style = style_from_pygments_cls(get_style_by_name("monokai"))
     bindings = KeyBindings()
     sql_completer = WordCompleter(
