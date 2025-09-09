@@ -218,7 +218,7 @@ async def build_one_runner(
     return execute(scheduler, job)
 
 
-def register_lookup_table_executable(
+def build_lookup_table_prehook(
     create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
     properties = create_table_context.properties
@@ -279,7 +279,7 @@ async def start_background_runnners_or_register(
 
     # handle lookup table
     if isinstance(table_context, CreateLookupTableContext):
-        register_lookup_table_executable(table_context, connection)
+        build_lookup_table_prehook(table_context, connection)
 
     if task:
         _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)

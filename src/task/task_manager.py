@@ -3,7 +3,7 @@ import trio_asyncio
 
 from commons.utils import Channel
 from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
-from engine.engine import build_source_executable
+from engine.engine import build_source_executable, build_lookup_table_prehook
 from metadata.metadata import create_table
 from task.task import TaskId, Task
 
@@ -58,6 +58,8 @@ class TaskManager:
         task = Task(task_id=task_id, conn=self.conn)
 
         if isinstance(ctx, CreateLookupTableContext):
+            create_table(self.conn, ctx)
+            build_lookup_table_prehook(ctx, self.conn)
             return
 
         if isinstance(ctx, SourceTaskContext):  # register to scheduler

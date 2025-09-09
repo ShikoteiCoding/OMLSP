@@ -2,7 +2,6 @@ import trio
 
 from commons.utils import Channel
 from context.context import (
-    CreateLookupTableContext,
     EvalContext,
     QueryContext,
     TaskContext,
@@ -56,9 +55,6 @@ class ContextManager:
 
             if isinstance(ctx, InvalidContext):
                 logger.warning(f"[ContextManager] {str(ctx.reason)}")
-
-            if isinstance(ctx, CreateLookupTableContext):
-                continue
 
             # Keep TaskContext first
             if isinstance(ctx, (TaskContext)):
