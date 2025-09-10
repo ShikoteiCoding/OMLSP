@@ -15,10 +15,10 @@ async def show_spinner():
     while True:
         for char in spinner_chars:
             print_formatted_text(HTML(f"<b><red>{char}</red></b> "), end="\r")
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
 
-async def send_query(host: str, port: int, client_id: str) -> None:
+async def connect(host: str, port: int, client_id: str) -> None:
     """
     Connect to the server and send SELECT queries
     """
@@ -26,9 +26,6 @@ async def send_query(host: str, port: int, client_id: str) -> None:
     print(
         f"Client {client_id} connected to {host}:{port}, write SELECT queries or exit to quit:"
     )
-
-    writer.write(f"{client_id}\n".encode())
-    await writer.drain()
 
     style = style_from_pygments_cls(get_style_by_name("monokai"))
     bindings = KeyBindings()
@@ -61,8 +58,10 @@ async def send_query(host: str, port: int, client_id: str) -> None:
                 writer.write(b"exit\n")
                 await writer.drain()
                 break
+
             writer.write(f"{query}\n".encode())
             await writer.drain()
+
             spinner_task = asyncio.create_task(show_spinner())
             response = await reader.readuntil(b"\n\n")
             spinner_task.cancel()
@@ -85,4 +84,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    asyncio.run(send_query(args.host, args.port, args.client_id))
+    asyncio.run(connect(args.host, args.port, args.client_id))

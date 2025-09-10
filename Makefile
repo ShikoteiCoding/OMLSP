@@ -12,17 +12,11 @@ sync:
 run:
 	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
 
-file:
-	PYTHONPATH=src/ uv run --active src/test.py
-
-test:
-	PYTHONPATH=src/ uv run --active pytest tests/ -v
-
 dev-entrypoint:
 	PYTHONPATH=src/ uv run --active src/entrypoint.py
 
-dev-client:
+client:
 	PYTHONPATH=src/ uv run --active src/client.py 1
 
 test:
-	PYTHONPATH=src/ pytest tests/ -vv
+	PYTHONPATH=src/ uv run pytest tests/ -vv

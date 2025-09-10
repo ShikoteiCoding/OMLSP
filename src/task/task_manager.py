@@ -2,8 +2,8 @@ import trio
 import trio_asyncio
 
 from commons.utils import Channel
-from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext, CreateSinkContext
-from engine.engine import build_source_executable, build_sink_executable
+from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
+from engine.engine import build_source_executable
 from metadata.metadata import create_table
 from task.task import TaskId, Task
 
@@ -30,22 +30,25 @@ class TaskManager:
     async def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._taskctx_channel = channel
 
-    def appoint(self, nursery: trio.Nursery):
-        if hasattr(self, "_nursery"):
-            raise Exception("TaskManager has already been appointed.")
-        self._nursery = nursery
+    async def run(self):
+        """Main loop for the TaskManager, runs forever."""
+        self._running = True
 
-    async def _register_one_task(self, ctx: TaskContext, conn: DuckDBPyConnection):
+        async with trio.open_nursery() as nursery:
+            async with trio_asyncio.open_loop() as loop:  # type: ignore
+                # TODO: create our own scheduler class to wrap event loop logic
+                # Or create our own event loop class
+                self.scheduler._eventloop = loop
+                self.scheduler.start()
+
+                self._nursery = nursery
+
+    async def _register_one_task(self, ctx: TaskContext):
         task_id = ctx.name
 
         task = Task(task_id=task_id, conn=self.conn)
 
-        if isinstance(ctx, CreateSinkContext):
-            self._sources[task_id] = task.register(build_sink_executable(ctx, conn))
-            _ = self.scheduler.add_job(func=task.run)
-            logger.warning(f'[TaskManager] registered sink task ')
-
-        elif isinstance(ctx, CreateLookupTableContext):
+        if isinstance(ctx, CreateLookupTableContext):
             logger.warning(
                 "[TaskManager] not handling CreateLookupTableContext in task manager yet"
             )
@@ -57,7 +60,7 @@ class TaskManager:
             create_table(self.conn, ctx)
             self._sources[task_id] = task.register(build_source_executable(ctx))
             _ = self.scheduler.add_job(func=task.run, trigger=ctx.trigger)
-            logger.warning(f'[TaskManager] registered source task "{task_id}"')
+            logger.info(f'[TaskManager] registered source task "{task_id}"')
 
         else:
             for upstream in ctx.upstreams:
@@ -67,9 +70,8 @@ class TaskManager:
         self._task_id_to_task[task_id] = task
 
     async def _process(self):
-        logger.warning("[TaskManager] - Starting task registration")
         async for taskctx in self._taskctx_channel:
-            await self._register_one_task(taskctx, self.conn)
+            await self._register_one_task(taskctx)
         logger.warning("[TaskManager] - Finishing task registration")
 
     async def _run_task(self, task: Task):
@@ -84,28 +86,6 @@ class TaskManager:
             logger.info(f"[TaskManager] Task '{task.task_id}' completed successfully.")
         finally:
             task._running = False
-
-    async def run(self):
-        """Main loop for the TaskManager, runs forever."""
-        self._running = True
-
-        async with trio.open_nursery() as nursery:
-            async with trio_asyncio.open_loop() as loop: # type: ignore
-                # TODO: create our own scheduler class to wrap event loop logic
-                # Or create our own event loop class
-                self.scheduler._eventloop = loop
-                self.scheduler.start()
-
-                self._nursery = nursery
-
-                nursery.start_soon(self._process)
-                nursery.start_soon(self._watch_for_shutdown)
-
-                logger.info("[TaskManager] Started.")
-                while self._running:
-                    await trio.sleep(1)
-
-        logger.info("[TaskManager] Stopped.")
 
     async def _watch_for_shutdown(self):
         try:

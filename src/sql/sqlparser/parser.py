@@ -342,7 +342,7 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
-    
+
     elif isinstance(parsed_statement, exp.Command):
         return extract_command_context(parsed_statement)
 

@@ -230,7 +230,7 @@ async def build_one_runner(
     return execute(scheduler, job)
 
 
-def register_lookup_table_executable(
+def build_lookup_table_prehook(
     create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
     properties = create_table_context.properties
@@ -291,7 +291,7 @@ async def start_background_runnners_or_register(
 
     # handle lookup table
     if isinstance(table_context, CreateLookupTableContext):
-        register_lookup_table_executable(table_context, connection)
+        build_lookup_table_prehook(table_context, connection)
 
     if task:
         _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
@@ -319,23 +319,22 @@ def build_substitute_macro_definition(
     return macro_definition
 
 
-def select_sql_substitution(
+def pre_hook_select_statements(
     con: DuckDBPyConnection,
-    select_query: SelectContext,
+    ctx: SelectContext,
     tables: list[str],
 ) -> str:
     """Substitutes select statement query with lookup references to macro references."""
-    original_query = select_query.query
-    join_tables = select_query.joins
+    original_query = ctx.query
+    join_tables = ctx.joins
 
     # no join query
     if len(join_tables) == 0:
         return original_query
-
     # join query
     substitute_mapping = dict(zip(tables, tables))
-    from_table = select_query.table
-    from_table_or_alias = select_query.alias
+    from_table = ctx.table
+    from_table_or_alias = ctx.alias
 
     for join_table, join_table_or_alias in join_tables.items():
         substitute_mapping[join_table] = build_substitute_macro_definition(
@@ -362,9 +361,9 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
     return pl.DataFrame()
 
 
-def handle_select_or_set(
+async def execute_eval_ctx(
     con: DuckDBPyConnection, context: SelectContext | SetContext | CommandContext
-) -> str | pl.DataFrame:
+) -> str:
     if isinstance(context, SelectContext):
         table_name = context.table
         lookup_tables = get_lookup_tables(con)
@@ -375,11 +374,11 @@ def handle_select_or_set(
             logger.error(msg)
             return msg
 
-        duckdb_sql = select_sql_substitution(con, context, tables)
-        return duckdb_to_pl(con, duckdb_sql)
+        duckdb_sql = pre_hook_select_statements(con, context, tables)
+        return str(duckdb_to_pl(con, duckdb_sql))
     elif isinstance(context, CommandContext):
         result = con.sql(context.query)
-        return result.to_df() # TODO: fix typing
+        return str(pl.DataFrame(result))
     else:
         try:
             con.sql(context.query)
