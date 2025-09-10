@@ -29,7 +29,7 @@ class CustomTokenizer(Tokenizer):
 class CustomParser(Parser):
     def _parse_create(self):
         """
-        Overrides the default _parse_create to add logic for 'SINK'.
+        Overrides the default _parse_create to add logic for 'SINK'
         CREATE SINK <sink_name> FROM <source_table> WITH (...)
         """
         if self._match(TokenType.SINK):

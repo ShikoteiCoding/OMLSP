@@ -17,5 +17,7 @@ CREATE SINK all_tickers_sink FROM all_tickers
 WITH (
     connector = 'kafka',
     topic = 'tickers_topic',
-    server = 'localhost:9092'
+    server = 'localhost:9092',
+    compression = 'snappy',
+    acks = 'all'
 );

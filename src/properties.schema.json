@@ -83,7 +83,11 @@
     {
     "title": "Kafka Sink Connector",
     "type": "object",
-    "required": ["connector", "topic", "server"],
+    "required": [
+      "connector",
+      "topic",
+      "server"
+    ],
     "properties": {
       "connector": {
         "const": "kafka",
@@ -91,11 +95,48 @@
       },
       "topic": {
         "type": "string",
-        "description": "The Kafka topic to write to."
+        "description": "The Kafka topic to write to"
       },
       "server": {
         "type": "string",
         "description": "The Kafka bootstrap server address"
+      },
+      "format": {
+        "type": "string",
+        "description": "The data format",
+        "default": "json"
+      },
+      "compression": {
+        "type": "string",
+        "enum": [
+          "none",
+          "gzip",
+          "snappy",
+          "lz4",
+          "zstd"
+        ],
+        "description": "Compression type for messages"
+      },
+      "acks": {
+        "type": [
+          "string",
+          "integer"
+        ],
+        "enum": [
+          "all",
+          "1",
+          "0"
+        ],
+        "description": "Number of acknowledgments required from brokers"
+      },
+      "properties": {
+        "type": "object",
+        "patternProperties": {
+          ".*": {
+            "type": "string"
+          }
+        },
+        "description": "Additional Kafka client properties"
       }
     },
     "additionalProperties": false
