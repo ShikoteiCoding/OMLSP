@@ -2,8 +2,8 @@ import trio
 import trio_asyncio
 
 from commons.utils import Channel
-from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
-from engine.engine import build_source_executable
+from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext, CreateSinkContext
+from engine.engine import build_source_executable, build_sink_executable
 from metadata.metadata import create_table
 from task.task import TaskId, Task
 
@@ -35,18 +35,23 @@ class TaskManager:
             raise Exception("TaskManager has already been appointed.")
         self._nursery = nursery
 
-    async def _register_one_task(self, ctx: TaskContext):
+    async def _register_one_task(self, ctx: TaskContext, conn: DuckDBPyConnection):
         task_id = ctx.name
 
         task = Task(task_id=task_id, conn=self.conn)
 
-        if isinstance(ctx, CreateLookupTableContext):
+        if isinstance(ctx, CreateSinkContext):
+            self._sources[task_id] = task.register(build_sink_executable(ctx, conn))
+            _ = self.scheduler.add_job(func=task.run)
+            logger.warning(f'[TaskManager] registered sink task ')
+
+        elif isinstance(ctx, CreateLookupTableContext):
             logger.warning(
                 "[TaskManager] not handling CreateLookupTableContext in task manager yet"
             )
             return
 
-        if isinstance(ctx, SourceTaskContext):  # register to scheduler
+        elif isinstance(ctx, SourceTaskContext):  # register to scheduler
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             create_table(self.conn, ctx)
@@ -64,7 +69,7 @@ class TaskManager:
     async def _process(self):
         logger.warning("[TaskManager] - Starting task registration")
         async for taskctx in self._taskctx_channel:
-            await self._register_one_task(taskctx)
+            await self._register_one_task(taskctx, self.conn)
         logger.warning("[TaskManager] - Finishing task registration")
 
     async def _run_task(self, task: Task):

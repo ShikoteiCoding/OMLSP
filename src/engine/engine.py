@@ -35,8 +35,11 @@ from context.context import (
     SelectContext,
     SetContext,
     SourceTaskContext,
+    CreateSinkContext,
 )
 from concurrent.futures import ThreadPoolExecutor
+from sink import stream_to_kafka
+
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
@@ -180,6 +183,15 @@ def build_source_executable(ctx: SourceTaskContext):
         table_name=ctx.name,
         start_time=start_time,
         http_requester=build_http_requester(properties, is_async=True),
+    )
+
+def build_sink_executable(ctx: CreateSinkContext, conn: DuckDBPyConnection):
+    properties = ctx.properties
+    return partial(
+        stream_to_kafka,
+        con = conn,
+        table_name=ctx.source,
+        topic=properties["topic"],
     )
 
 

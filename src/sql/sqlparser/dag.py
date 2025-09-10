@@ -5,6 +5,7 @@ from context.context import (
     CreateTableContext,
     CreateViewContext,
     CreateMaterializedViewContext,
+    CreateSinkContext,
     TaskContext,
     InvalidContext,
 )
@@ -88,6 +89,12 @@ def build_dataflows(query_contexts: list[QueryContext]) -> list[DataFlowDAG]:
         node = ContextNode(query_ctx)
 
         if isinstance(query_ctx, CreateTableContext):
+            dag = DataFlowDAG()
+            dag._adj_list[node] = []
+            dags.append(dag)
+            node_to_dag[node] = dag
+
+        elif isinstance(query_ctx, CreateSinkContext):
             dag = DataFlowDAG()
             dag._adj_list[node] = []
             dags.append(dag)

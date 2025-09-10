@@ -29,10 +29,10 @@ async def main():
     runner = Runner(conn, context_manager, task_manager)
 
     await runner.build()
-    for sql in iter_sql_statements(sql_filepath):
-        await runner.submit(sql)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(runner.run)
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(runner.run)
+        for sql in iter_sql_statements(sql_filepath):
+            await runner.submit(sql)
 
 
 # Keep before full migration

@@ -79,6 +79,26 @@
         }
       },
       "additionalProperties": true
-    }
+    },
+    {
+    "title": "Kafka Sink Connector",
+    "type": "object",
+    "required": ["connector", "topic", "server"],
+    "properties": {
+      "connector": {
+        "const": "kafka",
+        "description": "Must be 'kafka'"
+      },
+      "topic": {
+        "type": "string",
+        "description": "The Kafka topic to write to."
+      },
+      "server": {
+        "type": "string",
+        "description": "The Kafka bootstrap server address"
+      }
+    },
+    "additionalProperties": false
+  }
   ]
 }

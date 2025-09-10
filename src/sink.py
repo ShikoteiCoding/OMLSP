@@ -31,7 +31,12 @@ def get_table_schema(
 
 
 # TODO: add key_columns
-async def stream_to_kafka(con: Any, table_name: str, topic: str):
+async def stream_to_kafka(con: Any,
+                          table_name: str,
+                          topic: str,
+                          task_id: str,
+                          *args,
+    **kwargs):
     producer = Producer(kafka_producer_config())
     last_processed = set()
     schema = get_table_schema(con, table_name)
