@@ -238,7 +238,11 @@ def build_lookup_table_prehook(
 
     # TODO: wrap SQL in function
     # register macro (to be injected in place of sql)
-    func_def = f"{func_name}({','.join(dynamic_columns)})"
+    __inner_tbl = "__inner_tbl"
+    __deriv_tbl = "__deriv_tbl"
+    func_def = (
+        f"{func_name}({','.join([f'{__inner_tbl}.{col}' for col in dynamic_columns])})"
+    )
     macro_def = f"{macro_name}(table_name, {','.join(dynamic_columns)})"
     output_cols = ", ".join(
         [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
@@ -252,8 +256,8 @@ def build_lookup_table_prehook(
         FROM (
             SELECT
                 {func_def} AS struct
-            FROM query_table(table_name)
-        );
+            FROM query_table(table_name) AS {__inner_tbl}
+        ) AS {__deriv_tbl};
     """)
     logger.debug(f"registered macro: {macro_name}")
     create_macro_definition(connection, macro_name, dynamic_columns)
@@ -292,10 +296,6 @@ def pre_hook_select_statements(
     join_tables = ctx.joins
     lookup_tables = get_lookup_tables(con)
 
-    # no join in query or no lookup in joins-> pass
-    if not set(join_tables).intersection(set(lookup_tables)):
-        return original_query
-
     # join query
     substitute_mapping = dict(zip(tables, tables))
     from_table = ctx.table
@@ -313,6 +313,8 @@ def pre_hook_select_statements(
                 join_table_or_alias,
                 lookup_tables,
             )
+        else:
+            substitute_mapping[join_table] = join_table
 
     # Substritute lookup table placeholder with template
     query = Template(original_query).substitute(substitute_mapping)

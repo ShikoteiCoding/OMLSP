@@ -1,6 +1,7 @@
 import argparse
 import json
 import trio
+import polars as pl
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import connect, DuckDBPyConnection
@@ -19,6 +20,7 @@ PROPERTIES_SCHEMA = json.loads(
 
 
 async def main():
+    pl.Config.set_fmt_str_lengths(900)
     parser = argparse.ArgumentParser("Run a SQL file")
     parser.add_argument("file")
     args = parser.parse_args()
