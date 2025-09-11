@@ -4,7 +4,7 @@ import trio_asyncio
 from commons.utils import Channel
 from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
 from engine.engine import build_source_executable, build_lookup_table_prehook
-from metadata.metadata import create_table
+from metadata import create_table
 from task.task import TaskId, Task
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

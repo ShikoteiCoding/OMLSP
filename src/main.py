@@ -26,7 +26,7 @@ async def main():
 
     conn: DuckDBPyConnection = connect(database=":memory:")
     scheduler = AsyncIOScheduler()
-    context_manager = ContextManager(PROPERTIES_SCHEMA)
+    context_manager = ContextManager(conn, PROPERTIES_SCHEMA)
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
     runner = Runner(conn, context_manager, task_manager, client_manager)

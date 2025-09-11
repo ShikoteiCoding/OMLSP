@@ -9,7 +9,7 @@ WITH (
     'url' = 'https://api.kucoin.com/api/v1/market/allTickers',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'jq' = '.data.ticker[:10][] | {symbol, symbolName, buy, sell}',
+    'jq' = '.data.ticker[:2][] | {symbol, symbolName, buy, sell}',
     'headers.Content-Type' = 'application/json'
 );
 
@@ -68,4 +68,20 @@ FROM (SELECT * FROM all_tickers);
 -- Test function registered from lookup
 SELECT ohlc_func('MNDE-USDT', 'MNDE-USDT');
 -- Test macro wrapping the udf
-SELECT * FROM ohlc_macro("all_tickers", symbol, symbolName);
+SELECT * 
+
+FROM ohlc_macro("all_tickers", symbol, symbolName);
+
+-- Test pre hook
+SELECT 
+    ALT.symbol, 
+    start_time, 
+    open, 
+    high, 
+    low, 
+    close, 
+    volume, 
+    amount 
+FROM all_tickers AS ALT 
+LEFT JOIN ohlc_macro("all_tickers", ALT.symbol, ALT.symbolName) AS oh 
+    ON ALT.symbol = oh.symbol;

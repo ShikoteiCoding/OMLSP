@@ -1,3 +1,3 @@
-from .client_manager import ClientManager
+from server.client_manager import ClientManager
 
 __all__ = ["ClientManager"]

@@ -1,5 +1,7 @@
 import trio
 
+from duckdb import DuckDBPyConnection
+
 from commons.utils import Channel
 from context.context import (
     EvalContext,
@@ -19,7 +21,8 @@ class ContextManager:
     _evalctx_channel: Channel[tuple[str, EvalContext | InvalidContext]]
     _taskctx_channel: Channel[TaskContext]
 
-    def __init__(self, properties_schema: dict[str, Any]):
+    def __init__(self, conn: DuckDBPyConnection, properties_schema: dict[str, Any]):
+        self.conn = conn
         self.properties_schema = properties_schema
 
     async def add_sql_channel(self, channel: Channel[tuple[str, str]]):
@@ -43,12 +46,12 @@ class ContextManager:
             await trio.sleep_forever()
         logger.info("[ContextManager] Stopped.")
 
-    def _parse(self, sql: str) -> QueryContext | InvalidContext:
+    def _sql_to_ctx(self, sql: str) -> QueryContext | InvalidContext:
         return extract_one_query_context(sql, self.properties_schema)
 
     async def _process(self):
         async for client_id, sql in self._sql_channel:
-            ctx = self._parse(sql)
+            ctx = self._sql_to_ctx(sql)
             # TODO: rework this for clearer workflow
             # Ideally channel should be consumer agnostic
             # It is to be avoided to multi type channels

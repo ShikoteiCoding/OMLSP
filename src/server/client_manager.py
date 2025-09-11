@@ -7,7 +7,7 @@ from loguru import logger
 from duckdb import DuckDBPyConnection
 
 from commons.utils import Channel
-from engine.engine import execute_eval_ctx
+from engine import execute_eval_ctx
 from context.context import EvalContext, InvalidContext
 
 
