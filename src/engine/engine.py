@@ -271,7 +271,6 @@ def build_substitute_macro_definition(
     from_table: str,
     from_table_or_alias: str,
     join_table_or_alias: str,
-    lookup_tables: list[str],
 ) -> str:
     macro_name, fields = get_macro_definition_by_name(con, f"{join_table}_macro")
     scalar_func_fields = ",".join(
@@ -310,8 +309,7 @@ def pre_hook_select_statements(
                 join_table,
                 from_table,
                 from_table_or_alias,
-                join_table_or_alias,
-                lookup_tables,
+                join_table_or_alias
             )
         else:
             substitute_mapping[join_table] = join_table
