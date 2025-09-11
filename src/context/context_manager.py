@@ -1,6 +1,5 @@
 import trio
 
-from duckdb import DuckDBPyConnection
 
 from commons.utils import Channel
 from context.context import (
@@ -21,8 +20,7 @@ class ContextManager:
     _evalctx_channel: Channel[tuple[str, EvalContext | InvalidContext]]
     _taskctx_channel: Channel[TaskContext]
 
-    def __init__(self, conn: DuckDBPyConnection, properties_schema: dict[str, Any]):
-        self.conn = conn
+    def __init__(self, properties_schema: dict[str, Any]):
         self.properties_schema = properties_schema
 
     async def add_sql_channel(self, channel: Channel[tuple[str, str]]):

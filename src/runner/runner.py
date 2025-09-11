@@ -83,7 +83,7 @@ if __name__ == "__main__":
         properties_schema = json.loads(fo.read().decode("utf-8"))
     conn: DuckDBPyConnection = connect(database=":memory:")
     scheduler = AsyncIOScheduler()
-    context_manager = ContextManager(conn, properties_schema)
+    context_manager = ContextManager(properties_schema)
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
     executors = {}
