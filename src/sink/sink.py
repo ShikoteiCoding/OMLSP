@@ -6,9 +6,8 @@ from loguru import logger
 from typing import Any
 
 
-# TODO: move to config
-def kafka_producer_config():
-    return {"bootstrap.servers": "localhost:9092", "client.id": "kafka-producer"}
+def kafka_config(server, acks):
+    return {"bootstrap.servers": server, "acks": acks}
 
 
 def send_to_kafka(producer: Producer, topic: str, messages: list[dict[str, Any]]):
@@ -34,10 +33,12 @@ def get_table_schema(
 async def stream_to_kafka(con: Any,
                           table_name: str,
                           topic: str,
+                          server,
+                          acks,
                           task_id: str,
                           *args,
     **kwargs):
-    producer = Producer(kafka_producer_config())
+    producer = Producer(kafka_config(server, acks))
     last_processed = set()
     schema = get_table_schema(con, table_name)
     column_names = [col["name"] for col in schema]

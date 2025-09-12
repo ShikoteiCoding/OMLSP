@@ -38,7 +38,7 @@ from context.context import (
     CreateSinkContext,
 )
 from concurrent.futures import ThreadPoolExecutor
-from sink import stream_to_kafka
+from sink.sink import stream_to_kafka
 
 
 DUCKDB_TO_PYARROW_PYTYPE = {
@@ -185,6 +185,7 @@ def build_source_executable(ctx: SourceTaskContext):
         http_requester=build_http_requester(properties, is_async=True),
     )
 
+#TODO handle select query
 def build_sink_executable(ctx: CreateSinkContext, conn: DuckDBPyConnection):
     properties = ctx.properties
     return partial(
@@ -192,6 +193,8 @@ def build_sink_executable(ctx: CreateSinkContext, conn: DuckDBPyConnection):
         con = conn,
         table_name=ctx.source,
         topic=properties["topic"],
+        server=properties["server"],
+        acks = properties["acks"],
     )
 
 

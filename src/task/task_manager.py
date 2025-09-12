@@ -2,8 +2,8 @@ import trio
 import trio_asyncio
 
 from commons.utils import Channel
-from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
-from engine.engine import build_source_executable
+from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext, CreateSinkContext
+from engine.engine import build_source_executable, build_sink_executable
 from metadata.metadata import create_table
 from task.task import TaskId, Task
 
@@ -43,12 +43,26 @@ class TaskManager:
 
                 self._nursery = nursery
 
+                nursery.start_soon(self._process)
+                nursery.start_soon(self._watch_for_shutdown)
+
+                logger.info("[TaskManager] Started.")
+                while self._running:
+                    await trio.sleep(1)
+
+        logger.info("[TaskManager] Stopped.")
+
     async def _register_one_task(self, ctx: TaskContext):
         task_id = ctx.name
 
         task = Task(task_id=task_id, conn=self.conn)
 
-        if isinstance(ctx, CreateLookupTableContext):
+        if isinstance(ctx, CreateSinkContext):
+            self._sources[task_id] = task.register(build_sink_executable(ctx, self.conn))
+            _ = self.scheduler.add_job(func=task.run)
+            logger.warning(f'[TaskManager] registered sink task ')
+
+        elif isinstance(ctx, CreateLookupTableContext):
             logger.warning(
                 "[TaskManager] not handling CreateLookupTableContext in task manager yet"
             )

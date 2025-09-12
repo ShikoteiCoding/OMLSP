@@ -125,6 +125,7 @@ def parse_lookup_table_schema(
 def validate_create_properties(
     properties: dict[str, str], properties_schema: dict
 ) -> None:
+    print(properties)
     """JSON Schema validation of properties extracted from WITH statement"""
     jsonschema.validate(instance=properties, schema=properties_schema)
 

@@ -106,17 +106,6 @@
         "description": "The data format",
         "default": "json"
       },
-      "compression": {
-        "type": "string",
-        "enum": [
-          "none",
-          "gzip",
-          "snappy",
-          "lz4",
-          "zstd"
-        ],
-        "description": "Compression type for messages"
-      },
       "acks": {
         "type": [
           "string",
@@ -128,15 +117,6 @@
           "0"
         ],
         "description": "Number of acknowledgments required from brokers"
-      },
-      "properties": {
-        "type": "object",
-        "patternProperties": {
-          ".*": {
-            "type": "string"
-          }
-        },
-        "description": "Additional Kafka client properties"
       }
     },
     "additionalProperties": false
