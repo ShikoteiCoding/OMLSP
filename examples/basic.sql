@@ -15,8 +15,7 @@ WITH (
 
 CREATE TEMP TABLE ohlc (
     $symbol STRING,
-    --$symbolName STRING,
-    start_time TIMESTAMP,
+    start_time TIMESTAMP_S,
     open FLOAT,
     high FLOAT,
     low FLOAT,

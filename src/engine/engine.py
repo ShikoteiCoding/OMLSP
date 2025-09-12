@@ -40,7 +40,10 @@ from concurrent.futures import ThreadPoolExecutor
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
     "TEXT": pa.string(),
+    "TIMESTAMP_S": pa.timestamp("s"),
+    "TIMESTAMP_MS": pa.timestamp("ms"),
     "TIMESTAMP": pa.timestamp("us"),
+    "TIMESTAMP_NS": pa.timestamp("ns"),
     "DATETIME": pa.timestamp("us"),
     "FLOAT": pa.float32(),
     "DOUBLE": pa.float64(),
@@ -92,8 +95,8 @@ def build_scalar_udf(
         for chunks in zip(*(arr.chunks for arr in arrays)):
             py_chunks = [chunk.to_pylist() for chunk in chunks]
             chunk_rows = zip(*py_chunks)
-            chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
-            results.extend(chunk_results.to_pylist())
+            chunk_results = process_elements(chunk_rows, properties)
+            results.extend(chunk_results)
         return pa.array(results, type=return_type_arrow)
 
     udf = eval(
@@ -104,7 +107,6 @@ def build_scalar_udf(
     def process_elements(
         rows: Iterable[tuple[Any, ...]],
         properties: dict[str, str],
-        return_type_arrow: pa.DataType,
     ) -> pa.Array:
         def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
             context = dict(zip(dynamic_columns, row))
@@ -126,7 +128,7 @@ def build_scalar_udf(
         with ThreadPoolExecutor() as executor:
             results = list(executor.map(_inner, rows))
 
-        return pa.array(results, type=return_type_arrow)
+        return results
 
     return {
         "name": kwargs.get("name"),
@@ -305,11 +307,7 @@ def pre_hook_select_statements(
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
             substitute_mapping[join_table] = build_substitute_macro_definition(
-                con,
-                join_table,
-                from_table,
-                from_table_or_alias,
-                join_table_or_alias
+                con, join_table, from_table, from_table_or_alias, join_table_or_alias
             )
         else:
             substitute_mapping[join_table] = join_table
