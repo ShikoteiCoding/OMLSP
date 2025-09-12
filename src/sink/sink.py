@@ -30,6 +30,7 @@ def get_table_schema(
 
 
 # TODO: add key_columns
+# TODO: add more information
 async def stream_to_kafka(con: Any,
                           table_name: str,
                           topic: str,
