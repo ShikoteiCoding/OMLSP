@@ -75,7 +75,6 @@ WITH (
     connector = 'kafka',
     topic = 'tickers_topic',
     server = 'localhost:9092',
-    acks = 'all',
 );
 
 -- Test sink from select
@@ -84,5 +83,4 @@ WITH (
     connector = 'kafka',
     topic = 'tickers_topic_2',
     server = 'localhost:9092',
-    acks = 'all',
 );

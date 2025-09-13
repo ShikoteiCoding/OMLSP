@@ -105,18 +105,6 @@
         "type": "string",
         "description": "The data format",
         "default": "json"
-      },
-      "acks": {
-        "type": [
-          "string",
-          "integer"
-        ],
-        "enum": [
-          "all",
-          "1",
-          "0"
-        ],
-        "description": "Number of acknowledgments required from brokers"
       }
     },
     "additionalProperties": false

@@ -192,10 +192,9 @@ def build_sink_executable(ctx: CreateSinkContext, conn: DuckDBPyConnection):
     return partial(
         run_kafka_sink,
         con=conn,
-        source=ctx.source,
+        upstream=ctx.upstream,
         topic=properties["topic"],
         server=properties["server"],
-        acks=properties["acks"],
     )
 
 

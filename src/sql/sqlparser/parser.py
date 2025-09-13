@@ -227,13 +227,13 @@ def extract_create_context(
         expr = updated_create_statement.expression
 
         if isinstance(expr, exp.Select):
-            source = extract_select_context(expr)
+            upstream = [extract_select_context(expr)]
         else:
-            source = expr
+            upstream = [expr] if expr else []
 
         return CreateSinkContext(
             name=updated_create_statement.this,
-            source=source,
+            upstream=upstream,
             properties=properties,
         )
 
@@ -337,7 +337,7 @@ def extract_command_context(
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> QueryContext | InvalidContext:
-    parsed_statement = parse_one(query, dialect=CustomDialect)
+    parsed_statement = parse_one(query, dialect=OmlspDialect)
 
     if isinstance(parsed_statement, exp.Create):
         return extract_create_context(parsed_statement, properties_schema)

@@ -1,28 +1,20 @@
 import asyncio
 import duckdb
 import json
-from confluent_kafka import Producer, KafkaException
+from confluent_kafka import Producer
 from context.context import (
     SelectContext,
 )
+from metadata.metadata import (
+    resolve_schema,
+)
 from loguru import logger
 from typing import Any
+from datetime import datetime, timedelta
 
 
-def kafka_config(server, acks):
-    return {"bootstrap.servers": server, "acks": acks}
-
-
-def get_table_schema(
-    con: duckdb.DuckDBPyConnection, table_name: str
-) -> list[dict[str, Any]]:
-    result = con.execute(f"DESCRIBE {table_name}").fetchall()
-    return [{"name": row[0], "type": row[1]} for row in result]
-
-
-def get_select_schema(con: duckdb.DuckDBPyConnection, context: SelectContext):
-    result = con.execute(f"{context.query} LIMIT 0")
-    return [{"name": col[0], "type": col[1]} for col in result.description]
+def kafka_config(server):
+    return {"bootstrap.servers": server}
 
 
 class Deduplicator:
@@ -39,8 +31,8 @@ class Deduplicator:
 
 
 class KafkaSink:
-    def __init__(self, server: str, acks: str, topic: str):
-        self.producer = Producer(kafka_config(server, acks))
+    def __init__(self, server: str, topic: str):
+        self.producer = Producer(kafka_config(server))
         self.topic = topic
 
     def send(self, messages: list[dict[str, Any]]):
@@ -50,34 +42,35 @@ class KafkaSink:
             )
         self.producer.poll(0)
 
-    def close(self):
-        self.producer.flush()
-
-
-def resolve_source(con, source: str | SelectContext):
-    if isinstance(source, SelectContext):
-        sql = source.query
-        schema = get_select_schema(con, source)
-    else:
-        sql = f"SELECT * FROM {source}"
-        schema = get_table_schema(con, source)
-    return sql, schema
+    def close(self, timeout: float = 10.0):
+        deadline = datetime.now() + timedelta(seconds=timeout)
+        while True:
+            remaining = self.producer.flush(timeout=1)
+            if remaining == 0:
+                break
+            if datetime.now() > deadline:
+                logger.error(
+                    f"KafkaSink failed to flush {remaining} messages before timeout"
+                )
+                break
 
 
 async def run_kafka_sink(
     con: duckdb.DuckDBPyConnection,
-    source: str | SelectContext,
+    upstream: list[str | SelectContext],
     topic: str,
     server: str,
-    acks: str,
     task_id: str,
     poll_interval: float = 1.0,
 ):
-    sql, schema = resolve_source(con, source)
+    # TODO: in future: support multiple upstreams merged/unioned
+    source = upstream[0]
+
+    sql, schema = resolve_schema(con, source)
     column_names = [col["name"] for col in schema]
 
-    sink = KafkaSink(server, acks, topic)
-    dedup = Deduplicator()  # TODO: use primary key
+    sink = KafkaSink(server, topic)
+    dedup = Deduplicator()  # TODO: use batch id to deduplicate
 
     try:
         while True:

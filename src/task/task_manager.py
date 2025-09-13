@@ -1,5 +1,7 @@
 import trio
 import trio_asyncio
+import asyncio
+
 
 from commons.utils import Channel
 from context.context import (
@@ -28,6 +30,7 @@ class TaskManager:
     scheduler: AsyncIOScheduler
 
     _sources: dict[TaskId, Task] = {}
+    _sinks: dict[TaskId, Task] = {}
     _task_id_to_task: dict[TaskId, Task] = {}
     _nursery: trio.Nursery
     _taskctx_channel: Channel[TaskContext]
@@ -67,11 +70,9 @@ class TaskManager:
         task = Task(task_id=task_id, conn=self.conn)
 
         if isinstance(ctx, CreateSinkContext):
-            self._sources[task_id] = task.register(
-                build_sink_executable(ctx, self.conn)
-            )
-            _ = self.scheduler.add_job(func=task.run)
-            logger.warning(f"[TaskManager] registered sink task ")
+            self._sinks[task_id] = task.register(build_sink_executable(ctx, self.conn))
+            asyncio.create_task(task.run())
+            logger.warning(f"[TaskManager] registered sink task {task_id}")
 
         elif isinstance(ctx, CreateLookupTableContext):
             create_table(self.conn, ctx)
