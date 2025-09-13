@@ -13,18 +13,6 @@ def kafka_config(server, acks):
     return {"bootstrap.servers": server, "acks": acks}
 
 
-def send_to_kafka(producer: Producer, topic: str, messages: list[dict[str, Any]]):
-    for msg in messages:
-        value = json.dumps(msg, default=str)
-        producer.produce(topic, value=value.encode("utf-8"))
-
-    remaining_messages = producer.flush(timeout=5)
-    if remaining_messages > 0:
-        raise KafkaException(
-            f"Failed to deliver {remaining_messages} messages to Kafka"
-        )
-
-
 def get_table_schema(
     con: duckdb.DuckDBPyConnection, table_name: str
 ) -> list[dict[str, Any]]:
