@@ -24,15 +24,18 @@ def send_to_kafka(producer: Producer, topic: str, messages: list[dict[str, Any]]
             f"Failed to deliver {remaining_messages} messages to Kafka"
         )
 
+
 def get_table_schema(
     con: duckdb.DuckDBPyConnection, table_name: str
 ) -> list[dict[str, Any]]:
     result = con.execute(f"DESCRIBE {table_name}").fetchall()
     return [{"name": row[0], "type": row[1]} for row in result]
 
-def get_select_schema(con:  duckdb.DuckDBPyConnection, context: SelectContext):
+
+def get_select_schema(con: duckdb.DuckDBPyConnection, context: SelectContext):
     result = con.execute(f"{context.query} LIMIT 0")
     return [{"name": col[0], "type": col[1]} for col in result.description]
+
 
 class Deduplicator:
     def __init__(self, key_index: int | None = None):
@@ -54,7 +57,9 @@ class KafkaSink:
 
     def send(self, messages: list[dict[str, Any]]):
         for msg in messages:
-            self.producer.produce(self.topic, value=json.dumps(msg, default=str).encode("utf-8"))
+            self.producer.produce(
+                self.topic, value=json.dumps(msg, default=str).encode("utf-8")
+            )
         self.producer.poll(0)
 
     def close(self):
@@ -91,10 +96,13 @@ async def run_kafka_sink(
             rows = con.execute(sql).fetchall()
             new_messages = [
                 {column_names[i]: row[i] for i in range(len(column_names))}
-                for row in rows if dedup.is_new(row)
+                for row in rows
+                if dedup.is_new(row)
             ]
             if new_messages:
-                logger.info(f"Sending {len(new_messages)} rows from {task_id} → Kafka topic '{topic}'")
+                logger.info(
+                    f"Sending {len(new_messages)} rows from {task_id} → Kafka topic '{topic}'"
+                )
                 sink.send(new_messages)
 
             await asyncio.sleep(poll_interval)

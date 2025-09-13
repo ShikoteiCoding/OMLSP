@@ -185,16 +185,17 @@ def build_source_executable(ctx: SourceTaskContext):
         http_requester=build_http_requester(properties, is_async=True),
     )
 
+
 # TODO: build according properties
 def build_sink_executable(ctx: CreateSinkContext, conn: DuckDBPyConnection):
     properties = ctx.properties
     return partial(
         run_kafka_sink,
-        con = conn,
+        con=conn,
         source=ctx.source,
         topic=properties["topic"],
         server=properties["server"],
-        acks = properties["acks"],
+        acks=properties["acks"],
     )
 
 

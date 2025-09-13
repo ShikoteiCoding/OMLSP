@@ -20,13 +20,15 @@ from context.context import (
     InvalidContext,
 )
 
-class CustomTokenizer(Tokenizer):
+
+class OmlspTokenizer(Tokenizer):
     KEYWORDS = {
         **Tokenizer.KEYWORDS,
-        'SINK': TokenType.SINK,
+        "SINK": TokenType.SINK,
     }
 
-class CustomParser(Parser):
+
+class OmlspParser(Parser):
     def _parse_create(self):
         if self._match(TokenType.SINK):
             # Parse the name of the sink
@@ -59,9 +61,10 @@ class CustomParser(Parser):
         return super()._parse_create()
 
 
-class CustomDialect(Dialect):
-    parser = CustomParser
-    tokenizer = CustomTokenizer
+class OmlspDialect(Dialect):
+    parser = OmlspParser
+    tokenizer = OmlspTokenizer
+
 
 def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
@@ -217,7 +220,7 @@ def extract_create_context(
             dynamic_columns=dynamic_columns,
             columns=columns,
         )
-    elif str(statement.kind) == "SINK" :
+    elif str(statement.kind) == "SINK":
         updated_create_statement, properties = parse_create_properties(
             statement, properties_schema
         )
@@ -234,7 +237,6 @@ def extract_create_context(
             properties=properties,
         )
 
-   
     # TODO: Process views, materialized views, sinks and functions here
     return InvalidContext(reason=f"Not known statement kind: {statement.kind}")
 
