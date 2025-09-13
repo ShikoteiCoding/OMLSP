@@ -9,14 +9,13 @@ WITH (
     'url' = 'https://api.kucoin.com/api/v1/market/allTickers',
     'method' = 'GET',
     'schedule' = '*/1 * * * *',
-    'jq' = '.data.ticker[:10][] | {symbol, symbolName, buy, sell}',
+    'jq' = '.data.ticker[:2][] | {symbol, symbolName, buy, sell}',
     'headers.Content-Type' = 'application/json'
 );
 
 CREATE TEMP TABLE ohlc (
     $symbol STRING,
-    $symbolName STRING,
-    start_time TIMESTAMP,
+    start_time TIMESTAMP_S,
     open FLOAT,
     high FLOAT,
     low FLOAT,
@@ -66,6 +65,53 @@ SELECT *
 FROM (SELECT * FROM all_tickers);
 
 -- Test function registered from lookup
-SELECT ohlc_func('MNDE-USDT', 'MNDE-USDT');
+SELECT ohlc_func('MNDE-USDT');
 -- Test macro wrapping the udf
-SELECT * FROM ohlc_macro("all_tickers", symbol, symbolName);
+SELECT *
+FROM ohlc_macro("all_tickers", symbol);
+
+-- Test subquery in macro
+SELECT
+    ohlc_func(ALT.symbol) AS struct
+FROM "all_tickers" AS ALT;
+
+SELECT struct.* FROM (
+SELECT
+    ohlc_func(ALT.symbol) AS struct
+FROM query_table("all_tickers") AS ALT);
+
+SELECT
+    ohlc_func(ALT.symbol)
+FROM query_table("all_tickers") AS ALT;
+
+-- Test pre hook
+SELECT 
+    ALT.symbol, 
+    start_time, 
+    open, 
+    high, 
+    low, 
+    close, 
+    volume, 
+    amount 
+FROM all_tickers AS ALT 
+LEFT JOIN ohlc_macro("all_tickers", ALT.symbol, ALT.symbolName) AS oh 
+    ON ALT.symbol = oh.symbol;
+
+SELECT 
+    ALT.symbol, 
+    start_time, 
+    open, 
+    high, 
+    low, 
+    close, 
+    volume, 
+    amount 
+FROM all_tickers AS ALT 
+LEFT JOIN ohlc_macro("all_tickers", ALT.symbol) AS oh 
+    ON ALT.symbol = oh.symbol;
+
+SELECT ALT.symbol 
+FROM all_tickers AS ALT 
+LEFT JOIN all_tickers AS ALT2 
+    on ALT.symbol = ALT2.symbol;
