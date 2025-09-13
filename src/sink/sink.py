@@ -2,6 +2,9 @@ import asyncio
 import duckdb
 import json
 from confluent_kafka import Producer, KafkaException
+from context.context import (
+    SelectContext,
+)
 from loguru import logger
 from typing import Any
 
@@ -21,47 +24,82 @@ def send_to_kafka(producer: Producer, topic: str, messages: list[dict[str, Any]]
             f"Failed to deliver {remaining_messages} messages to Kafka"
         )
 
-
 def get_table_schema(
     con: duckdb.DuckDBPyConnection, table_name: str
 ) -> list[dict[str, Any]]:
     result = con.execute(f"DESCRIBE {table_name}").fetchall()
     return [{"name": row[0], "type": row[1]} for row in result]
 
+def get_select_schema(con:  duckdb.DuckDBPyConnection, context: SelectContext):
+    result = con.execute(f"{context.query} LIMIT 0")
+    return [{"name": col[0], "type": col[1]} for col in result.description]
 
-# TODO: add key_columns
-# TODO: add more information
-async def stream_to_kafka(con: Any,
-                          table_name: str,
-                          topic: str,
-                          server,
-                          acks,
-                          task_id: str,
-                          *args,
-    **kwargs):
-    producer = Producer(kafka_config(server, acks))
-    last_processed = set()
-    schema = get_table_schema(con, table_name)
+class Deduplicator:
+    def __init__(self, key_index: int | None = None):
+        self.key_index = key_index
+        self.last_seen = set()
+
+    def is_new(self, row) -> bool:
+        key = row if self.key_index is None else row[self.key_index]
+        if key in self.last_seen:
+            return False
+        self.last_seen.add(key)
+        return True
+
+
+class KafkaSink:
+    def __init__(self, server: str, acks: str, topic: str):
+        self.producer = Producer(kafka_config(server, acks))
+        self.topic = topic
+
+    def send(self, messages: list[dict[str, Any]]):
+        for msg in messages:
+            self.producer.produce(self.topic, value=json.dumps(msg, default=str).encode("utf-8"))
+        self.producer.poll(0)
+
+    def close(self):
+        self.producer.flush()
+
+
+def resolve_source(con, source: str | SelectContext):
+    if isinstance(source, SelectContext):
+        sql = source.query
+        schema = get_select_schema(con, source)
+    else:
+        sql = f"SELECT * FROM {source}"
+        schema = get_table_schema(con, source)
+    return sql, schema
+
+
+async def run_kafka_sink(
+    con: duckdb.DuckDBPyConnection,
+    source: str | SelectContext,
+    topic: str,
+    server: str,
+    acks: str,
+    task_id: str,
+    poll_interval: float = 1.0,
+):
+    sql, schema = resolve_source(con, source)
     column_names = [col["name"] for col in schema]
 
-    while True:
-        try:
-            rows = con.execute(f"SELECT * FROM {table_name}").fetchall()
-            messages_to_send = []
-            for row in rows:
-                if row not in last_processed:
-                    msg = {column_names[i]: row[i] for i in range(len(column_names))}
-                    messages_to_send.append(msg)
-                    last_processed.add(row)
+    sink = KafkaSink(server, acks, topic)
+    dedup = Deduplicator()  # TODO: use primary key
 
-            if messages_to_send:
-                logger.info(
-                    f"Found {len(messages_to_send)} new rows in '{table_name}', sending to Kafka"
-                )
-                send_to_kafka(producer, topic, messages_to_send)
+    try:
+        while True:
+            rows = con.execute(sql).fetchall()
+            new_messages = [
+                {column_names[i]: row[i] for i in range(len(column_names))}
+                for row in rows if dedup.is_new(row)
+            ]
+            if new_messages:
+                logger.info(f"Sending {len(new_messages)} rows from {task_id} → Kafka topic '{topic}'")
+                sink.send(new_messages)
 
-        except Exception as e:
-            logger.error(f"Kafka not found: {e}")
-            break
+            await asyncio.sleep(poll_interval)
 
-        await asyncio.sleep(1)
+    except Exception as e:
+        logger.error(f"[{task_id}] Sink failed: {e}")
+    finally:
+        sink.close()

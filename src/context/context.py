@@ -17,12 +17,7 @@ CreateMaterializedViewContext = namedtuple(
     "CreateMaterializedViewContext", ["name", "upstreams"]
 )
 CreateSinkContext = namedtuple(
-    "CreateSinkContext", 
-    [
-        "name",
-        "source",
-        "properties",
-    ]
+    "CreateSinkContext", ["name", "source", "properties"]
 )
 
 SelectContext = namedtuple(

@@ -79,10 +79,10 @@ WITH (
 );
 
 -- Test sink from select
-CREATE SINK all_tickers_sink FROM SELECT symbolName, buy FROM all_tickers
+CREATE SINK all_tickers_sink FROM (SELECT symbolName, buy FROM all_tickers)
 WITH (
     connector = 'kafka',
-    topic = 'tickers_topic',
+    topic = 'tickers_topic_2',
     server = 'localhost:9092',
     acks = 'all',
 );

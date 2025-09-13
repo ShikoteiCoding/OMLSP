@@ -28,20 +28,19 @@ class CustomTokenizer(Tokenizer):
 
 class CustomParser(Parser):
     def _parse_create(self):
-        """
-        Overrides the default _parse_create to add logic for 'SINK'
-        CREATE SINK <sink_name> FROM <source_table> WITH (...)
-        """
         if self._match(TokenType.SINK):
             # Parse the name of the sink
             name = self._parse_id_var()
 
-            # Expect the FROM keyword, otherwise raise a parse error.
             if not self._match(TokenType.FROM):
                 self.raise_error("Expected FROM in CREATE SINK statement")
 
-            # Parse the source table name
-            source_table = self._parse_id_var()
+            if self._curr.token_type == TokenType.L_PAREN:
+                # Parse a subquery: (SELECT ...)
+                source_expr = self._parse_wrapped(self._parse_select)
+            else:
+                # Just a table identifier
+                source_expr = self._parse_id_var()
 
             properties = None
             if self._match(TokenType.WITH):
@@ -52,9 +51,9 @@ class CustomParser(Parser):
             return self.expression(
                 exp.Create,
                 this=name,
-                kind='SINK',
-                expression=source_table,
-                properties=properties
+                kind="SINK",
+                expression=source_expr,
+                properties=properties,
             )
 
         return super()._parse_create()
@@ -125,7 +124,6 @@ def parse_lookup_table_schema(
 def validate_create_properties(
     properties: dict[str, str], properties_schema: dict
 ) -> None:
-    print(properties)
     """JSON Schema validation of properties extracted from WITH statement"""
     jsonschema.validate(instance=properties, schema=properties_schema)
 
@@ -223,9 +221,16 @@ def extract_create_context(
         updated_create_statement, properties = parse_create_properties(
             statement, properties_schema
         )
+        expr = updated_create_statement.expression
+
+        if isinstance(expr, exp.Select):
+            source = extract_select_context(expr)
+        else:
+            source = expr
+
         return CreateSinkContext(
             name=updated_create_statement.this,
-            source=updated_create_statement.expression,
+            source=source,
             properties=properties,
         )
 

@@ -3,7 +3,7 @@ import trio_asyncio
 
 from commons.utils import Channel
 from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext, CreateSinkContext
-from engine.engine import build_source_executable, build_sink_executable
+from engine.engine import build_source_executable, build_sink_executable, build_lookup_table_prehook
 from metadata.metadata import create_table
 from task.task import TaskId, Task
 
@@ -63,9 +63,8 @@ class TaskManager:
             logger.warning(f'[TaskManager] registered sink task ')
 
         elif isinstance(ctx, CreateLookupTableContext):
-            logger.warning(
-                "[TaskManager] not handling CreateLookupTableContext in task manager yet"
-            )
+            create_table(self.conn, ctx)
+            build_lookup_table_prehook(ctx, self.conn)
             return
 
         elif isinstance(ctx, SourceTaskContext):  # register to scheduler

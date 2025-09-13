@@ -27,6 +27,7 @@ from metadata.metadata import (
     get_batch_id_from_table_metadata,
     update_batch_id_in_table_metadata,
 )
+from sink.sink import run_kafka_sink
 from requester import build_http_requester
 from context.context import (
     CommandContext,
@@ -38,7 +39,6 @@ from context.context import (
     CreateSinkContext,
 )
 from concurrent.futures import ThreadPoolExecutor
-from sink.sink import stream_to_kafka
 
 
 DUCKDB_TO_PYARROW_PYTYPE = {
@@ -185,13 +185,13 @@ def build_source_executable(ctx: SourceTaskContext):
         http_requester=build_http_requester(properties, is_async=True),
     )
 
-#TODO handle select query
+# TODO: build according properties
 def build_sink_executable(ctx: CreateSinkContext, conn: DuckDBPyConnection):
     properties = ctx.properties
     return partial(
-        stream_to_kafka,
+        run_kafka_sink,
         con = conn,
-        table_name=ctx.source,
+        source=ctx.source,
         topic=properties["topic"],
         server=properties["server"],
         acks = properties["acks"],
