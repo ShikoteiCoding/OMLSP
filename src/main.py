@@ -8,7 +8,6 @@ from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
 
 from server import ClientManager
-from context import ContextManager
 from task import TaskManager
 from runner import Runner
 from sql.file import iter_sql_statements
@@ -20,7 +19,7 @@ PROPERTIES_SCHEMA = json.loads(
 
 
 async def main():
-    pl.Config.set_fmt_str_lengths(900)
+    pl.Config.set_fmt_str_lengths(900)  # TODO: expose as configuration available in SET
     parser = argparse.ArgumentParser("Run a SQL file")
     parser.add_argument("file")
     args = parser.parse_args()
@@ -28,10 +27,9 @@ async def main():
 
     conn: DuckDBPyConnection = connect(database=":memory:")
     scheduler = AsyncIOScheduler()
-    context_manager = ContextManager(PROPERTIES_SCHEMA)
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
-    runner = Runner(conn, context_manager, task_manager, client_manager)
+    runner = Runner(conn, PROPERTIES_SCHEMA, task_manager, client_manager)
 
     await runner.build()
     async with trio.open_nursery() as nursery:

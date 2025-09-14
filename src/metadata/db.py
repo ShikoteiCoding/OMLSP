@@ -95,11 +95,12 @@ def get_tables(con: DuckDBPyConnection) -> list:
 def create_table(
     con: DuckDBPyConnection,
     context: CreateTableContext | CreateLookupTableContext,
-) -> None:
+) -> str:
     query = context.query
     con.execute(query)
     insert_table_metadata(con, context)
     logger.debug(f"Registered table: {context.name}")
+    return "CREATE TABLE"
 
 
 def get_batch_id_from_table_metadata(con: DuckDBPyConnection, table_name: str) -> int:

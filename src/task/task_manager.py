@@ -4,7 +4,6 @@ import trio_asyncio
 from commons.utils import Channel
 from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
 from engine.engine import build_source_executable, build_lookup_table_prehook
-from metadata import create_table
 from task.task import TaskId, Task
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -58,14 +57,13 @@ class TaskManager:
         task = Task(task_id=task_id, conn=self.conn)
 
         if isinstance(ctx, CreateLookupTableContext):
-            create_table(self.conn, ctx)
             build_lookup_table_prehook(ctx, self.conn)
+            logger.info(f'[TaskManager] registered lookup task "{task_id}"')
             return
 
         if isinstance(ctx, SourceTaskContext):  # register to scheduler
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
-            create_table(self.conn, ctx)
             self._sources[task_id] = task.register(build_source_executable(ctx))
             _ = self.scheduler.add_job(func=task.run, trigger=ctx.trigger)
             logger.info(f'[TaskManager] registered source task "{task_id}"')

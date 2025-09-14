@@ -12,8 +12,8 @@ from context.context import (
     CommandContext,
     SelectContext,
     SetContext,
-    QueryContext,
     InvalidContext,
+    QueryContext,
 )
 
 
