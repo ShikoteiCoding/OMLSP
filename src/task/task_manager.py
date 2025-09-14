@@ -13,10 +13,6 @@ from engine.engine import (
     build_source_executable,
     build_lookup_table_prehook,
 )
-from metadata import (
-    create_table
-)
-from sink.sink import run_kafka_sink
 from task.task import TaskId, Task
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -71,7 +67,7 @@ class TaskManager:
 
         # TODO: build according properties
         if isinstance(ctx, CreateSinkContext):
-            props = ctx.properties
+            # props = ctx.properties
             # self._nursery.start_soon(
             #     run_kafka_sink,
             #     self.conn,

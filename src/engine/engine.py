@@ -34,7 +34,6 @@ from context.context import (
     SelectContext,
     SetContext,
     SourceTaskContext,
-    CreateSinkContext,
 )
 from concurrent.futures import ThreadPoolExecutor
 
