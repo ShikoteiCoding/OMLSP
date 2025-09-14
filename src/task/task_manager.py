@@ -11,12 +11,12 @@ from context.context import (
 )
 from engine.engine import (
     build_source_executable,
-    build_sink_executable,
     build_lookup_table_prehook,
 )
 from metadata import (
     create_table
 )
+from sink.sink import run_kafka_sink
 from task.task import TaskId, Task
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -69,9 +69,17 @@ class TaskManager:
 
         task = Task(task_id=task_id, conn=self.conn)
 
+        # TODO: build according properties
         if isinstance(ctx, CreateSinkContext):
-            task.register(build_sink_executable(ctx, self.conn))
-            self._nursery.start_soon(task.run)
+            props = ctx.properties
+            self._nursery.start_soon(
+                run_kafka_sink,
+                self.conn,
+                ctx.upstreams,
+                props["topic"],
+                props["server"],
+                ctx.name,
+            )
 
         elif isinstance(ctx, CreateLookupTableContext):
             create_table(self.conn, ctx)

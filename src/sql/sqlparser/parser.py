@@ -229,15 +229,15 @@ def extract_create_context(
 
         # TODO: support multiple upstreams merged/unioned
         if isinstance(expr, exp.Select):
-            upstream = [extract_select_context(expr)]
+            upstreams = [extract_select_context(expr)]
         elif isinstance(expr, exp.Table):
-            upstream = [expr.copy()] if expr else []
+            upstreams = [expr.copy()] if expr else []
         else:
             return InvalidContext(reason=f"Unsupported upstream expression: {expr}")
 
         return CreateSinkContext(
             name=updated_create_statement.this,
-            upstream=upstream,
+            upstreams=upstreams,
             properties=properties,
         )
 

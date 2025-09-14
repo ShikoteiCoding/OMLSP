@@ -26,7 +26,6 @@ from metadata import (
     get_batch_id_from_table_metadata,
     update_batch_id_in_table_metadata,
 )
-from sink.sink import run_kafka_sink
 from requester import build_http_requester
 from context.context import (
     CommandContext,
@@ -184,18 +183,6 @@ def build_source_executable(ctx: SourceTaskContext):
         table_name=ctx.name,
         start_time=start_time,
         http_requester=build_http_requester(properties, is_async=True),
-    )
-
-
-# TODO: build according properties
-def build_sink_executable(ctx: CreateSinkContext, conn: DuckDBPyConnection):
-    properties = ctx.properties
-    return partial(
-        run_kafka_sink,
-        con=conn,
-        upstream=ctx.upstream,
-        topic=properties["topic"],
-        server=properties["server"],
     )
 
 
