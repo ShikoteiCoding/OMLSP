@@ -4,17 +4,67 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import timezone
 
 from loguru import logger
-from sqlglot import parse_one, exp
+from sqlglot import parse, parse_one, exp
+from sqlglot import exp, parse
+from sqlglot.parser import Parser
+from sqlglot.tokens import Tokenizer, TokenType
+from sqlglot.dialects import Dialect
 
 from context.context import (
     CreateTableContext,
     CreateLookupTableContext,
+    CreateSinkContext,
     CommandContext,
     SelectContext,
     SetContext,
     QueryContext,
     InvalidContext,
 )
+
+
+class OmlspTokenizer(Tokenizer):
+    KEYWORDS = {
+        **Tokenizer.KEYWORDS,
+        "SINK": TokenType.SINK,
+    }
+
+
+class OmlspParser(Parser):
+    def _parse_create(self):
+        if self._match(TokenType.SINK):
+            # Parse the name of the sink
+            name = self._parse_id_var()
+
+            if not self._match(TokenType.FROM):
+                self.raise_error("Expected FROM in CREATE SINK statement")
+
+            if self._curr.token_type == TokenType.L_PAREN:
+                # Parse a subquery: (SELECT ...)
+                source_expr = self._parse_wrapped(self._parse_select)
+            else:
+                # Just a table identifier
+                source_expr = self._parse_id_var()
+
+            properties = None
+            if self._match(TokenType.WITH):
+                self._match(TokenType.L_PAREN)
+                properties = self._parse_properties()
+                self._match(TokenType.R_PAREN)
+
+            return self.expression(
+                exp.Create,
+                this=name,
+                kind="SINK",
+                expression=source_expr,
+                properties=properties,
+            )
+
+        return super()._parse_create()
+
+
+class OmlspDialect(Dialect):
+    parser = OmlspParser
+    tokenizer = OmlspTokenizer
 
 
 def get_name(expression: exp.Expression) -> str:
@@ -128,16 +178,11 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
 
 def extract_create_context(
     statement: exp.Create, properties_schema: dict
-) -> CreateTableContext | CreateLookupTableContext | InvalidContext:
+) -> CreateTableContext | CreateLookupTableContext | CreateSinkContext | InvalidContext:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
     is_temp = isinstance(
         get_properties_from_create(statement)[0], exp.TemporaryProperty
     )
-    table_dict = {
-        "type": "table",
-        "name": "",
-        "properties": {},
-    }
 
     if str(statement.kind) == "TABLE" and not is_temp:
         updated_create_statement, properties = parse_create_properties(
@@ -169,20 +214,31 @@ def extract_create_context(
             "this", updated_table_statement
         )  # overwrite modified table statement
 
-        table_dict["name"] = table_name
-        table_dict["properties"] = properties
-        table_dict["query"] = get_duckdb_sql(updated_create_statement)
-
-        # Keep to build dynamic macro call in engine
-        table_dict["dynamic_columns"] = dynamic_columns
-        table_dict["columns"] = columns
-
         return CreateLookupTableContext(
             name=table_name,
             properties=properties,
             query=get_duckdb_sql(updated_create_statement),
             dynamic_columns=dynamic_columns,
             columns=columns,
+        )
+    elif str(statement.kind) == "SINK":
+        updated_create_statement, properties = parse_create_properties(
+            statement, properties_schema
+        )
+        expr = updated_create_statement.expression
+
+        # TODO: support multiple upstreams merged/unioned
+        if isinstance(expr, exp.Select):
+            upstreams = [extract_select_context(expr)]
+        elif isinstance(expr, exp.Table):
+            upstreams = [expr.copy()] if expr else []
+        else:
+            return InvalidContext(reason=f"Unsupported upstream expression: {expr}")
+
+        return CreateSinkContext(
+            name=updated_create_statement.this,
+            upstreams=upstreams,
+            properties=properties,
         )
 
     # TODO: Process views, materialized views, sinks and functions here
@@ -287,7 +343,8 @@ def extract_command_context(
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> QueryContext | InvalidContext:
-    parsed_statement = parse_one(query)
+    parsed_statement = parse_one(query, dialect=OmlspDialect)
+
     if isinstance(parsed_statement, exp.Create):
         return extract_create_context(parsed_statement, properties_schema)
 

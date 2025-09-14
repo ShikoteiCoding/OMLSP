@@ -34,8 +34,10 @@ from context.context import (
     SelectContext,
     SetContext,
     SourceTaskContext,
+    CreateSinkContext,
 )
 from concurrent.futures import ThreadPoolExecutor
+
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),

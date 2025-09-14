@@ -16,7 +16,7 @@ CreateViewContext = namedtuple("CreateViewContext", ["name", "upstreams"])
 CreateMaterializedViewContext = namedtuple(
     "CreateMaterializedViewContext", ["name", "upstreams"]
 )
-CreateSinkContext = namedtuple("CreateSinkContext", ["name", "upstreams"])
+CreateSinkContext = namedtuple("CreateSinkContext", ["name", "upstreams", "properties"])
 
 SelectContext = namedtuple(
     "SelectContext", ["columns", "table", "alias", "where", "joins", "query"]
@@ -36,6 +36,7 @@ TaskContext = Union[
     CreateTableContext,
     CreateViewContext,
     CreateMaterializedViewContext,
+    CreateSinkContext,
 ]
 QueryContext = Union[EvalContext, TaskContext]
 

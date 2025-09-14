@@ -1,7 +1,7 @@
 from duckdb import DuckDBPyConnection
 from loguru import logger
-
-from context.context import CreateTableContext, CreateLookupTableContext
+from typing import Any
+from context.context import CreateTableContext, CreateLookupTableContext, SelectContext
 
 
 def init_metadata_store(con: DuckDBPyConnection) -> None:
@@ -121,3 +121,24 @@ def update_batch_id_in_table_metadata(
     WHERE table_name = '{table_name}';
     """
     con.execute(query)
+
+
+def get_table_schema(con: DuckDBPyConnection, table_name: str) -> list[dict[str, Any]]:
+    result = con.execute(f"DESCRIBE {table_name}").fetchall()
+    return [{"name": row[0], "type": row[1]} for row in result]
+
+
+def get_select_schema(con: DuckDBPyConnection, context: SelectContext):
+    result = con.execute(f"{context.query} LIMIT 0")
+    return [{"name": col[0], "type": col[1]} for col in result.description]
+
+
+# TODO: change method to resolve subquery
+def resolve_schema(con, relation: str | SelectContext):
+    if isinstance(relation, SelectContext):
+        sql = relation.query
+        schema = get_select_schema(con, relation)
+    else:
+        sql = f"SELECT * FROM {relation}"
+        schema = get_table_schema(con, relation)
+    return sql, schema

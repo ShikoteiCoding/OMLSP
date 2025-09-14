@@ -1,10 +1,22 @@
 import trio
 import trio_asyncio
 
+
 from commons.utils import Channel
-from context.context import TaskContext, SourceTaskContext, CreateLookupTableContext
-from engine.engine import build_source_executable, build_lookup_table_prehook
-from metadata import create_table
+from context.context import (
+    TaskContext,
+    SourceTaskContext,
+    CreateLookupTableContext,
+    CreateSinkContext,
+)
+from engine.engine import (
+    build_source_executable,
+    build_lookup_table_prehook,
+)
+from metadata import (
+    create_table
+)
+from sink.sink import run_kafka_sink
 from task.task import TaskId, Task
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -57,12 +69,24 @@ class TaskManager:
 
         task = Task(task_id=task_id, conn=self.conn)
 
-        if isinstance(ctx, CreateLookupTableContext):
+        # TODO: build according properties
+        if isinstance(ctx, CreateSinkContext):
+            props = ctx.properties
+            self._nursery.start_soon(
+                run_kafka_sink,
+                self.conn,
+                ctx.upstreams,
+                props["topic"],
+                props["server"],
+                ctx.name,
+            )
+
+        elif isinstance(ctx, CreateLookupTableContext):
             create_table(self.conn, ctx)
             build_lookup_table_prehook(ctx, self.conn)
             return
 
-        if isinstance(ctx, SourceTaskContext):  # register to scheduler
+        elif isinstance(ctx, SourceTaskContext):  # register to scheduler
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             create_table(self.conn, ctx)
