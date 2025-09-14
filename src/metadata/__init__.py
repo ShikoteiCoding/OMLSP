@@ -8,6 +8,7 @@ from metadata.db import (
     create_table,
     get_batch_id_from_table_metadata,
     update_batch_id_in_table_metadata,
+    resolve_schema,
 )
 
 
@@ -21,4 +22,5 @@ __all__ = [
     "create_table",
     "get_batch_id_from_table_metadata",
     "update_batch_id_in_table_metadata",
+    "resolve_schema",
 ]

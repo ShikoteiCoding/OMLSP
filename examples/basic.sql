@@ -115,3 +115,18 @@ SELECT ALT.symbol
 FROM all_tickers AS ALT 
 LEFT JOIN all_tickers AS ALT2 
     on ALT.symbol = ALT2.symbol;
+-- Test sink from table
+CREATE SINK all_tickers_sink FROM all_tickers
+WITH (
+    connector = 'kafka',
+    topic = 'tickers_topic',
+    server = 'localhost:9092',
+);
+
+-- Test sink from select
+CREATE SINK all_tickers_sink FROM (SELECT symbolName, buy FROM all_tickers)
+WITH (
+    connector = 'kafka',
+    topic = 'tickers_topic_2',
+    server = 'localhost:9092',
+);
