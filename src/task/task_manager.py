@@ -104,7 +104,6 @@ class TaskManager:
     async def _process(self):
         async for taskctx in self._taskctx_channel:
             await self._register_one_task(taskctx)
-        logger.warning("[TaskManager] - Finishing task registration")
 
     async def _run_task(self, task: Task):
         task._running = True
