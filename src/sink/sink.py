@@ -1,4 +1,4 @@
-import asyncio
+import trio
 import duckdb
 import json
 from confluent_kafka import Producer
@@ -64,9 +64,9 @@ async def run_kafka_sink(
     poll_interval: float = 1.0,
 ):
     # TODO: in future: support multiple upstreams merged/unioned
-    source = upstream[0]
+    relation = upstream[0]
 
-    sql, schema = resolve_schema(con, source)
+    sql, schema = resolve_schema(con, relation)
     column_names = [col["name"] for col in schema]
 
     sink = KafkaSink(server, topic)
@@ -74,7 +74,7 @@ async def run_kafka_sink(
 
     try:
         while True:
-            rows = con.execute(sql).fetchall()
+            rows = await trio.to_thread.run_sync(lambda: con.execute(sql).fetchall())
             new_messages = [
                 {column_names[i]: row[i] for i in range(len(column_names))}
                 for row in rows
@@ -86,7 +86,7 @@ async def run_kafka_sink(
                 )
                 sink.send(new_messages)
 
-            await asyncio.sleep(poll_interval)
+            await trio.sleep(poll_interval)
 
     except Exception as e:
         logger.error(f"[{task_id}] Sink failed: {e}")

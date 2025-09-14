@@ -133,11 +133,12 @@ def get_select_schema(con: DuckDBPyConnection, context: SelectContext):
     return [{"name": col[0], "type": col[1]} for col in result.description]
 
 
-def resolve_schema(con, source: str | SelectContext):
-    if isinstance(source, SelectContext):
-        sql = source.query
-        schema = get_select_schema(con, source)
+# TODO: change method to resolve subquery
+def resolve_schema(con, relation: str | SelectContext):
+    if isinstance(relation, SelectContext):
+        sql = relation.query
+        schema = get_select_schema(con, relation)
     else:
-        sql = f"SELECT * FROM {source}"
-        schema = get_table_schema(con, source)
+        sql = f"SELECT * FROM {relation}"
+        schema = get_table_schema(con, relation)
     return sql, schema
