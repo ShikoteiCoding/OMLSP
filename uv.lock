@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "platform_python_implementation != 'PyPy'",
@@ -467,7 +467,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = "==3.12.14" },
     { name = "apscheduler", specifier = ">=3.11.0" },
-    { name = "confluent-kafka", specifier = ">=2.8.0" },
+    { name = "confluent-kafka", specifier = ">=2.11.1" },
     { name = "duckdb", specifier = ">=1.3.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jq", specifier = ">=1.10.0" },

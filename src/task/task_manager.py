@@ -72,17 +72,17 @@ class TaskManager:
         # TODO: build according properties
         if isinstance(ctx, CreateSinkContext):
             props = ctx.properties
-            self._nursery.start_soon(
-                run_kafka_sink,
-                self.conn,
-                ctx.upstreams,
-                props["topic"],
-                props["server"],
-                ctx.name,
-            )
+            # self._nursery.start_soon(
+            #     run_kafka_sink,
+            #     self.conn,
+            #     ctx.upstreams,
+            #     props["topic"],
+            #     props["server"],
+            #     ctx.name,
+            # )
+            logger.info(f'[TaskManager] registered sink task "{task_id}"')
 
         elif isinstance(ctx, CreateLookupTableContext):
-            create_table(self.conn, ctx)
             build_lookup_table_prehook(ctx, self.conn)
             logger.info(f'[TaskManager] registered lookup task "{task_id}"')
             return

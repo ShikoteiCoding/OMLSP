@@ -4,8 +4,7 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import timezone
 
 from loguru import logger
-from sqlglot import parse, parse_one, exp
-from sqlglot import exp, parse
+from sqlglot import parse_one, exp
 from sqlglot.parser import Parser
 from sqlglot.tokens import Tokenizer, TokenType
 from sqlglot.dialects import Dialect
@@ -38,7 +37,7 @@ class OmlspParser(Parser):
             if not self._match(TokenType.FROM):
                 self.raise_error("Expected FROM in CREATE SINK statement")
 
-            if self._curr.token_type == TokenType.L_PAREN:
+            if self._curr and self._curr.token_type == TokenType.L_PAREN:
                 # Parse a subquery: (SELECT ...)
                 source_expr = self._parse_wrapped(self._parse_select)
             else:

@@ -131,7 +131,7 @@ def get_table_schema(con: DuckDBPyConnection, table_name: str) -> list[dict[str,
 
 def get_select_schema(con: DuckDBPyConnection, context: SelectContext):
     result = con.execute(f"{context.query} LIMIT 0")
-    return [{"name": col[0], "type": col[1]} for col in result.description]
+    return [{"name": col[0], "type": col[1]} for col in result.description or []]
 
 
 # TODO: change method to resolve subquery

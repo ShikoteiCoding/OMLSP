@@ -40,6 +40,7 @@ TaskContext = Union[
 EvaluableContext = Union[
     CreateLookupTableContext,
     CreateTableContext,
+    CreateSinkContext,
     SetContext,
     CommandContext,
     SelectContext,
@@ -49,6 +50,7 @@ EvaluableContext = Union[
 QueryContext = Union[
     CreateLookupTableContext,
     CreateTableContext,
+    CreateSinkContext,
     SetContext,
     CommandContext,
     SelectContext,
