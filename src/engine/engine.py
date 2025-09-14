@@ -18,12 +18,11 @@ from types import FunctionType
 from string import Template
 
 from inout import persist
-from metadata.metadata import (
+from metadata import (
     create_macro_definition,
     get_macro_definition_by_name,
     get_lookup_tables,
     get_tables,
-    create_table,
     get_batch_id_from_table_metadata,
     update_batch_id_in_table_metadata,
 )
@@ -44,7 +43,10 @@ from concurrent.futures import ThreadPoolExecutor
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
     "TEXT": pa.string(),
+    "TIMESTAMP_S": pa.timestamp("s"),
+    "TIMESTAMP_MS": pa.timestamp("ms"),
     "TIMESTAMP": pa.timestamp("us"),
+    "TIMESTAMP_NS": pa.timestamp("ns"),
     "DATETIME": pa.timestamp("us"),
     "FLOAT": pa.float32(),
     "DOUBLE": pa.float64(),
@@ -96,8 +98,8 @@ def build_scalar_udf(
         for chunks in zip(*(arr.chunks for arr in arrays)):
             py_chunks = [chunk.to_pylist() for chunk in chunks]
             chunk_rows = zip(*py_chunks)
-            chunk_results = process_elements(chunk_rows, properties, return_type_arrow)
-            results.extend(chunk_results.to_pylist())
+            chunk_results = process_elements(chunk_rows, properties)
+            results.extend(chunk_results)
         return pa.array(results, type=return_type_arrow)
 
     udf = eval(
@@ -108,7 +110,6 @@ def build_scalar_udf(
     def process_elements(
         rows: Iterable[tuple[Any, ...]],
         properties: dict[str, str],
-        return_type_arrow: pa.DataType,
     ) -> pa.Array:
         def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
             context = dict(zip(dynamic_columns, row))
@@ -130,7 +131,7 @@ def build_scalar_udf(
         with ThreadPoolExecutor() as executor:
             results = list(executor.map(_inner, rows))
 
-        return pa.array(results, type=return_type_arrow)
+        return results
 
     return {
         "name": kwargs.get("name"),
@@ -254,7 +255,11 @@ def build_lookup_table_prehook(
 
     # TODO: wrap SQL in function
     # register macro (to be injected in place of sql)
-    func_def = f"{func_name}({','.join(dynamic_columns)})"
+    __inner_tbl = "__inner_tbl"
+    __deriv_tbl = "__deriv_tbl"
+    func_def = (
+        f"{func_name}({','.join([f'{__inner_tbl}.{col}' for col in dynamic_columns])})"
+    )
     macro_def = f"{macro_name}(table_name, {','.join(dynamic_columns)})"
     output_cols = ", ".join(
         [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
@@ -268,36 +273,13 @@ def build_lookup_table_prehook(
         FROM (
             SELECT
                 {func_def} AS struct
-            FROM query_table(table_name)
-        );
+            FROM query_table(table_name) AS {__inner_tbl}
+        ) AS {__deriv_tbl};
     """)
     logger.debug(f"registered macro: {macro_name}")
     create_macro_definition(connection, macro_name, dynamic_columns)
 
     return macro_name
-
-
-async def start_background_runnners_or_register(
-    table_context: CreateTableContext | CreateLookupTableContext,
-    connection: DuckDBPyConnection,
-):
-    task: asyncio.Task | None = None
-
-    name = table_context.name
-    create_table(connection, table_context)
-
-    # register table, temp tables (TODO: views / materialized views)
-    if isinstance(table_context, CreateTableContext):
-        task = asyncio.create_task(
-            await build_one_runner(table_context, connection), name=f"{name}_runner"
-        )
-
-    # handle lookup table
-    if isinstance(table_context, CreateLookupTableContext):
-        build_lookup_table_prehook(table_context, connection)
-
-    if task:
-        _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
 
 
 def build_substitute_macro_definition(
@@ -311,9 +293,7 @@ def build_substitute_macro_definition(
     scalar_func_fields = ",".join(
         [f"{from_table_or_alias}.{field}" for field in fields]
     )
-    macro_definition = f"""
-    {macro_name}("{from_table}", {scalar_func_fields})
-    """
+    macro_definition = f'{macro_name}("{from_table}", {scalar_func_fields})'
     if join_table_or_alias == join_table:
         # TODO: fix bug, if table_name == alias
         # JOIN ohlc AS ohlc
@@ -330,21 +310,24 @@ def pre_hook_select_statements(
     """Substitutes select statement query with lookup references to macro references."""
     original_query = ctx.query
     join_tables = ctx.joins
+    lookup_tables = get_lookup_tables(con)
 
-    # no join query
-    if len(join_tables) == 0:
-        return original_query
     # join query
     substitute_mapping = dict(zip(tables, tables))
     from_table = ctx.table
     from_table_or_alias = ctx.alias
 
+    # for table in join and in lookup,
+    # build the placeholder template mapping
     for join_table, join_table_or_alias in join_tables.items():
-        substitute_mapping[join_table] = build_substitute_macro_definition(
-            con, join_table, from_table, from_table_or_alias, join_table_or_alias
-        )
+        if join_table in lookup_tables:
+            substitute_mapping[join_table] = build_substitute_macro_definition(
+                con, join_table, from_table, from_table_or_alias, join_table_or_alias
+            )
+        else:
+            substitute_mapping[join_table] = join_table
 
-    # Substritute lookup table name with query
+    # Substritute lookup table placeholder with template
     query = Template(original_query).substitute(substitute_mapping)
 
     logger.debug(f"New overwritten select statement: {query}")
@@ -374,7 +357,6 @@ async def execute_eval_ctx(
 
         if table_name in lookup_tables:
             msg = f"{table_name} is a lookup table, you cannot use it in FROM."
-            logger.error(msg)
             return msg
 
         duckdb_sql = pre_hook_select_statements(con, context, tables)
@@ -382,12 +364,14 @@ async def execute_eval_ctx(
     elif isinstance(context, CommandContext):
         result = con.sql(context.query)
         return str(pl.DataFrame(result))
-    else:
-        try:
-            con.sql(context.query)
-        except Exception as e:
-            return str(e)  # TODO: handle duckdb configs and omlsp custom configs
-        return "SET"  # psql syntax
+    elif isinstance(context, SetContext):
+        con.sql(context.query)
+        return "SET"
+
+    try:
+        con.sql(context.query)
+    except Exception as e:
+        return str(e)  # TODO: handle duckdb configs and omlsp custom configs
 
 
 if __name__ == "__main__":

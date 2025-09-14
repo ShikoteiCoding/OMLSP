@@ -1,4 +1,4 @@
-from .metadata import (
+from metadata.db import (
     init_metadata_store,
     insert_table_metadata,
     get_macro_definition_by_name,

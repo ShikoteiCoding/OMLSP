@@ -1,5 +1,6 @@
 import trio
 
+
 from commons.utils import Channel
 from context.context import (
     EvalContext,
@@ -43,12 +44,12 @@ class ContextManager:
             await trio.sleep_forever()
         logger.info("[ContextManager] Stopped.")
 
-    def _parse(self, sql: str) -> QueryContext | InvalidContext:
+    def _sql_to_ctx(self, sql: str) -> QueryContext | InvalidContext:
         return extract_one_query_context(sql, self.properties_schema)
 
     async def _process(self):
         async for client_id, sql in self._sql_channel:
-            ctx = self._parse(sql)
+            ctx = self._sql_to_ctx(sql)
             # TODO: rework this for clearer workflow
             # Ideally channel should be consumer agnostic
             # It is to be avoided to multi type channels
