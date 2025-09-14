@@ -1,54 +1,67 @@
 import trio
 
 from commons.utils import Channel
-from context.context_manager import ContextManager
-from context.context import EvalContext, TaskContext, InvalidContext
+from context.context import (
+    EvaluableContext,
+    SelectContext,
+    InvalidContext,
+    CreateLookupTableContext,
+    CreateTableContext,
+    SetContext,
+    CommandContext,
+    TaskContext,
+)
+from engine.engine import duckdb_to_pl, pre_hook_select_statements
 from server import ClientManager
-from metadata import init_metadata_store
+from metadata import init_metadata_store, create_table, get_lookup_tables, get_tables
 from sql.file.reader import iter_sql_statements
+from sql.sqlparser.parser import extract_one_query_context
 from task import TaskManager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
+from typing import Any
+
+ClientId = str
 
 
 class Runner:
+    _sql_channel = Channel[tuple[str, str]](10)
+    _client_channel = Channel[tuple[str, str]](10)
+    _taskctx_channel = Channel[TaskContext](10)
+    _nursery = None
+    _running = False
+    _internal_ref = "__runner"
+
     def __init__(
         self,
         conn: DuckDBPyConnection,
-        context_manager: ContextManager,
+        properties_schema: dict[str, Any],
         task_manager: TaskManager,
         client_manager: ClientManager,
     ):
         self.conn = conn
-        self.context_manager = context_manager
+        self.properties_schema = properties_schema
         self.task_manager = task_manager
         self.client_manager = client_manager
 
-        self._sql_channel = Channel[tuple[str, str]](10)
-        self._evalctx_channel = Channel[tuple[str, EvalContext | InvalidContext]](10)
-        self._taskctx_channel = Channel[TaskContext](10)
-
-        self._nursery = None
-        self._running = False
-
     async def build(self):
         # SQL channel
-        await self.context_manager.add_sql_channel(self._sql_channel)
         await self.client_manager.add_sql_channel(self._sql_channel)
 
-        # Eval Ctx channel (to execute)
-        await self.context_manager.add_evalctx_channel(self._evalctx_channel)
-        await self.client_manager.add_evalctx_channel(self._evalctx_channel)
+        # Str channel (already executed)
+        await self.client_manager.add_response_channel(self._client_channel)
 
         # Task Ctx channel (to schedule)
-        await self.context_manager.add_taskctx_channel(self._taskctx_channel)
         await self.task_manager.add_taskctx_channel(self._taskctx_channel)
 
     async def submit(self, sql: str) -> None:
+        """
+        Convenient method for sql submit. Syntactic sugar.
+        """
         # main is main app client_id
-        await self._sql_channel.send(("main", sql))
+        await self._sql_channel.send((self._internal_ref, sql))
 
     async def run(self):
         init_metadata_store(self.conn)
@@ -56,15 +69,60 @@ class Runner:
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
 
-            nursery.start_soon(self.context_manager.run)
+            # nursery.start_soon(self.context_manager.run)
             nursery.start_soon(self.task_manager.run)
             nursery.start_soon(self.client_manager.run)
 
+            nursery.start_soon(self._process)
             nursery.start_soon(self._watch_for_shutdown)
             logger.info("[Runner] Started.")
             await trio.sleep_forever()
 
         logger.info("[Runner] Stopped.")
+
+    async def _process(self):
+        async for client_id, sql in self._sql_channel:
+            ctx = extract_one_query_context(sql, self.properties_schema)
+
+            # dispatch to clients
+            if isinstance(ctx, EvaluableContext):
+                result = self._eval_ctx(client_id, ctx)
+
+            elif isinstance(ctx, InvalidContext):
+                result = str(ctx.reason)
+
+            if client_id != self._internal_ref:
+                await self._client_channel.send((client_id, result))
+
+            # dispatch to task manager
+            if isinstance(ctx, TaskContext):
+                await self._taskctx_channel.send(ctx)
+
+    def _eval_ctx(self, client_id: ClientId, ctx: EvaluableContext):
+        if isinstance(ctx, (CreateTableContext, CreateLookupTableContext)):
+            return create_table(self.conn, ctx)
+
+        if isinstance(ctx, CommandContext):
+            return str(duckdb_to_pl(self.conn, ctx.query))
+
+        if isinstance(ctx, SetContext):
+            self.conn.sql(ctx.query)
+            return "SET"
+
+        # TODO: find more elegant way to avoid Select from file submit ?
+        if isinstance(ctx, SelectContext) and client_id != self._internal_ref:
+            table_name = ctx.table
+            lookup_tables = get_lookup_tables(self.conn)
+            tables = get_tables(self.conn)
+
+            if table_name in lookup_tables:
+                msg = f"{table_name} is a lookup table, you cannot use it in FROM."
+                return msg
+
+            duckdb_sql = pre_hook_select_statements(self.conn, ctx, tables)
+            return str(duckdb_to_pl(self.conn, duckdb_sql))
+
+        return ""
 
     async def _watch_for_shutdown(self):
         try:
@@ -83,11 +141,11 @@ if __name__ == "__main__":
         properties_schema = json.loads(fo.read().decode("utf-8"))
     conn: DuckDBPyConnection = connect(database=":memory:")
     scheduler = AsyncIOScheduler()
-    context_manager = ContextManager(properties_schema)
+    # context_manager = ContextManager(properties_schema)
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
     executors = {}
-    runner = Runner(conn, context_manager, task_manager, client_manager)
+    runner = Runner(conn, properties_schema, task_manager, client_manager)
 
     async def main():
         await runner.build()
