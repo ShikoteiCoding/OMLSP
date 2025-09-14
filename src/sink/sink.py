@@ -5,8 +5,8 @@ from confluent_kafka import Producer
 from context.context import (
     SelectContext,
 )
-from metadata.metadata import (
-    resolve_schema,
+from metadata import (
+    resolve_schema
 )
 from loguru import logger
 from typing import Any
