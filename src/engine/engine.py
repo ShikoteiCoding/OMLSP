@@ -1,15 +1,16 @@
 import asyncio
 import polars as pl
-import time
 import pyarrow as pa
+import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.job import Job
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.job import Job
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from datetime import datetime, timezone
+from functools import partial
 from loguru import logger
 from typing import Any, Coroutine, Iterable
 from types import FunctionType
@@ -22,25 +23,28 @@ from metadata import (
     get_macro_definition_by_name,
     get_lookup_tables,
     get_tables,
-    create_table,
     get_batch_id_from_table_metadata,
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
-from parser import (
+from context.context import (
+    CommandContext,
     CreateTableContext,
     CreateLookupTableContext,
     SelectContext,
     SetContext,
-    CommandContext,
+    SourceTaskContext,
 )
-from sink import stream_to_kafka
 from concurrent.futures import ThreadPoolExecutor
+
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
     "TEXT": pa.string(),
+    "TIMESTAMP_S": pa.timestamp("s"),
+    "TIMESTAMP_MS": pa.timestamp("ms"),
     "TIMESTAMP": pa.timestamp("us"),
+    "TIMESTAMP_NS": pa.timestamp("ns"),
     "DATETIME": pa.timestamp("us"),
     "FLOAT": pa.float32(),
     "DOUBLE": pa.float64(),
@@ -73,7 +77,7 @@ def build_lookup_properties(
 def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
-    return_type: DuckDBPyType = VARCHAR,
+    return_type: DuckDBPyType,
     **kwargs,
 ) -> dict[str, Any]:
     arity = len(dynamic_columns)
@@ -84,96 +88,26 @@ def build_scalar_udf(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
     return_type_arrow = pa.struct(child_types)
-    if arity == 1:
 
-        def udf(a1: pa.ChunkedArray) -> pa.Array:
-            results = []
-            for chunk1 in a1.chunks:
-                chunk_rows = [(value,) for value in chunk1.to_pylist()]
-                chunk_results = process_elements(
-                    chunk_rows, properties, return_type_arrow
-                )
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 2:
+    arg_names = [f"a{i}" for i in range(1, arity + 1)]
 
-        def udf(a1: pa.ChunkedArray, a2: pa.ChunkedArray) -> pa.Array:
-            results = []
-            for chunk1, chunk2 in zip(a1.chunks, a2.chunks):
-                chunk_rows = zip(chunk1.to_pylist(), chunk2.to_pylist())
-                chunk_results = process_elements(
-                    chunk_rows, properties, return_type_arrow
-                )
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 3:
+    def core_udf(*arrays: pa.ChunkedArray) -> pa.Array:
+        results = []
+        for chunks in zip(*(arr.chunks for arr in arrays)):
+            py_chunks = [chunk.to_pylist() for chunk in chunks]
+            chunk_rows = zip(*py_chunks)
+            chunk_results = process_elements(chunk_rows, properties)
+            results.extend(chunk_results)
+        return pa.array(results, type=return_type_arrow)
 
-        def udf(
-            a1: pa.ChunkedArray, a2: pa.ChunkedArray, a3: pa.ChunkedArray
-        ) -> pa.Array:
-            results = []
-            for chunk1, chunk2, chunk3 in zip(a1.chunks, a2.chunks, a3.chunks):
-                chunk_rows = zip(
-                    chunk1.to_pylist(), chunk2.to_pylist(), chunk3.to_pylist()
-                )
-                chunk_results = process_elements(
-                    chunk_rows, properties, return_type_arrow
-                )
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 4:
-
-        def udf(
-            a1: pa.ChunkedArray,
-            a2: pa.ChunkedArray,
-            a3: pa.ChunkedArray,
-            a4: pa.ChunkedArray,
-        ) -> pa.Array:
-            results = []
-            for chunk1, chunk2, chunk3, chunk4 in zip(
-                a1.chunks, a2.chunks, a3.chunks, a4.chunks
-            ):
-                chunk_rows = zip(
-                    chunk1.to_pylist(),
-                    chunk2.to_pylist(),
-                    chunk3.to_pylist(),
-                    chunk4.to_pylist(),
-                )
-                chunk_results = process_elements(
-                    chunk_rows, properties, return_type_arrow
-                )
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
-    elif arity == 5:
-
-        def udf(
-            a1: pa.ChunkedArray,
-            a2: pa.ChunkedArray,
-            a3: pa.ChunkedArray,
-            a4: pa.ChunkedArray,
-            a5: pa.ChunkedArray,
-        ) -> pa.Array:
-            results = []
-            for chunk1, chunk2, chunk3, chunk4, chunk5 in zip(
-                a1.chunks, a2.chunks, a3.chunks, a4.chunks, a5.chunks
-            ):
-                chunk_rows = zip(
-                    chunk1.to_pylist(),
-                    chunk2.to_pylist(),
-                    chunk3.to_pylist(),
-                    chunk4.to_pylist(),
-                    chunk5.to_pylist(),
-                )
-                chunk_results = process_elements(
-                    chunk_rows, properties, return_type_arrow
-                )
-                results.extend(chunk_results.to_pylist())
-            return pa.array(results, type=return_type_arrow)
+    udf = eval(
+        f"lambda {', '.join(arg_names)}: core_udf({', '.join(arg_names)})",
+        {"core_udf": core_udf},
+    )
 
     def process_elements(
         rows: Iterable[tuple[Any, ...]],
         properties: dict[str, str],
-        return_type_arrow: pa.DataType,
     ) -> pa.Array:
         def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
             context = dict(zip(dynamic_columns, row))
@@ -195,7 +129,7 @@ def build_scalar_udf(
         with ThreadPoolExecutor() as executor:
             results = list(executor.map(_inner, rows))
 
-        return pa.array(results, type=return_type_arrow)
+        return results
 
     return {
         "name": kwargs.get("name"),
@@ -208,17 +142,20 @@ def build_scalar_udf(
     }
 
 
-async def processor(
+async def source_executable(
     table_name: str,
     start_time: datetime,
     http_requester: FunctionType,
+    task_id: str,
     con: DuckDBPyConnection,
-) -> None:
+    *args,
+    **kwargs,
+) -> pl.DataFrame:
     # TODO: no provided api execution_time
     # using trigger.get_next_fire_time is costly (see code)
     execution_time = start_time
     batch_id = get_batch_id_from_table_metadata(con, table_name)
-    logger.info(f"[{table_name}{{{batch_id}}}] @ {execution_time}")
+    logger.info(f"[{table_name}{{{batch_id}}}] / @ {execution_time}")
 
     records = await http_requester()
     logger.debug(
@@ -230,8 +167,22 @@ async def processor(
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
         await persist(df, batch_id, epoch, table_name, con)
+    else:
+        df = pl.DataFrame()
 
     update_batch_id_in_table_metadata(con, table_name, batch_id + 1)
+    return df
+
+
+def build_source_executable(ctx: SourceTaskContext):
+    start_time = datetime.now(timezone.utc)
+    properties = ctx.properties
+    return partial(
+        source_executable,
+        table_name=ctx.name,
+        start_time=start_time,
+        http_requester=build_http_requester(properties, is_async=True),
+    )
 
 
 async def execute(scheduler: AsyncIOScheduler, job: Job):
@@ -243,7 +194,7 @@ async def execute(scheduler: AsyncIOScheduler, job: Job):
         await asyncio.sleep(3600)
 
 
-def build_one_runner(
+async def build_one_runner(
     create_table_context: CreateTableContext, con: DuckDBPyConnection
 ) -> Coroutine[Any, Any, None]:
     properties = create_table_context.properties
@@ -256,7 +207,7 @@ def build_one_runner(
     http_requester = build_http_requester(properties)
 
     job = scheduler.add_job(
-        processor,
+        source_executable,
         trigger,
         name=table_name,
         kwargs={
@@ -266,11 +217,10 @@ def build_one_runner(
             "con": con,
         },
     )
-
     return execute(scheduler, job)
 
 
-def register_lookup_table_executable(
+def build_lookup_table_prehook(
     create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
     properties = create_table_context.properties
@@ -282,7 +232,6 @@ def register_lookup_table_executable(
     macro_name = f"{table_name}_macro"
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # typed struct from sql statement
-
     udf_params = build_scalar_udf(
         properties, dynamic_columns, return_type, name=func_name
     )
@@ -292,7 +241,11 @@ def register_lookup_table_executable(
 
     # TODO: wrap SQL in function
     # register macro (to be injected in place of sql)
-    func_def = f"{func_name}({','.join(dynamic_columns)})"
+    __inner_tbl = "__inner_tbl"
+    __deriv_tbl = "__deriv_tbl"
+    func_def = (
+        f"{func_name}({','.join([f'{__inner_tbl}.{col}' for col in dynamic_columns])})"
+    )
     macro_def = f"{macro_name}(table_name, {','.join(dynamic_columns)})"
     output_cols = ", ".join(
         [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
@@ -306,41 +259,13 @@ def register_lookup_table_executable(
         FROM (
             SELECT
                 {func_def} AS struct
-            FROM query_table(table_name)
-        );
+            FROM query_table(table_name) AS {__inner_tbl}
+        ) AS {__deriv_tbl};
     """)
     logger.debug(f"registered macro: {macro_name}")
     create_macro_definition(connection, macro_name, dynamic_columns)
 
     return macro_name
-
-
-async def start_background_runnners_or_register(
-    table_context: CreateTableContext | CreateLookupTableContext,
-    connection: DuckDBPyConnection,
-):
-    task: asyncio.Task | None = None
-    task: asyncio.Task | None = None
-
-    name = table_context.name
-    create_table(connection, table_context)
-
-    # register table, temp tables (TODO: views / materialized views)
-    if isinstance(table_context, CreateTableContext):
-        task = asyncio.create_task(
-            build_one_runner(table_context, connection), name=f"{name}_runner"
-        )
-        _ = asyncio.create_task(
-            stream_to_kafka(connection, table_context.name, "my-topic"),
-            name=f"{name}_streamer",
-        )
-
-    # handle lookup table
-    if isinstance(table_context, CreateLookupTableContext):
-        register_lookup_table_executable(table_context, connection)
-
-    if task:
-        _, _ = await asyncio.wait([task], return_when=asyncio.ALL_COMPLETED)
 
 
 def build_substitute_macro_definition(
@@ -354,9 +279,7 @@ def build_substitute_macro_definition(
     scalar_func_fields = ",".join(
         [f"{from_table_or_alias}.{field}" for field in fields]
     )
-    macro_definition = f"""
-    {macro_name}("{from_table}", {scalar_func_fields})
-    """
+    macro_definition = f'{macro_name}("{from_table}", {scalar_func_fields})'
     if join_table_or_alias == join_table:
         # TODO: fix bug, if table_name == alias
         # JOIN ohlc AS ohlc
@@ -365,30 +288,32 @@ def build_substitute_macro_definition(
     return macro_definition
 
 
-def select_sql_substitution(
+def pre_hook_select_statements(
     con: DuckDBPyConnection,
-    select_query: SelectContext,
+    ctx: SelectContext,
     tables: list[str],
 ) -> str:
     """Substitutes select statement query with lookup references to macro references."""
-    original_query = select_query.query
-    join_tables = select_query.joins
-
-    # no join query
-    if len(join_tables) == 0:
-        return original_query
+    original_query = ctx.query
+    join_tables = ctx.joins
+    lookup_tables = get_lookup_tables(con)
 
     # join query
     substitute_mapping = dict(zip(tables, tables))
-    from_table = select_query.table
-    from_table_or_alias = select_query.alias
+    from_table = ctx.table
+    from_table_or_alias = ctx.alias
 
+    # for table in join and in lookup,
+    # build the placeholder template mapping
     for join_table, join_table_or_alias in join_tables.items():
-        substitute_mapping[join_table] = build_substitute_macro_definition(
-            con, join_table, from_table, from_table_or_alias, join_table_or_alias
-        )
+        if join_table in lookup_tables:
+            substitute_mapping[join_table] = build_substitute_macro_definition(
+                con, join_table, from_table, from_table_or_alias, join_table_or_alias
+            )
+        else:
+            substitute_mapping[join_table] = join_table
 
-    # Substritute lookup table name with query
+    # Substritute lookup table placeholder with template
     query = Template(original_query).substitute(substitute_mapping)
 
     logger.debug(f"New overwritten select statement: {query}")
@@ -408,9 +333,9 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
     return pl.DataFrame()
 
 
-def handle_select_or_set(
+async def execute_eval_ctx(
     con: DuckDBPyConnection, context: SelectContext | SetContext | CommandContext
-) -> str | pl.DataFrame:
+) -> str:
     if isinstance(context, SelectContext):
         table_name = context.table
         lookup_tables = get_lookup_tables(con)
@@ -418,20 +343,21 @@ def handle_select_or_set(
 
         if table_name in lookup_tables:
             msg = f"{table_name} is a lookup table, you cannot use it in FROM."
-            logger.error(msg)
             return msg
 
-        duckdb_sql = select_sql_substitution(con, context, tables)
-        return duckdb_to_pl(con, duckdb_sql)
+        duckdb_sql = pre_hook_select_statements(con, context, tables)
+        return str(duckdb_to_pl(con, duckdb_sql))
     elif isinstance(context, CommandContext):
         result = con.sql(context.query)
-        return result.to_df()
-    else:
-        try:
-            con.sql(context.query)
-        except Exception as e:
-            return str(e)  # TODO: handle duckdb configs and omlsp custom configs
-        return "SET"  # psql syntax
+        return str(pl.DataFrame(result))
+    elif isinstance(context, SetContext):
+        con.sql(context.query)
+        return "SET"
+
+    try:
+        con.sql(context.query)
+    except Exception as e:
+        return str(e)  # TODO: handle duckdb configs and omlsp custom configs
 
 
 if __name__ == "__main__":

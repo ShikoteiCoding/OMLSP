@@ -1,7 +1,7 @@
 from duckdb import DuckDBPyConnection
 from loguru import logger
-
-from parser import CreateTableContext, CreateLookupTableContext
+from typing import Any
+from context.context import CreateTableContext, CreateLookupTableContext, SelectContext
 
 
 def init_metadata_store(con: DuckDBPyConnection) -> None:
@@ -55,7 +55,9 @@ def get_macro_definition_by_name(
     """
     res = con.sql(query).fetchall()
 
-    assert len(res) > 0
+    assert len(res) > 0, (
+        f"no result for macro definition {macro_name}, has it been registered ?"
+    )
 
     return res[0]
 
@@ -93,11 +95,12 @@ def get_tables(con: DuckDBPyConnection) -> list:
 def create_table(
     con: DuckDBPyConnection,
     context: CreateTableContext | CreateLookupTableContext,
-) -> None:
+) -> str:
     query = context.query
     con.execute(query)
     insert_table_metadata(con, context)
     logger.debug(f"Registered table: {context.name}")
+    return "CREATE TABLE"
 
 
 def get_batch_id_from_table_metadata(con: DuckDBPyConnection, table_name: str) -> int:
@@ -119,3 +122,24 @@ def update_batch_id_in_table_metadata(
     WHERE table_name = '{table_name}';
     """
     con.execute(query)
+
+
+def get_table_schema(con: DuckDBPyConnection, table_name: str) -> list[dict[str, Any]]:
+    result = con.execute(f"DESCRIBE {table_name}").fetchall()
+    return [{"name": row[0], "type": row[1]} for row in result]
+
+
+def get_select_schema(con: DuckDBPyConnection, context: SelectContext):
+    result = con.execute(f"{context.query} LIMIT 0")
+    return [{"name": col[0], "type": col[1]} for col in result.description or []]
+
+
+# TODO: change method to resolve subquery
+def resolve_schema(con, relation: str | SelectContext):
+    if isinstance(relation, SelectContext):
+        sql = relation.query
+        schema = get_select_schema(con, relation)
+    else:
+        sql = f"SELECT * FROM {relation}"
+        schema = get_table_schema(con, relation)
+    return sql, schema

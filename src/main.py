@@ -1,57 +1,42 @@
 import argparse
-import asyncio
 import json
+import trio
+import polars as pl
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
-from parser import (
-    extract_query_contexts,
-    CreateLookupTableContext,
-    CreateTableContext,
-    SelectContext,
-)
-from engine import start_background_runnners_or_register
-from entrypoint import start_server
-from metadata import init_metadata_store
 
-from loguru import logger
+from server import ClientManager
+from task import TaskManager
+from runner import Runner
+from sql.file import iter_sql_statements
+
+
+PROPERTIES_SCHEMA = json.loads(
+    open(Path("src/properties.schema.json"), "rb").read().decode("utf-8")
+)
 
 
 async def main():
-    # TODO: decipher entrypoint
+    pl.Config.set_fmt_str_lengths(900)  # TODO: expose as configuration available in SET
     parser = argparse.ArgumentParser("Run a SQL file")
     parser.add_argument("file")
-
     args = parser.parse_args()
     sql_filepath = Path(args.file)
-    prop_schema_filepath = Path("src/properties.schema.json")
-    sql_content: str
 
-    # TODO: persist on disk
-    con: DuckDBPyConnection = connect(database=":memory:")
-    init_metadata_store(con)
+    conn: DuckDBPyConnection = connect(database=":memory:")
+    scheduler = AsyncIOScheduler()
+    task_manager = TaskManager(conn, scheduler)
+    client_manager = ClientManager(conn)
+    runner = Runner(conn, PROPERTIES_SCHEMA, task_manager, client_manager)
 
-    with open(sql_filepath, "rb") as fo:
-        sql_content = fo.read().decode("utf-8")
-    with open(prop_schema_filepath, "rb") as fo:
-        properties_schema = json.loads(fo.read().decode("utf-8"))
-
-    contexts = extract_query_contexts(sql_content, properties_schema)
-
-    async with asyncio.TaskGroup() as tg:
-        for query_context in contexts:
-            if isinstance(
-                query_context, (CreateTableContext, CreateLookupTableContext)
-            ):
-                tg.create_task(
-                    start_background_runnners_or_register(query_context, con)
-                )
-
-            if isinstance(query_context, SelectContext):
-                logger.warning("Ignoring select statement at startup")
-
-        tg.create_task(start_server(con, properties_schema))
+    await runner.build()
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(runner.run)
+        for sql in iter_sql_statements(sql_filepath):
+            await runner.submit(sql)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    trio.run(main)

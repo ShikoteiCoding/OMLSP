@@ -1,30 +1,69 @@
 import jsonschema
 
-from collections import namedtuple
+from apscheduler.triggers.cron import CronTrigger
+from datetime import timezone
+
 from loguru import logger
-from sqlglot import parse, exp
+from sqlglot import parse_one, exp
+from sqlglot.parser import Parser
+from sqlglot.tokens import Tokenizer, TokenType
+from sqlglot.dialects import Dialect
 
-VALID_STATEMENTS = (exp.Create, exp.Select, exp.Set, exp.Command)
+from context.context import (
+    CreateTableContext,
+    CreateLookupTableContext,
+    CreateSinkContext,
+    CommandContext,
+    SelectContext,
+    SetContext,
+    InvalidContext,
+    QueryContext,
+)
 
-CreateTableContext = namedtuple("CreateTableContext", ["name", "properties", "query"])
-CreateLookupTableContext = namedtuple(
-    "CreateLookupTableContext",
-    ["name", "properties", "query", "dynamic_columns", "columns"],
-)
-SelectContext = namedtuple(
-    "SelectContext", ["columns", "table", "alias", "where", "joins", "query"]
-)
-SetContext = namedtuple("SetContext", ["query"])
-CommandContext = namedtuple("CommandContext", ["query"])
-InvalidContext = namedtuple("InvalidContext", ["reason"])
 
-QueryContext = (
-    CreateTableContext
-    | CreateLookupTableContext
-    | SelectContext
-    | SetContext
-    | CommandContext
-)
+class OmlspTokenizer(Tokenizer):
+    KEYWORDS = {
+        **Tokenizer.KEYWORDS,
+        "SINK": TokenType.SINK,
+    }
+
+
+class OmlspParser(Parser):
+    def _parse_create(self):
+        if self._match(TokenType.SINK):
+            # Parse the name of the sink
+            name = self._parse_id_var()
+
+            if not self._match(TokenType.FROM):
+                self.raise_error("Expected FROM in CREATE SINK statement")
+
+            if self._curr and self._curr.token_type == TokenType.L_PAREN:
+                # Parse a subquery: (SELECT ...)
+                source_expr = self._parse_wrapped(self._parse_select)
+            else:
+                # Just a table identifier
+                source_expr = self._parse_id_var()
+
+            properties = None
+            if self._match(TokenType.WITH):
+                self._match(TokenType.L_PAREN)
+                properties = self._parse_properties()
+                self._match(TokenType.R_PAREN)
+
+            return self.expression(
+                exp.Create,
+                this=name,
+                kind="SINK",
+                expression=source_expr,
+                properties=properties,
+            )
+
+        return super()._parse_create()
+
+
+class OmlspDialect(Dialect):
+    parser = OmlspParser
+    tokenizer = OmlspTokenizer
 
 
 def get_name(expression: exp.Expression) -> str:
@@ -125,10 +164,6 @@ def parse_create_properties(
 
 
 def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set | exp.Command) -> str:
-    assert isinstance(statement, VALID_STATEMENTS), (
-        f"Expected {VALID_STATEMENTS} not {type(statement)}"
-    )
-
     statement = statement.copy()
     if statement.args.get("properties"):
         del statement.args["properties"]
@@ -142,16 +177,11 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
 
 def extract_create_context(
     statement: exp.Create, properties_schema: dict
-) -> CreateTableContext | CreateLookupTableContext | None:
+) -> CreateTableContext | CreateLookupTableContext | CreateSinkContext | InvalidContext:
     # TODO: assert only tables here and make this split by kind of create: table, function, etc...
     is_temp = isinstance(
         get_properties_from_create(statement)[0], exp.TemporaryProperty
     )
-    table_dict = {
-        "type": "table",
-        "name": "",
-        "properties": {},
-    }
 
     if str(statement.kind) == "TABLE" and not is_temp:
         updated_create_statement, properties = parse_create_properties(
@@ -163,11 +193,12 @@ def extract_create_context(
         updated_create_statement.set(
             "this", updated_table_statement
         )  # overwrite modified table statement
-
+        cron_expr = str(properties.pop("schedule"))
         return CreateTableContext(
             name=table_name,
             properties=properties,
             query=get_duckdb_sql(updated_create_statement),
+            trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
         )
 
     # process separately to handle the udft logic here
@@ -182,14 +213,6 @@ def extract_create_context(
             "this", updated_table_statement
         )  # overwrite modified table statement
 
-        table_dict["name"] = table_name
-        table_dict["properties"] = properties
-        table_dict["query"] = get_duckdb_sql(updated_create_statement)
-
-        # Keep to build dynamic macro call in engine
-        table_dict["dynamic_columns"] = dynamic_columns
-        table_dict["columns"] = columns
-
         return CreateLookupTableContext(
             name=table_name,
             properties=properties,
@@ -197,9 +220,28 @@ def extract_create_context(
             dynamic_columns=dynamic_columns,
             columns=columns,
         )
+    elif str(statement.kind) == "SINK":
+        updated_create_statement, properties = parse_create_properties(
+            statement, properties_schema
+        )
+        expr = updated_create_statement.expression
+
+        # TODO: support multiple upstreams merged/unioned
+        if isinstance(expr, exp.Select):
+            upstreams = [extract_select_context(expr)]
+        elif isinstance(expr, exp.Table):
+            upstreams = [expr.copy()] if expr else []
+        else:
+            return InvalidContext(reason=f"Unsupported upstream expression: {expr}")
+
+        return CreateSinkContext(
+            name=updated_create_statement.this,
+            upstreams=upstreams,
+            properties=properties,
+        )
 
     # TODO: Process views, materialized views, sinks and functions here
-    return None
+    return InvalidContext(reason=f"Not known statement kind: {statement.kind}")
 
 
 def get_table_name_placeholder(table_name: str):
@@ -209,6 +251,9 @@ def get_table_name_placeholder(table_name: str):
 def parse_select(
     statement: exp.Select,
 ) -> tuple[exp.Select, list[str], str, str, str, dict[str, str]]:
+    """
+    Select parsing function. Extract necessary attributes of the query and expose.
+    """
     columns = []
     table_name = ""
     table_alias = ""
@@ -231,13 +276,16 @@ def parse_select(
     if where_clause:
         where = where_clause.sql(dialect=None)
 
-    # TODO: change find all with more robust ?
+    # Deal with lookup tables
     for table in statement.find_all(exp.Table):
         if isinstance(table.parent, exp.Join):
             join_tables[str(table.name)] = str(table.alias_or_name)
-            table.set(
-                "this", exp.to_identifier(get_table_name_placeholder(table.name), False)
-            )
+
+            if table.name:  # filter away scalar functions / macros
+                table.set(
+                    "this",
+                    exp.to_identifier(get_table_name_placeholder(table.name), False),
+                )
 
     return statement, columns, table_name, table_alias, where, join_tables
 
@@ -245,10 +293,6 @@ def parse_select(
 def extract_select_context(statement: exp.Select) -> SelectContext | InvalidContext:
     """
     Parse a SELECT query into a dictionary
-    Args:
-        query (str): SQL query string containing one SELECT statement
-    Returns:
-        dict: dictionary
     """
     assert isinstance(statement, exp.Select), (
         f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
@@ -295,69 +339,26 @@ def extract_command_context(
     return InvalidContext("Unsupported command, only 'SHOW TABLES' is supported")
 
 
-def extract_query_contexts(
+def extract_one_query_context(
     query: str, properties_schema: dict
-) -> list[QueryContext | InvalidContext]:
-    """
-    Parse a SQL file containing multiple CREATE TABLE queries into a list of dictionaries.
-    This keeps ordering
+) -> QueryContext | InvalidContext:
+    parsed_statement = parse_one(query, dialect=OmlspDialect)
 
-    Args:
-        query (str): SQL query string containing one or more CREATE TABLE statements
+    if isinstance(parsed_statement, exp.Create):
+        return extract_create_context(parsed_statement, properties_schema)
 
-    Returns:
-        list[dict]: list of parameters for each sql statement
+    elif isinstance(parsed_statement, exp.Select):
+        return extract_select_context(parsed_statement)
 
-    Raises:
-        sqlglot.errors.ParseError: If any query cannot be parsed
-        ValueError: If any query structure is invalid
-    """
-    param_list = []
+    elif isinstance(parsed_statement, exp.Set):
+        return extract_set_context(parsed_statement)
 
-    parsed_statements = parse(query)
+    elif isinstance(parsed_statement, exp.With):
+        return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
 
-    for parsed_statement in parsed_statements:
-        assert isinstance(parsed_statement, VALID_STATEMENTS), (
-            f"Invalid statement {type(parsed_statement)}, expected: {VALID_STATEMENTS}"
-        )
+    elif isinstance(parsed_statement, exp.Command):
+        return extract_command_context(parsed_statement)
 
-        if isinstance(parsed_statement, exp.Create):
-            param_list.append(
-                extract_create_context(parsed_statement, properties_schema)
-            )
-
-        elif isinstance(parsed_statement, exp.Select):
-            param_list.append(extract_select_context(parsed_statement))
-
-        elif isinstance(parsed_statement, exp.Set):
-            param_list.append(extract_set_context(parsed_statement))
-
-        elif isinstance(parsed_statement, exp.With):
-            param_list.append(
-                InvalidContext(reason="CTE statements (i.e WITH ...) are not accepted")
-            )
-        elif isinstance(parsed_statement, exp.Command):
-            param_list.append(extract_command_context(parsed_statement))
-
-    return param_list
-
-
-if __name__ == "__main__":
-    from pathlib import Path
-    import json
-
-    file = "examples/basic.sql"
-    prop_schema_file = "src/properties.schema.json"
-
-    sql_filepath = Path(file)
-    prop_schema_filepath = Path(prop_schema_file)
-    sql_content: str
-
-    with open(sql_filepath, "rb") as fo:
-        sql_content = fo.read().decode("utf-8")
-    with open(prop_schema_filepath, "rb") as fo:
-        properties_schema = json.loads(fo.read().decode("utf-8"))
-
-    ordered_statements = extract_query_contexts(sql_content, properties_schema)
-    for context in ordered_statements:
-        logger.info(ordered_statements)
+    return InvalidContext(
+        reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
+    )
