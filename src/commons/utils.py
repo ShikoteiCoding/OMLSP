@@ -18,18 +18,6 @@ class Channel(Generic[T]):
     async def recv(self) -> T:
         return await self._recv_ch.receive()
 
-    def clone_sender(self) -> trio.MemorySendChannel[T]:
-        return self._send_ch.clone()
-
-    def clone_receiver(self) -> trio.MemoryReceiveChannel[T]:
-        return self._recv_ch.clone()
-
-    def close(self) -> None:
-        self._send_ch.close()
-
-    def open(self) -> None:
-        self._send_ch, self._recv_ch = trio.open_memory_channel[T](self.size)
-
     def __aiter__(self):
         return self
 
