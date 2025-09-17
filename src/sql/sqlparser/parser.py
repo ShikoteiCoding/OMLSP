@@ -23,11 +23,12 @@ from context.context import (
     QueryContext,
 )
 
-class CreateKind(StrEnum):
 
+class CreateKind(StrEnum):
     SINK = "SINK"
     TABLE = "TABLE"
     VIEW = "VIEW"
+
 
 class OmlspTokenizer(Tokenizer):
     KEYWORDS = {
@@ -183,7 +184,9 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
     return [prop for prop in statement.args.get("properties", [])]
 
 
-def build_create_table_context(statement: exp.Create, properties_schema: dict[str, Any]) -> CreateTableContext:
+def build_create_table_context(
+    statement: exp.Create, properties_schema: dict[str, Any]
+) -> CreateTableContext:
     updated_create_statement, properties = parse_create_properties(
         statement, properties_schema
     )
@@ -202,7 +205,10 @@ def build_create_table_context(statement: exp.Create, properties_schema: dict[st
         trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
     )
 
-def build_create_lookup_context(statement: exp.Create, properties_schema: dict[str, Any]) -> CreateLookupTableContext:
+
+def build_create_lookup_context(
+    statement: exp.Create, properties_schema: dict[str, Any]
+) -> CreateLookupTableContext:
     updated_create_statement, properties = parse_create_properties(
         statement, properties_schema
     )
@@ -221,7 +227,10 @@ def build_create_lookup_context(statement: exp.Create, properties_schema: dict[s
         columns=columns,
     )
 
-def build_create_sink_context(statement: exp.Create, properties_schema: dict[str, Any]) -> CreateSinkContext | InvalidContext:
+
+def build_create_sink_context(
+    statement: exp.Create, properties_schema: dict[str, Any]
+) -> CreateSinkContext | InvalidContext:
     updated_create_statement, properties = parse_create_properties(
         statement, properties_schema
     )
@@ -241,25 +250,31 @@ def build_create_sink_context(statement: exp.Create, properties_schema: dict[str
         properties=properties,
     )
 
-def build_create_view_context(statement: exp.Create) -> CreateViewContext | InvalidContext:
+
+def build_create_view_context(
+    statement: exp.Create,
+) -> CreateViewContext | InvalidContext:
     name = statement.this.name
-    
+
     ctx = extract_select_context(statement.expression)
     if isinstance(ctx, InvalidContext):
         return ctx
-    
+
     upstreams = list(set(ctx.table) & set(ctx.joins.keys()))
-    
     return CreateViewContext(
-        name=name,
-        upstreams=upstreams,
-        query=get_duckdb_sql(statement)
+        name=name, upstreams=upstreams, query=get_duckdb_sql(statement)
     )
+
 
 def extract_create_context(
     statement: exp.Create, properties_schema: dict
-) -> CreateTableContext | CreateLookupTableContext | CreateSinkContext | CreateViewContext | InvalidContext:    
-    
+) -> (
+    CreateTableContext
+    | CreateLookupTableContext
+    | CreateSinkContext
+    | CreateViewContext
+    | InvalidContext
+):
     if str(statement.kind) == CreateKind.TABLE.value:
         is_temp = isinstance(
             get_properties_from_create(statement)[0], exp.TemporaryProperty
@@ -269,14 +284,16 @@ def extract_create_context(
             return build_create_table_context(statement, properties_schema)
 
         return build_create_lookup_context(statement, properties_schema)
-    
+
     elif str(statement.kind) == CreateKind.SINK.value:
         return build_create_sink_context(statement, properties_schema)
-    
+
     elif str(statement.kind) == CreateKind.VIEW.value:
         return build_create_view_context(statement)
 
-    return InvalidContext(reason=f"Query provided is not a valid statement: {statement.kind}")
+    return InvalidContext(
+        reason=f"Query provided is not a valid statement: {statement.kind}"
+    )
 
 
 def get_table_name_placeholder(table_name: str):

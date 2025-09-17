@@ -9,11 +9,18 @@ from context.context import (
     CreateTableContext,
     SetContext,
     CommandContext,
+    CreateViewContext,
     TaskContext,
 )
 from engine.engine import duckdb_to_pl, pre_hook_select_statements
 from server import ClientManager
-from metadata import init_metadata_store, create_table, get_lookup_tables, get_tables
+from metadata import (
+    init_metadata_store,
+    create_table,
+    create_view,
+    get_lookup_tables,
+    get_tables,
+)
 from sql.file.reader import iter_sql_statements
 from sql.sqlparser.parser import extract_one_query_context
 from task import TaskManager
@@ -89,6 +96,11 @@ class Runner:
                 result = self._eval_ctx(client_id, ctx)
 
             elif isinstance(ctx, InvalidContext):
+                logger.warning(
+                    "[Runner] - attempted to parse invalid sql: {} - reason: {}",
+                    sql,
+                    str(ctx.reason),
+                )
                 result = str(ctx.reason)
 
             if client_id != self._internal_ref:
@@ -98,26 +110,29 @@ class Runner:
             if isinstance(ctx, TaskContext):
                 await self._taskctx_channel.send(ctx)
 
-    def _eval_ctx(self, client_id: ClientId, ctx: EvaluableContext):
+    # TODO: return ValidEval / InvalidEval objects to handle dynamic errors before registering
+    def _eval_ctx(self, client_id: ClientId, ctx: EvaluableContext) -> str:
         if isinstance(ctx, (CreateTableContext, CreateLookupTableContext)):
             return create_table(self.conn, ctx)
 
-        if isinstance(ctx, CommandContext):
+        elif isinstance(ctx, (CreateViewContext)):
+            return create_view(self.conn, ctx)
+
+        elif isinstance(ctx, CommandContext):
             return str(duckdb_to_pl(self.conn, ctx.query))
 
-        if isinstance(ctx, SetContext):
+        elif isinstance(ctx, SetContext):
             self.conn.sql(ctx.query)
             return "SET"
 
         # TODO: find more elegant way to avoid Select from file submit ?
-        if isinstance(ctx, SelectContext) and client_id != self._internal_ref:
+        elif isinstance(ctx, SelectContext) and client_id != self._internal_ref:
             table_name = ctx.table
             lookup_tables = get_lookup_tables(self.conn)
             tables = get_tables(self.conn)
 
             if table_name in lookup_tables:
-                msg = f"{table_name} is a lookup table, you cannot use it in FROM."
-                return msg
+                return f"{table_name} is a lookup table, you cannot use it in FROM."
 
             duckdb_sql = pre_hook_select_statements(self.conn, ctx, tables)
             return str(duckdb_to_pl(self.conn, duckdb_sql))
