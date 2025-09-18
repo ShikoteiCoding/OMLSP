@@ -12,7 +12,7 @@ CreateLookupTableContext = namedtuple(
 )
 
 # TODO: implement those new contexts
-CreateViewContext = namedtuple("CreateViewContext", ["name", "upstreams"])
+CreateViewContext = namedtuple("CreateViewContext", ["name", "upstreams", "query"])
 CreateMaterializedViewContext = namedtuple(
     "CreateMaterializedViewContext", ["name", "upstreams"]
 )
@@ -41,6 +41,7 @@ EvaluableContext = Union[
     CreateLookupTableContext,
     CreateTableContext,
     CreateSinkContext,
+    CreateViewContext,
     SetContext,
     CommandContext,
     SelectContext,
@@ -51,6 +52,7 @@ QueryContext = Union[
     CreateLookupTableContext,
     CreateTableContext,
     CreateSinkContext,
+    CreateViewContext,
     SetContext,
     CommandContext,
     SelectContext,

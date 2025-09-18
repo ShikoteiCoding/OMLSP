@@ -1,7 +1,12 @@
 from duckdb import DuckDBPyConnection
 from loguru import logger
 from typing import Any
-from context.context import CreateTableContext, CreateLookupTableContext, SelectContext
+from context.context import (
+    CreateTableContext,
+    CreateLookupTableContext,
+    SelectContext,
+    CreateViewContext,
+)
 
 
 def init_metadata_store(con: DuckDBPyConnection) -> None:
@@ -23,6 +28,13 @@ def init_metadata_store(con: DuckDBPyConnection) -> None:
     """
     con.sql(table_metadata)
 
+    view_metadata = """
+    CREATE TABLE view_metadata (
+        view_name STRING,
+    )
+    """
+    con.sql(view_metadata)
+
 
 def insert_table_metadata(
     con: DuckDBPyConnection, context: CreateTableContext | CreateLookupTableContext
@@ -38,6 +50,15 @@ def insert_table_metadata(
         INSERT INTO table_metadata (table_name, last_batch_id, is_lookup)
         VALUES ('{table_name}', 0, true);
         """
+    con.sql(insert)
+
+
+def insert_view_metadata(con: DuckDBPyConnection, context: CreateViewContext) -> None:
+    view_name = context.name
+    insert = f"""
+    INSERT INTO view_metadata (view_name)
+    VALUES ('{view_name}');
+    """
     con.sql(insert)
 
 
@@ -101,6 +122,17 @@ def create_table(
     insert_table_metadata(con, context)
     logger.debug(f"Registered table: {context.name}")
     return "CREATE TABLE"
+
+
+def create_view(
+    con: DuckDBPyConnection,
+    context: CreateViewContext,
+) -> str:
+    query = context.query
+    con.execute(query)
+    insert_view_metadata(con, context)
+    logger.debug(f"Registered view: {context.name}")
+    return "CREATE VIEW"
 
 
 def get_batch_id_from_table_metadata(con: DuckDBPyConnection, table_name: str) -> int:

@@ -2,6 +2,8 @@ import jsonschema
 
 from apscheduler.triggers.cron import CronTrigger
 from datetime import timezone
+from enum import StrEnum
+from typing import Any
 
 from loguru import logger
 from sqlglot import parse_one, exp
@@ -13,12 +15,19 @@ from context.context import (
     CreateTableContext,
     CreateLookupTableContext,
     CreateSinkContext,
+    CreateViewContext,
     CommandContext,
     SelectContext,
     SetContext,
     InvalidContext,
     QueryContext,
 )
+
+
+class CreateKind(StrEnum):
+    SINK = "SINK"
+    TABLE = "TABLE"
+    VIEW = "VIEW"
 
 
 class OmlspTokenizer(Tokenizer):
@@ -175,73 +184,116 @@ def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
     return [prop for prop in statement.args.get("properties", [])]
 
 
-def extract_create_context(
-    statement: exp.Create, properties_schema: dict
-) -> CreateTableContext | CreateLookupTableContext | CreateSinkContext | InvalidContext:
-    # TODO: assert only tables here and make this split by kind of create: table, function, etc...
-    is_temp = isinstance(
-        get_properties_from_create(statement)[0], exp.TemporaryProperty
+def build_create_table_context(
+    statement: exp.Create, properties_schema: dict[str, Any]
+) -> CreateTableContext:
+    updated_create_statement, properties = parse_create_properties(
+        statement, properties_schema
+    )
+    updated_table_statement, table_name, _ = parse_table_schema(
+        updated_create_statement.this
+    )
+    updated_create_statement.set(
+        "this", updated_table_statement
+    )  # overwrite modified table statement
+    cron_expr = str(properties.pop("schedule"))
+
+    return CreateTableContext(
+        name=table_name,
+        properties=properties,
+        query=get_duckdb_sql(updated_create_statement),
+        trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
     )
 
-    if str(statement.kind) == "TABLE" and not is_temp:
-        updated_create_statement, properties = parse_create_properties(
-            statement, properties_schema
-        )
-        updated_table_statement, table_name, _ = parse_table_schema(
-            updated_create_statement.this
-        )
-        updated_create_statement.set(
-            "this", updated_table_statement
-        )  # overwrite modified table statement
-        cron_expr = str(properties.pop("schedule"))
-        return CreateTableContext(
-            name=table_name,
-            properties=properties,
-            query=get_duckdb_sql(updated_create_statement),
-            trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
+
+def build_create_lookup_context(
+    statement: exp.Create, properties_schema: dict[str, Any]
+) -> CreateLookupTableContext:
+    updated_create_statement, properties = parse_create_properties(
+        statement, properties_schema
+    )
+    updated_table_statement, table_name, columns, dynamic_columns = (
+        parse_lookup_table_schema(updated_create_statement.this)
+    )
+    updated_create_statement.set(
+        "this", updated_table_statement
+    )  # overwrite modified table statement
+
+    return CreateLookupTableContext(
+        name=table_name,
+        properties=properties,
+        query=get_duckdb_sql(updated_create_statement),
+        dynamic_columns=dynamic_columns,
+        columns=columns,
+    )
+
+
+def build_create_sink_context(
+    statement: exp.Create, properties_schema: dict[str, Any]
+) -> CreateSinkContext | InvalidContext:
+    updated_create_statement, properties = parse_create_properties(
+        statement, properties_schema
+    )
+    expr = updated_create_statement.expression
+
+    # TODO: support multiple upstreams merged/unioned
+    if isinstance(expr, exp.Select):
+        upstreams = [extract_select_context(expr)]
+    elif isinstance(expr, exp.Table):
+        upstreams = [expr.copy()] if expr else []
+    else:
+        return InvalidContext(reason=f"Unsupported upstream expression: {expr}")
+
+    return CreateSinkContext(
+        name=updated_create_statement.this,
+        upstreams=upstreams,
+        properties=properties,
+    )
+
+
+def build_create_view_context(
+    statement: exp.Create,
+) -> CreateViewContext | InvalidContext:
+    name = statement.this.name
+
+    ctx = extract_select_context(statement.expression)
+    if isinstance(ctx, InvalidContext):
+        return ctx
+
+    upstreams = list(set(ctx.table) & set(ctx.joins.keys()))
+    return CreateViewContext(
+        name=name, upstreams=upstreams, query=get_duckdb_sql(statement)
+    )
+
+
+def extract_create_context(
+    statement: exp.Create, properties_schema: dict
+) -> (
+    CreateTableContext
+    | CreateLookupTableContext
+    | CreateSinkContext
+    | CreateViewContext
+    | InvalidContext
+):
+    if str(statement.kind) == CreateKind.TABLE.value:
+        is_temp = isinstance(
+            get_properties_from_create(statement)[0], exp.TemporaryProperty
         )
 
-    # process separately to handle the udft logic here
-    elif str(statement.kind) == "TABLE" and is_temp:
-        updated_create_statement, properties = parse_create_properties(
-            statement, properties_schema
-        )
-        updated_table_statement, table_name, columns, dynamic_columns = (
-            parse_lookup_table_schema(updated_create_statement.this)
-        )
-        updated_create_statement.set(
-            "this", updated_table_statement
-        )  # overwrite modified table statement
+        if not is_temp:
+            return build_create_table_context(statement, properties_schema)
 
-        return CreateLookupTableContext(
-            name=table_name,
-            properties=properties,
-            query=get_duckdb_sql(updated_create_statement),
-            dynamic_columns=dynamic_columns,
-            columns=columns,
-        )
-    elif str(statement.kind) == "SINK":
-        updated_create_statement, properties = parse_create_properties(
-            statement, properties_schema
-        )
-        expr = updated_create_statement.expression
+        return build_create_lookup_context(statement, properties_schema)
 
-        # TODO: support multiple upstreams merged/unioned
-        if isinstance(expr, exp.Select):
-            upstreams = [extract_select_context(expr)]
-        elif isinstance(expr, exp.Table):
-            upstreams = [expr.copy()] if expr else []
-        else:
-            return InvalidContext(reason=f"Unsupported upstream expression: {expr}")
+    elif str(statement.kind) == CreateKind.SINK.value:
+        return build_create_sink_context(statement, properties_schema)
 
-        return CreateSinkContext(
-            name=updated_create_statement.this,
-            upstreams=upstreams,
-            properties=properties,
-        )
+    elif str(statement.kind) == CreateKind.VIEW.value:
+        return build_create_view_context(statement)
 
-    # TODO: Process views, materialized views, sinks and functions here
-    return InvalidContext(reason=f"Not known statement kind: {statement.kind}")
+    return InvalidContext(
+        reason=f"Query provided is not a valid statement: {statement.kind}"
+    )
 
 
 def get_table_name_placeholder(table_name: str):
@@ -294,9 +346,6 @@ def extract_select_context(statement: exp.Select) -> SelectContext | InvalidCont
     """
     Parse a SELECT query into a dictionary
     """
-    assert isinstance(statement, exp.Select), (
-        f"Unexpected statement of type: {type(statement)}, expected exp.Select statement"
-    )
     has_cte = statement.args.get("with") is not None
     has_subquery = any(
         isinstance(node, exp.Subquery) for node in statement.find_all(exp.Subquery)

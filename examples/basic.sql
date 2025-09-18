@@ -130,3 +130,10 @@ WITH (
     topic = 'tickers_topic_2',
     server = 'localhost:9092',
 );
+
+CREATE VIEW my_first_view AS
+SELECT
+    symbol
+FROM all_tickers;
+
+CREATE VIEW my_second_view FROM all_tickers;
