@@ -1,14 +1,16 @@
-import trio
-import duckdb
 import json
+from datetime import datetime, timedelta
+from typing import Any
+
+import duckdb
+import trio
 from confluent_kafka import Producer
+from loguru import logger
+
 from context.context import (
     SelectContext,
 )
 from metadata import resolve_schema
-from loguru import logger
-from typing import Any
-from datetime import datetime, timedelta
 
 
 def kafka_config(server):

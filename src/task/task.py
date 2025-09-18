@@ -1,5 +1,6 @@
-from duckdb import DuckDBPyConnection
 from typing import Any, Callable, TypeAlias
+
+from duckdb import DuckDBPyConnection
 from loguru import logger
 
 from commons.utils import Channel

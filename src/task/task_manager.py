@@ -1,25 +1,21 @@
 import trio
 import trio_asyncio
-
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from duckdb import DuckDBPyConnection
+from loguru import logger
 
 from commons.utils import Channel
 from context.context import (
-    TaskContext,
-    SourceTaskContext,
     CreateLookupTableContext,
     CreateSinkContext,
+    SourceTaskContext,
+    TaskContext,
 )
 from engine.engine import (
-    build_source_executable,
     build_lookup_table_prehook,
+    build_source_executable,
 )
-from task.task import TaskId, Task
-
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from duckdb import DuckDBPyConnection
-
-
-from loguru import logger
+from task.task import Task, TaskId
 
 
 class TaskManager:
