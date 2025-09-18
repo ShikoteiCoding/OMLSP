@@ -9,6 +9,7 @@ from commons.utils import Channel
 from context.context import (
     CommandContext,
     CreateLookupTableContext,
+    CreateSinkContext,
     CreateTableContext,
     CreateViewContext,
     EvaluableContext,
@@ -19,6 +20,7 @@ from context.context import (
 )
 from engine.engine import duckdb_to_pl, pre_hook_select_statements
 from metadata import (
+    create_sink,
     create_table,
     create_view,
     get_lookup_tables,
@@ -91,7 +93,7 @@ class Runner:
         async for client_id, sql in self._sql_channel:
             ctx = extract_one_query_context(sql, self.properties_schema)
 
-            # dispatch to clients
+            # execute eval
             if isinstance(ctx, EvaluableContext):
                 result = self._eval_ctx(client_id, ctx)
 
@@ -115,8 +117,11 @@ class Runner:
         if isinstance(ctx, (CreateTableContext, CreateLookupTableContext)):
             return create_table(self.conn, ctx)
 
-        elif isinstance(ctx, (CreateViewContext)):
+        elif isinstance(ctx, CreateViewContext):
             return create_view(self.conn, ctx)
+
+        elif isinstance(ctx, CreateSinkContext):
+            return create_sink(self.conn, ctx)
 
         elif isinstance(ctx, CommandContext):
             return str(duckdb_to_pl(self.conn, ctx.query))
