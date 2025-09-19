@@ -46,7 +46,8 @@ class TaskManager:
 
         if isinstance(ctx, CreateSinkContext):
             # TODO: add Transform task to handle subqueries
-            sink = SinkTask(task_id, self.conn)
+            # TODO: subscribe to many upstreams
+            sink = SinkTask(task_id, ctx.properties)
             for upstream in ctx.upstreams:
                 sink.subscribe(self._sources[upstream].get_sender())
 
@@ -54,8 +55,7 @@ class TaskManager:
             logger.info(f'[TaskManager] registered sink task "{task_id}"')
 
         elif isinstance(ctx, SourceTaskContext):
-            # TODO: add trigger
-            source = SourceTask(task_id, self.conn)
+            source = SourceTask(task_id, self.conn, ctx.trigger)
             self._sources[task_id] = source.register(build_source_executable(ctx))
 
             self._nursery.start_soon(self._sources[task_id].run)  # use parent nursery

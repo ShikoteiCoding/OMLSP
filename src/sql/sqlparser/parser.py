@@ -1,6 +1,5 @@
 import jsonschema
 
-from apscheduler.triggers.cron import CronTrigger
 from datetime import timezone
 from enum import StrEnum
 from typing import Any
@@ -198,13 +197,13 @@ def build_create_table_context(
     updated_create_statement.set(
         "this", updated_table_statement
     )  # overwrite modified table statement
-    cron_expr = str(properties.pop("schedule"))
+    period = float(properties.pop("schedule"))
 
     return CreateTableContext(
         name=table_name,
         properties=properties,
         query=get_duckdb_sql(updated_create_statement),
-        trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
+        trigger=period,
     )
 
 

@@ -142,7 +142,7 @@ def build_scalar_udf(
     }
 
 
-def source_executable(
+async def source_executable(
     table_name: str,
     start_time: datetime,
     http_requester: FunctionType,
@@ -166,7 +166,7 @@ def source_executable(
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
-        # await persist(df, batch_id, epoch, table_name, con)
+        await persist(df, batch_id, epoch, table_name, con)
     else:
         df = pl.DataFrame()
 

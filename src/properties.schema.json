@@ -24,8 +24,7 @@
         },
         "schedule": {
           "type": "string",
-          "pattern": "^((\\*|[0-9]+|[0-9]+-[0-9]+|\\*/[0-9]+)(,)?\\s*){5}$",
-          "description": "Cron expression like */5 * * * *"
+          "description": "Periodicity of the task"
         },
         "jq": {
           "type": "string",
