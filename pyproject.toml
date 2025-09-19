@@ -20,6 +20,7 @@ dependencies = [
   "prompt-toolkit>=3.0",
   "trio>=0.30.0",
   "trio-asyncio>=0.15.0",
+  "trio-util>=0.8.0",
   "confluent-kafka>=2.11.1",
 ]
 
