@@ -154,10 +154,13 @@ def parse_create_properties(
                 value = val_exp.this
             else:  # fallback to raw SQL
                 value = val_exp.sql(dialect=None)
+        elif isinstance(prop, exp.SequenceProperties):
+            continue
         else:
             logger.warning(f"Unknown property: {type(prop)} - {prop}")
         custom_properties[key] = value
 
+    print(custom_properties)
     statement.set("kind", table_kind)
     validate_create_properties(custom_properties, properties_schema)
     return statement, custom_properties
@@ -229,10 +232,8 @@ def extract_create_context(
         # TODO: support multiple upstreams merged/unioned
         if isinstance(expr, exp.Select):
             upstreams = [extract_select_context(expr)]
-        elif isinstance(expr, exp.Table):
-            upstreams = [expr.copy()] if expr else []
         else:
-            return InvalidContext(reason=f"Unsupported upstream expression: {expr}")
+            upstreams = [expr.copy().this] if expr else []
 
         return CreateSinkContext(
             name=updated_create_statement.this,

@@ -142,7 +142,7 @@ def build_scalar_udf(
     }
 
 
-async def source_executable(
+def source_executable(
     table_name: str,
     start_time: datetime,
     http_requester: FunctionType,
@@ -157,7 +157,7 @@ async def source_executable(
     batch_id = get_batch_id_from_table_metadata(con, table_name)
     logger.info(f"[{table_name}{{{batch_id}}}] / @ {execution_time}")
 
-    records = await http_requester()
+    records = http_requester()
     logger.debug(
         f"[{table_name}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
     )
@@ -166,7 +166,7 @@ async def source_executable(
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
-        await persist(df, batch_id, epoch, table_name, con)
+        # await persist(df, batch_id, epoch, table_name, con)
     else:
         df = pl.DataFrame()
 
@@ -181,7 +181,7 @@ def build_source_executable(ctx: SourceTaskContext):
         source_executable,
         table_name=ctx.name,
         start_time=start_time,
-        http_requester=build_http_requester(properties, is_async=True),
+        http_requester=build_http_requester(properties, is_async=False),
     )
 
 

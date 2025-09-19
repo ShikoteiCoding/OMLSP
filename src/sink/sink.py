@@ -5,10 +5,16 @@ from confluent_kafka import Producer
 from context.context import (
     SelectContext,
 )
+from functools import partial
+
 from metadata import resolve_schema
+from context.context import (
+    CreateSinkContext,
+)
 from loguru import logger
 from typing import Any
 from datetime import datetime, timedelta
+import polars as pl
 
 
 def kafka_config(server):

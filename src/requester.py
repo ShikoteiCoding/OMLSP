@@ -92,11 +92,27 @@ def parse_response(data: dict, jq: Any = None) -> list[dict]:
 
 
 async def http_requester(properties: dict) -> list[dict]:
-    client = ClientSession()
-    logger.debug(f"running request with properties: {properties}")
-    res = await async_request(client, **properties)
-    await client.close()
-    return res
+    try:
+        async with httpx.AsyncClient() as client:
+            logger.debug(f"running request with properties: {properties}")
+            response = await client.request(
+                method=properties.get("method", "GET"),
+                url=properties["url"],
+                headers=properties.get("headers", {"Content-Type": "application/json"}),
+                json=properties.get("json", {}),
+            )
+
+            if response.is_success:  # httpx way
+                data = response.json()  # already sync in httpx
+                return parse_response(data, properties.get("jq"))
+
+            # TODO: add retry on fail here
+            response.raise_for_status()
+
+    except Exception as e:
+        logger.error(f"HTTP request failed: {e}")
+
+    return []
 
 
 def sync_http_requester(properties: dict) -> list[dict]:
@@ -112,8 +128,8 @@ def build_http_requester(
 
     if is_async:
 
-        def _async_inner():
-            return http_requester(http_properties)
+        async def _async_inner():
+            return await http_requester(http_properties)
 
         return _async_inner
 
