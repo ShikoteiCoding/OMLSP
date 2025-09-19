@@ -8,7 +8,7 @@ WITH (
     'connector' = 'http',
     'url' = 'https://api.kucoin.com/api/v1/market/allTickers',
     'method' = 'GET',
-    'schedule' = '*/1 * * * *',
+    'schedule' = '30',
     'jq' = '.data.ticker[:2][] | {symbol, symbolName, buy, sell}',
     'headers.Content-Type' = 'application/json'
 );
