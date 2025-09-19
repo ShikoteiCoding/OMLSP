@@ -1,42 +1,40 @@
 import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from functools import partial
+from string import Template
+from types import FunctionType
+from typing import Any, Coroutine, Iterable
+
 import polars as pl
 import pyarrow as pa
-import time
-
+from apscheduler.job import Job
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.job import Job
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
-from datetime import datetime, timezone
-from functools import partial
 from loguru import logger
-from typing import Any, Coroutine, Iterable
-from types import FunctionType
 
-from string import Template
-
-from inout import persist
-from metadata import (
-    create_macro_definition,
-    get_macro_definition_by_name,
-    get_lookup_tables,
-    get_tables,
-    get_batch_id_from_table_metadata,
-    update_batch_id_in_table_metadata,
-)
-from requester import build_http_requester
 from context.context import (
     CommandContext,
-    CreateTableContext,
     CreateLookupTableContext,
+    CreateTableContext,
     SelectContext,
     SetContext,
     SourceTaskContext,
 )
-from concurrent.futures import ThreadPoolExecutor
-
+from inout import persist
+from metadata import (
+    create_macro_definition,
+    get_batch_id_from_table_metadata,
+    get_lookup_tables,
+    get_macro_definition_by_name,
+    get_tables,
+    update_batch_id_in_table_metadata,
+)
+from requester import build_http_requester
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),

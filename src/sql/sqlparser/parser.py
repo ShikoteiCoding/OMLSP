@@ -1,26 +1,25 @@
-import jsonschema
-
-from apscheduler.triggers.cron import CronTrigger
 from datetime import timezone
 from enum import StrEnum
 from typing import Any
 
+import jsonschema
+from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
-from sqlglot import parse_one, exp
+from sqlglot import exp, parse_one
+from sqlglot.dialects import Dialect
 from sqlglot.parser import Parser
 from sqlglot.tokens import Tokenizer, TokenType
-from sqlglot.dialects import Dialect
 
 from context.context import (
-    CreateTableContext,
+    CommandContext,
     CreateLookupTableContext,
     CreateSinkContext,
+    CreateTableContext,
     CreateViewContext,
-    CommandContext,
-    SelectContext,
-    SetContext,
     InvalidContext,
     QueryContext,
+    SelectContext,
+    SetContext,
 )
 
 

@@ -1,12 +1,9 @@
-import trio
-
 from functools import partial
-from trio import SocketListener
 
-
+import trio
 from duckdb import DuckDBPyConnection
 from loguru import logger
-
+from trio import SocketListener
 
 from commons.utils import Channel
 

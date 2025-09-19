@@ -1,7 +1,6 @@
 from collections import namedtuple
 from typing import Union
 
-
 # --- Context definitions ---
 CreateTableContext = namedtuple(
     "CreateTableContext", ["name", "properties", "query", "trigger"]

@@ -1,5 +1,5 @@
-from typing import Generator
 from pathlib import Path
+from typing import Generator
 
 
 def iter_sql_statements(path: Path | str) -> Generator[str, None, None]:

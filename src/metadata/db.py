@@ -1,11 +1,13 @@
+from typing import Any
+
 from duckdb import DuckDBPyConnection
 from loguru import logger
-from typing import Any
+
 from context.context import (
-    CreateTableContext,
     CreateLookupTableContext,
-    SelectContext,
+    CreateTableContext,
     CreateViewContext,
+    SelectContext,
 )
 
 

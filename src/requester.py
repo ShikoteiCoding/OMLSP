@@ -1,10 +1,9 @@
 import asyncio
-import jq
-import httpx
-
-from aiohttp import ClientSession
 from typing import Any, Callable, Coroutine
 
+import httpx
+import jq
+from aiohttp import ClientSession
 from loguru import logger
 
 
