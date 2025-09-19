@@ -157,7 +157,7 @@ async def source_executable(
     batch_id = get_batch_id_from_table_metadata(con, table_name)
     logger.info(f"[{table_name}{{{batch_id}}}] / @ {execution_time}")
 
-    records = http_requester()
+    records = await http_requester()
     logger.debug(
         f"[{table_name}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
     )
@@ -181,7 +181,7 @@ def build_source_executable(ctx: SourceTaskContext):
         source_executable,
         table_name=ctx.name,
         start_time=start_time,
-        http_requester=build_http_requester(properties, is_async=False),
+        http_requester=build_http_requester(properties, is_async=True),
     )
 
 

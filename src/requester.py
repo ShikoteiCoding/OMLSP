@@ -1,12 +1,12 @@
-import asyncio
+import trio
 import jq
 import httpx
 
-from aiohttp import ClientSession
 from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
+MAX_RETRIES = 3
 
 def parse_http_properties(params: dict[str, str]) -> dict:
     parsed_params = {}
@@ -25,7 +25,6 @@ def parse_http_properties(params: dict[str, str]) -> dict:
 
 
 async def async_request(
-    client: ClientSession,
     url: str,
     jq: Any = None,
     method: str = "GET",
@@ -33,29 +32,26 @@ async def async_request(
     json={},
     **kwarg,
 ) -> list[dict]:
-    async with client as session:
-        async with session.request(
-            method=method,
-            url=url,
-            headers=headers,
-            json=json,
-        ) as response:
-            logger.debug(f"response for {url}: {response.status}")
+    attempt = 0
+    while attempt < MAX_RETRIES:
+        async with httpx.AsyncClient() as client:
+            response = await client.request(method, url, headers=headers, json=json)
 
-            if response.ok:
-                data = await response.json()
+            logger.debug(f"response for {url}: {response.status_code}")
+
+            if response.is_success:
+                data = response.json()
                 return parse_response(data, jq)
 
-            # TODO: add retry on fail here
-            try:
-                response.raise_for_status()
-            except Exception as e:
-                logger.warning(f"unable to request: {e}")
-            return []
+            logger.warning(f"request failed {url}: {response.status_code}")
 
-        # TODO: handle failure of async task
-        return []
+        attempt += 1
+        if attempt < MAX_RETRIES:
+            delay =  2 ** attempt
+            await trio.sleep(delay)
 
+    logger.error(f"request to {url} failed after {retries} attempts")
+    return []
 
 def sync_request(
     client: httpx.Client,
@@ -92,10 +88,8 @@ def parse_response(data: dict, jq: Any = None) -> list[dict]:
 
 
 async def http_requester(properties: dict) -> list[dict]:
-    client = ClientSession()
     logger.debug(f"running request with properties: {properties}")
-    res = await async_request(client, **properties)
-    await client.close()
+    res = await async_request(**properties)
     return res
 
 
