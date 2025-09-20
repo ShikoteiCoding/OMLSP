@@ -15,6 +15,7 @@ from engine.engine import (
     build_lookup_table_prehook,
     build_source_executable,
 )
+from sink.sink import build_sink_connector
 from task.task import TaskId, BaseTask, SourceTask, SinkTask
 
 
@@ -34,6 +35,7 @@ class TaskManager:
     def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
         self.conn = conn
         self.scheduler = scheduler
+        self._token = trio.lowlevel.current_trio_token()
 
     async def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._taskctx_channel = channel
@@ -44,8 +46,7 @@ class TaskManager:
 
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
-            token = trio.lowlevel.current_trio_token()
-            self.scheduler._configure({"_nursery": nursery, "_trio_token": token})
+            self.scheduler._configure({"_nursery": nursery, "_trio_token": self._token})
             self.scheduler.start()
             nursery.start_soon(self._process)
             nursery.start_soon(self._watch_for_shutdown)
@@ -64,6 +65,10 @@ class TaskManager:
             task = SinkTask(task_id)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
+            self._task_id_to_task[task_id] = task.register(
+                build_sink_connector(ctx.properties)
+            )
+            _ = self.scheduler.add_job(func=task.run)
             logger.info(f"[TaskManager] registered sink task '{task_id}'")
 
         elif isinstance(ctx, SourceTaskContext):
@@ -75,10 +80,9 @@ class TaskManager:
             logger.info(f"[TaskManager] registered source task '{task_id}'")
 
         elif isinstance(ctx, CreateLookupTableContext):
+            # TODO: is this the place to build lookup ? grr
             build_lookup_table_prehook(ctx, self.conn)
-
-        if task:
-            self._task_id_to_task[task_id] = task
+            logger.info(f"[TaskManager] built lookup table'{task_id}'")
 
     async def _watch_for_shutdown(self):
         try:
