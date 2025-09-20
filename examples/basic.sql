@@ -13,7 +13,7 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
-CREATE TEMP TABLE ohlc (
+CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
     start_time TIMESTAMP_S,
     open FLOAT,
