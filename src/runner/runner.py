@@ -1,11 +1,10 @@
-from typing import Any
-
 import trio
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
+from typing import Any
 
-from commons.utils import Channel
+from channel import Channel
 from context.context import (
     CommandContext,
     CreateLookupTableContext,
@@ -30,6 +29,7 @@ from metadata import (
 from server import ClientManager
 from sql.file.reader import iter_sql_statements
 from sql.sqlparser.parser import extract_one_query_context
+from scheduler import TrioScheduler
 from task import TaskManager
 
 ClientId = str
@@ -78,7 +78,6 @@ class Runner:
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
 
-            # nursery.start_soon(self.context_manager.run)
             nursery.start_soon(self.task_manager.run)
             nursery.start_soon(self.client_manager.run)
 
@@ -110,6 +109,7 @@ class Runner:
 
             # dispatch to task manager
             if isinstance(ctx, TaskContext):
+                logger.error(ctx)
                 await self._taskctx_channel.send(ctx)
 
     # TODO: return ValidEval / InvalidEval objects to handle dynamic errors before registering
@@ -160,8 +160,7 @@ if __name__ == "__main__":
     with open(Path("src/properties.schema.json"), "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
     conn: DuckDBPyConnection = connect(database=":memory:")
-    scheduler = AsyncIOScheduler()
-    # context_manager = ContextManager(properties_schema)
+    scheduler = TrioScheduler()
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
     executors = {}
@@ -169,7 +168,7 @@ if __name__ == "__main__":
 
     async def main():
         await runner.build()
-        # preload file SQLs
+        # preload file mSQLs
         for sql in iter_sql_statements("examples/basic.sql"):
             await runner.submit(sql)
         async with trio.open_nursery() as nursery:

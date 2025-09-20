@@ -1,3 +1,4 @@
+from datetime import timezone
 from enum import StrEnum
 from typing import Any
 
@@ -28,7 +29,6 @@ class CreateKind(StrEnum):
 
 
 class Omlsp(Postgres):
-
     class Tokenizer(Tokenizer):
         KEYWORDS = {
             **Postgres.Tokenizer.KEYWORDS,
@@ -39,6 +39,7 @@ class Omlsp(Postgres):
     class Parser(Postgres.Parser):
         def _parse_table_hints(self) -> list[exp.Expression] | None:
             return None
+
 
 def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
@@ -163,13 +164,13 @@ def build_create_table_context(
     updated_create_statement.set(
         "this", updated_table_statement
     )  # overwrite modified table statement
-    trigger = str(properties.pop("schedule"))
+    cron_expr = str(properties.pop("schedule"))
 
     return CreateTableContext(
         name=table_name,
         properties=properties,
         query=get_duckdb_sql(updated_create_statement),
-        trigger=trigger,
+        trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
     )
 
 
@@ -204,16 +205,17 @@ def build_create_sink_context(
     expr = updated_create_statement.expression
 
     # TODO: support multiple upstreams merged/unioned
-    if isinstance(expr, exp.Select):
-        upstreams = [extract_select_context(expr).table]        
+    ctx = extract_select_context(expr)
+    if isinstance(ctx, SelectContext):
+        upstreams = [ctx.table]
     else:
-        upstreams = [expr.copy().this] if expr else []
+        return InvalidContext(reason=f"Invalid sink expression: {ctx.reason}")
 
     return CreateSinkContext(
         name=updated_create_statement.this,
         upstreams=upstreams,
         properties=properties,
-        query="SELECT 1;"
+        query="SELECT 1;",
     )
 
 

@@ -1,12 +1,9 @@
-import trio
-import jq
 import httpx
+import jq
+import trio
 
 from typing import Any, Callable, Coroutine
 
-import httpx
-import jq
-from aiohttp import ClientSession
 from loguru import logger
 
 MAX_RETRIES = 3
@@ -118,25 +115,27 @@ def build_http_requester(
 
         return _async_inner
 
-    else:
+    def _sync_inner():
+        return sync_http_requester(http_properties)
 
-        def _sync_inner():
-            return sync_http_requester(http_properties)
-
-        return _sync_inner
+    return _sync_inner
 
 
 if __name__ == "__main__":
     print("OMLSP starting")
-    properties = {
-        "connector": "http",
-        "url": "https://httpbin.org/get",
-        "method": "GET",
-        "scan.interval": "60s",
-        "jq": ".url",
-    }
 
-    _http_requester = build_http_requester(properties, is_async=True)
+    async def main():
+        properties = {
+            "connector": "http",
+            "url": "https://httpbin.org/get",
+            "method": "GET",
+            "scan.interval": "60s",
+            "jq": ".url",
+        }
 
-    res = asyncio.run(_http_requester())  # type: ignore
-    print(res)
+        _http_requester = build_http_requester(properties, is_async=True)
+
+        res = await _http_requester()  # type: ignore
+        logger.info(res)
+
+    trio.run(main)
