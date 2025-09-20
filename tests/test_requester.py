@@ -2,7 +2,7 @@ import pytest
 from src.requester import build_http_requester
 
 
-@pytest.mark.asyncio
+@pytest.mark.trio
 async def test_successful_request(vcr_cassette):
     """Test a successful GET request"""
     properties = {
@@ -16,7 +16,7 @@ async def test_successful_request(vcr_cassette):
     assert result == [{"url": "https://httpbin.org/get"}]
 
 
-@pytest.mark.asyncio
+@pytest.mark.trio
 async def test_unsuccessful_request(vcr_cassette):
     """Test an unsuccessful GET request"""
     properties = {

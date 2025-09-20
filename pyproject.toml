@@ -19,13 +19,13 @@ dependencies = [
   "prompt-toolkit>=3.0",
   "trio>=0.30.0",
   "confluent-kafka>=2.11.1",
+  "pytest-trio>=0.8.0",
 ]
 
 [dependency-groups]
 dev = [
   "ruff>=0.12.3",
   "pytest==8.4.1",
-  "pytest-asyncio==1.1.0",
   "vcrpy==6.0.2",
 ]
 
