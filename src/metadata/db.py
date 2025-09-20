@@ -1,26 +1,34 @@
+from typing import Any
+
 from duckdb import DuckDBPyConnection
 from loguru import logger
-from typing import Any
+
 from context.context import (
-    CreateTableContext,
     CreateLookupTableContext,
-    SelectContext,
+    CreateSinkContext,
+    CreateTableContext,
     CreateViewContext,
+    SelectContext,
 )
+
+METADATA_TABLE_NAME = "__table_metadata"
+METADATA_VIEW_NAME = "__view_metadata"
+METADATA_MACRO_NAME = "__macro_metadata"
+METADATA_SINK_NAME = "__sink_metadata"
 
 
 def init_metadata_store(con: DuckDBPyConnection) -> None:
     # Create table for lookup macro definition
-    macro_table_to_def = """
-    CREATE TABLE macro_metadata (
+    macro_table_to_def = f"""
+    CREATE TABLE {METADATA_MACRO_NAME} (
         macro_name STRING,
         fields STRING[]
     );
     """
     con.sql(macro_table_to_def)
 
-    table_metadata = """
-    CREATE TABLE table_metadata (
+    table_metadata = f"""
+    CREATE TABLE {METADATA_TABLE_NAME} (
         table_name STRING,
         last_batch_id INTEGER,
         is_lookup BOOLEAN
@@ -28,12 +36,19 @@ def init_metadata_store(con: DuckDBPyConnection) -> None:
     """
     con.sql(table_metadata)
 
-    view_metadata = """
-    CREATE TABLE view_metadata (
+    view_metadata = f"""
+    CREATE TABLE {METADATA_VIEW_NAME} (
         view_name STRING,
     )
     """
     con.sql(view_metadata)
+
+    sink_metadata = f"""
+    CREATE TABLE {METADATA_SINK_NAME} (
+        sink_name STRING,
+    )
+    """
+    con.sql(sink_metadata)
 
 
 def insert_table_metadata(
@@ -42,12 +57,12 @@ def insert_table_metadata(
     table_name = context.name
     if isinstance(context, CreateTableContext):
         insert = f"""
-        INSERT INTO table_metadata (table_name, last_batch_id, is_lookup)
+        INSERT INTO {METADATA_TABLE_NAME} (table_name, last_batch_id, is_lookup)
         VALUES ('{table_name}', 0, false);
         """
     elif isinstance(context, CreateLookupTableContext):
         insert = f"""
-        INSERT INTO table_metadata (table_name, last_batch_id, is_lookup)
+        INSERT INTO {METADATA_TABLE_NAME} (table_name, last_batch_id, is_lookup)
         VALUES ('{table_name}', 0, true);
         """
     con.sql(insert)
@@ -56,8 +71,16 @@ def insert_table_metadata(
 def insert_view_metadata(con: DuckDBPyConnection, context: CreateViewContext) -> None:
     view_name = context.name
     insert = f"""
-    INSERT INTO view_metadata (view_name)
+    INSERT INTO {METADATA_VIEW_NAME} (view_name)
     VALUES ('{view_name}');
+    """
+    con.sql(insert)
+
+def insert_sink_metadata(con: DuckDBPyConnection, context: CreateSinkContext) -> None:
+    sink_name = context.name
+    insert = f"""
+    INSERT INTO {METADATA_SINK_NAME} (sink_name)
+    VALUES ('{sink_name}');
     """
     con.sql(insert)
 
@@ -65,13 +88,11 @@ def insert_view_metadata(con: DuckDBPyConnection, context: CreateViewContext) ->
 def get_macro_definition_by_name(
     con: DuckDBPyConnection, macro_name: str
 ) -> tuple[str, list[str]]:
-    assert macro_name, "no macro name provided"
-
     query = f"""
     SELECT 
         macro_name,
         fields
-    FROM macro_metadata
+    FROM {METADATA_MACRO_NAME}
     WHERE macro_name = '{macro_name}';
     """
     res = con.sql(query).fetchall()
@@ -86,10 +107,8 @@ def get_macro_definition_by_name(
 def create_macro_definition(
     con: DuckDBPyConnection, macro_name: str, fields: list[str]
 ) -> None:
-    assert macro_name and fields, "no macro name or definition provided"
-
     query = f"""
-    INSERT INTO macro_metadata (macro_name, fields)
+    INSERT INTO {METADATA_MACRO_NAME} (macro_name, fields)
     VALUES ('{macro_name}', {fields});
     """
     con.sql(query)
@@ -120,7 +139,7 @@ def create_table(
     query = context.query
     con.execute(query)
     insert_table_metadata(con, context)
-    logger.debug(f"Registered table: {context.name}")
+    logger.info(f"[db] Registered table: {context.name}")
     return "CREATE TABLE"
 
 
@@ -131,14 +150,23 @@ def create_view(
     query = context.query
     con.execute(query)
     insert_view_metadata(con, context)
-    logger.debug(f"Registered view: {context.name}")
+    logger.info(f"[db] Registered view: {context.name}")
+    return "CREATE VIEW"
+
+
+def create_sink(
+    con: DuckDBPyConnection,
+    context: CreateSinkContext,
+) -> str:
+    insert_sink_metadata(con, context)
+    logger.info(f"[db] Registered sink: {context.name}")
     return "CREATE VIEW"
 
 
 def get_batch_id_from_table_metadata(con: DuckDBPyConnection, table_name: str) -> int:
     query = f"""
         SELECT *
-        FROM table_metadata
+        FROM {METADATA_TABLE_NAME}
         WHERE table_name = '{table_name}';
     """
     res = con.sql(query).fetchall()
@@ -149,7 +177,7 @@ def update_batch_id_in_table_metadata(
     con: DuckDBPyConnection, table_name: str, batch_id: int
 ) -> None:
     query = f"""
-    UPDATE table_metadata
+    UPDATE {METADATA_TABLE_NAME}
     SET last_batch_id={batch_id}
     WHERE table_name = '{table_name}';
     """

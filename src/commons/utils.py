@@ -1,5 +1,6 @@
-import trio
 from typing import Generic, TypeVar
+
+import trio
 
 T = TypeVar("T")
 

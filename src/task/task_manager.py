@@ -2,14 +2,14 @@ import trio
 
 from commons.utils import Channel
 from context.context import (
-    TaskContext,
-    SourceTaskContext,
     CreateLookupTableContext,
     CreateSinkContext,
+    SourceTaskContext,
+    TaskContext,
 )
 from engine.engine import (
-    build_source_executable,
     build_lookup_table_prehook,
+    build_source_executable,
 )
 from sink.sink import build_sink_connector
 from task.task import TaskId, BaseTask, SourceTask, SinkTask

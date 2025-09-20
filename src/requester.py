@@ -4,6 +4,9 @@ import httpx
 
 from typing import Any, Callable, Coroutine
 
+import httpx
+import jq
+from aiohttp import ClientSession
 from loguru import logger
 
 MAX_RETRIES = 3
@@ -26,6 +29,7 @@ def parse_http_properties(params: dict[str, str]) -> dict:
 
 
 async def async_request(
+    client: httpx.AsyncClient,
     url: str,
     jq: Any = None,
     method: str = "GET",
@@ -35,21 +39,20 @@ async def async_request(
 ) -> list[dict]:
     attempt = 0
     while attempt < MAX_RETRIES:
-        async with httpx.AsyncClient() as client:
-            response = await client.request(method, url, headers=headers, json=json)
+        response = await client.request(method, url, headers=headers, json=json)
 
-            logger.debug(f"response for {url}: {response.status_code}")
+        logger.debug(f"response for {url}: {response.status_code}")
 
-            if response.is_success:
-                data = response.json()
-                return parse_response(data, jq)
+        if response.is_success:
+            data = response.json()
+            return parse_response(data, jq)
 
-            logger.error(f"request failed {url}: {response.status_code}")
+        logger.error(f"request failed {url}: {response.status_code}")
 
-        attempt += 1
-        if attempt < MAX_RETRIES:
-            delay = 2**attempt
-            await trio.sleep(delay)
+    attempt += 1
+    if attempt < MAX_RETRIES:
+        delay = 2**attempt
+        await trio.sleep(delay)
 
     logger.error(f"request to {url} failed after {MAX_RETRIES} attempts")
     return []
@@ -91,8 +94,10 @@ def parse_response(data: dict, jq: Any = None) -> list[dict]:
 
 async def http_requester(properties: dict) -> list[dict]:
     logger.debug(f"running request with properties: {properties}")
-    res = await async_request(**properties)
-    return res
+    async with httpx.AsyncClient() as client:
+        logger.debug(f"running request with properties: {properties}")
+        res = await async_request(client, **properties)
+        return res
 
 
 def sync_http_requester(properties: dict) -> list[dict]:

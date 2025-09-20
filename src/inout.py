@@ -1,9 +1,9 @@
 # file cannot be named io
 import asyncio
-import duckdb
-import polars as pl
 from typing import Any
 
+import duckdb
+import polars as pl
 from loguru import logger
 
 
@@ -26,6 +26,7 @@ async def read_all(store_location: str, table_name: str) -> pl.DataFrame:
 
 if __name__ == "__main__":
     import time
+
     from metadata import get_batch_id_from_table_metadata
 
     store_location = "local-store"

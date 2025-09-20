@@ -1,16 +1,17 @@
 import argparse
 import json
-import trio
-import polars as pl
 
-from duckdb import connect, DuckDBPyConnection
 from pathlib import Path
 
-from server import ClientManager
-from task import TaskManager
-from runner import Runner
-from sql.file import iter_sql_statements
+import polars as pl
+import trio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from duckdb import DuckDBPyConnection, connect
 
+from runner import Runner
+from server import ClientManager
+from sql.file import iter_sql_statements
+from task import TaskManager
 
 PROPERTIES_SCHEMA = json.loads(
     open(Path("src/properties.schema.json"), "rb").read().decode("utf-8")

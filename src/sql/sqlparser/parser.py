@@ -1,25 +1,23 @@
-import jsonschema
-
-from datetime import timezone
 from enum import StrEnum
 from typing import Any
 
+import jsonschema
+from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
-from sqlglot import parse_one, exp
-from sqlglot.parser import Parser
+from sqlglot import exp, parse_one
+from sqlglot.dialects.postgres import Postgres
 from sqlglot.tokens import Tokenizer, TokenType
-from sqlglot.dialects import Dialect
 
 from context.context import (
-    CreateTableContext,
+    CommandContext,
     CreateLookupTableContext,
     CreateSinkContext,
+    CreateTableContext,
     CreateViewContext,
-    CommandContext,
-    SelectContext,
-    SetContext,
     InvalidContext,
     QueryContext,
+    SelectContext,
+    SetContext,
 )
 
 
@@ -29,50 +27,18 @@ class CreateKind(StrEnum):
     VIEW = "VIEW"
 
 
-class OmlspTokenizer(Tokenizer):
-    KEYWORDS = {
-        **Tokenizer.KEYWORDS,
-        "SINK": TokenType.SINK,
-    }
+class Omlsp(Postgres):
 
+    class Tokenizer(Tokenizer):
+        KEYWORDS = {
+            **Postgres.Tokenizer.KEYWORDS,
+            "SINK": TokenType.SINK,
+            # TODO: ADD SOURCE HERE
+        }
 
-class OmlspParser(Parser):
-    def _parse_create(self):
-        if self._match(TokenType.SINK):
-            # Parse the name of the sink
-            name = self._parse_id_var()
-
-            if not self._match(TokenType.FROM):
-                self.raise_error("Expected FROM in CREATE SINK statement")
-
-            if self._curr and self._curr.token_type == TokenType.L_PAREN:
-                # Parse a subquery: (SELECT ...)
-                source_expr = self._parse_wrapped(self._parse_select)
-            else:
-                # Just a table identifier
-                source_expr = self._parse_id_var()
-
-            properties = None
-            if self._match(TokenType.WITH):
-                self._match(TokenType.L_PAREN)
-                properties = self._parse_properties()
-                self._match(TokenType.R_PAREN)
-
-            return self.expression(
-                exp.Create,
-                this=name,
-                kind="SINK",
-                expression=source_expr,
-                properties=properties,
-            )
-
-        return super()._parse_create()
-
-
-class OmlspDialect(Dialect):
-    parser = OmlspParser
-    tokenizer = OmlspTokenizer
-
+    class Parser(Postgres.Parser):
+        def _parse_table_hints(self) -> list[exp.Expression] | None:
+            return None
 
 def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
@@ -239,7 +205,7 @@ def build_create_sink_context(
 
     # TODO: support multiple upstreams merged/unioned
     if isinstance(expr, exp.Select):
-        upstreams = [extract_select_context(expr)]
+        upstreams = [extract_select_context(expr).table]        
     else:
         upstreams = [expr.copy().this] if expr else []
 
@@ -247,6 +213,7 @@ def build_create_sink_context(
         name=updated_create_statement.this,
         upstreams=upstreams,
         properties=properties,
+        query="SELECT 1;"
     )
 
 
@@ -380,17 +347,15 @@ def extract_command_context(
     statement: exp.Command,
 ) -> CommandContext | InvalidContext:
     sql_string = get_duckdb_sql(statement).strip().upper()
+    logger.error(sql_string)
 
-    if sql_string == "SHOW TABLES":
-        return CommandContext(query=sql_string)
-
-    return InvalidContext("Unsupported command, only 'SHOW TABLES' is supported")
+    return CommandContext(query=sql_string)
 
 
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> QueryContext | InvalidContext:
-    parsed_statement = parse_one(query, dialect=OmlspDialect)
+    parsed_statement = parse_one(query, dialect=Omlsp)
 
     if isinstance(parsed_statement, exp.Create):
         return extract_create_context(parsed_statement, properties_schema)
