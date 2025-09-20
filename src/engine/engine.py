@@ -1,28 +1,21 @@
-import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
 from string import Template
 from types import FunctionType
-from typing import Any, Coroutine, Iterable
+from typing import Any, Iterable
 
 import polars as pl
 import pyarrow as pa
-from apscheduler.job import Job
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection, struct_type
 from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from loguru import logger
 
 from context.context import (
-    CommandContext,
     CreateLookupTableContext,
-    CreateTableContext,
     SelectContext,
-    SetContext,
     SourceTaskContext,
 )
 from inout import persist
@@ -31,7 +24,6 @@ from metadata import (
     get_batch_id_from_table_metadata,
     get_lookup_tables,
     get_macro_definition_by_name,
-    get_tables,
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
@@ -183,41 +175,6 @@ def build_source_executable(ctx: SourceTaskContext):
     )
 
 
-async def execute(scheduler: AsyncIOScheduler, job: Job):
-    scheduler.start()
-    logger.info(f"[{job.name}] - next schedule: {job.next_run_time}")
-
-    # TODO: Dirty
-    while True:
-        await asyncio.sleep(3600)
-
-
-async def build_one_runner(
-    create_table_context: CreateTableContext, con: DuckDBPyConnection
-) -> Coroutine[Any, Any, None]:
-    properties = create_table_context.properties
-    table_name = create_table_context.name
-    cron_expr = str(properties["schedule"])
-    scheduler = AsyncIOScheduler()
-
-    trigger = CronTrigger.from_crontab(cron_expr, timezone=timezone.utc)
-    start_time = datetime.now(timezone.utc)
-    http_requester = build_http_requester(properties)
-
-    job = scheduler.add_job(
-        source_executable,
-        trigger,
-        name=table_name,
-        kwargs={
-            "table_name": table_name,
-            "start_time": start_time,
-            "http_requester": http_requester,
-            "con": con,
-        },
-    )
-    return execute(scheduler, job)
-
-
 def build_lookup_table_prehook(
     create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
@@ -329,33 +286,6 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
         return df
 
     return pl.DataFrame()
-
-
-async def execute_eval_ctx(
-    con: DuckDBPyConnection, context: SelectContext | SetContext | CommandContext
-) -> str:
-    if isinstance(context, SelectContext):
-        table_name = context.table
-        lookup_tables = get_lookup_tables(con)
-        tables = get_tables(con)
-
-        if table_name in lookup_tables:
-            msg = f"{table_name} is a lookup table, you cannot use it in FROM."
-            return msg
-
-        duckdb_sql = pre_hook_select_statements(con, context, tables)
-        return str(duckdb_to_pl(con, duckdb_sql))
-    elif isinstance(context, CommandContext):
-        result = con.sql(context.query)
-        return str(pl.DataFrame(result))
-    elif isinstance(context, SetContext):
-        con.sql(context.query)
-        return "SET"
-
-    try:
-        con.sql(context.query)
-    except Exception as e:
-        return str(e)  # TODO: handle duckdb configs and omlsp custom configs
 
 
 if __name__ == "__main__":
