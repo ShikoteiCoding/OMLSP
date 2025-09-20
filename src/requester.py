@@ -1,9 +1,9 @@
-import asyncio
-from typing import Any, Callable, Coroutine
-
 import httpx
 import jq
-from aiohttp import ClientSession
+import trio
+
+from typing import Any, Callable, Coroutine
+
 from loguru import logger
 
 
@@ -24,7 +24,7 @@ def parse_http_properties(params: dict[str, str]) -> dict:
 
 
 async def async_request(
-    client: ClientSession,
+    client: httpx.AsyncClient,
     url: str,
     jq: Any = None,
     method: str = "GET",
@@ -32,28 +32,23 @@ async def async_request(
     json={},
     **kwarg,
 ) -> list[dict]:
-    async with client as session:
-        async with session.request(
-            method=method,
-            url=url,
-            headers=headers,
-            json=json,
-        ) as response:
-            logger.debug(f"response for {url}: {response.status}")
+    response = await client.request(
+        method=method,
+        url=url,
+        headers=headers,
+        json=json,
+    )
+    logger.debug(f"response for {url}: {response.status_code}")
 
-            if response.ok:
-                data = await response.json()
-                return parse_response(data, jq)
+    if response.is_success:
+        return parse_response(response.json(), jq)
 
-            # TODO: add retry on fail here
-            try:
-                response.raise_for_status()
-            except Exception as e:
-                logger.warning(f"unable to request: {e}")
-            return []
-
-        # TODO: handle failure of async task
-        return []
+    # TODO: add retry on fail here
+    try:
+        response.raise_for_status()
+    except Exception as e:
+        logger.warning(f"unable to request: {e}")
+    return []
 
 
 def sync_request(
@@ -91,11 +86,10 @@ def parse_response(data: dict, jq: Any = None) -> list[dict]:
 
 
 async def http_requester(properties: dict) -> list[dict]:
-    client = ClientSession()
-    logger.debug(f"running request with properties: {properties}")
-    res = await async_request(client, **properties)
-    await client.close()
-    return res
+    async with httpx.AsyncClient() as client:
+        logger.debug(f"running request with properties: {properties}")
+        res = await async_request(client, **properties)
+        return res
 
 
 def sync_http_requester(properties: dict) -> list[dict]:
@@ -116,25 +110,27 @@ def build_http_requester(
 
         return _async_inner
 
-    else:
+    def _sync_inner():
+        return sync_http_requester(http_properties)
 
-        def _sync_inner():
-            return sync_http_requester(http_properties)
-
-        return _sync_inner
+    return _sync_inner
 
 
 if __name__ == "__main__":
     print("OMLSP starting")
-    properties = {
-        "connector": "http",
-        "url": "https://httpbin.org/get",
-        "method": "GET",
-        "scan.interval": "60s",
-        "jq": ".url",
-    }
 
-    _http_requester = build_http_requester(properties, is_async=True)
+    async def main():
+        properties = {
+            "connector": "http",
+            "url": "https://httpbin.org/get",
+            "method": "GET",
+            "scan.interval": "60s",
+            "jq": ".url",
+        }
 
-    res = asyncio.run(_http_requester())  # type: ignore
-    print(res)
+        _http_requester = build_http_requester(properties, is_async=True)
+
+        res = await _http_requester()  # type: ignore
+        logger.info(res)
+
+    trio.run(main)

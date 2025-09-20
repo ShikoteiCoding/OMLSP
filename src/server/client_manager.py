@@ -5,7 +5,7 @@ from duckdb import DuckDBPyConnection
 from loguru import logger
 from trio import SocketListener
 
-from commons.utils import Channel
+from channel import Channel
 
 ClientId = str
 

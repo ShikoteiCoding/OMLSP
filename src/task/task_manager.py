@@ -1,10 +1,10 @@
 import trio
-import trio_asyncio
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from commons.utils import Channel
+from channel import Channel
+from scheduler import TrioScheduler
 from context.context import (
     CreateLookupTableContext,
     CreateSinkContext,
@@ -20,14 +20,14 @@ from task.task import Task, TaskId
 
 class TaskManager:
     conn: DuckDBPyConnection
-    scheduler: AsyncIOScheduler
+    scheduler: TrioScheduler
 
     _sources: dict[TaskId, Task] = {}
     _task_id_to_task: dict[TaskId, Task] = {}
     _nursery: trio.Nursery
     _taskctx_channel: Channel[TaskContext]
 
-    def __init__(self, conn: DuckDBPyConnection, scheduler: AsyncIOScheduler):
+    def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
         self.conn = conn
         self.scheduler = scheduler
 
@@ -39,20 +39,20 @@ class TaskManager:
         self._running = True
 
         async with trio.open_nursery() as nursery:
-            async with trio_asyncio.open_loop() as loop:  # type: ignore
-                # TODO: create our own scheduler class to wrap event loop logic
-                # Or create our own event loop class
-                self.scheduler._eventloop = loop
-                self.scheduler.start()
+            # TODO: Reverse dependency injection
+            # TaskManager & scheduler should not be linked together
+            token = trio.lowlevel.current_trio_token()
+            self.scheduler._configure({"_nursery": nursery, "_trio_token": token})
+            self.scheduler.start()
 
-                self._nursery = nursery
+            self._nursery = nursery
 
-                nursery.start_soon(self._process)
-                nursery.start_soon(self._watch_for_shutdown)
+            nursery.start_soon(self._process)
+            nursery.start_soon(self._watch_for_shutdown)
 
-                logger.info("[TaskManager] Started.")
-                while self._running:
-                    await trio.sleep(1)
+            logger.info("[TaskManager] Started.")
+            while self._running:
+                await trio.sleep(1)
 
         logger.info("[TaskManager] Stopped.")
 

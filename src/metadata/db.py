@@ -76,6 +76,7 @@ def insert_view_metadata(con: DuckDBPyConnection, context: CreateViewContext) ->
     """
     con.sql(insert)
 
+
 def insert_sink_metadata(con: DuckDBPyConnection, context: CreateSinkContext) -> None:
     sink_name = context.name
     insert = f"""

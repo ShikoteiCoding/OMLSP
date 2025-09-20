@@ -4,11 +4,11 @@ from pathlib import Path
 
 import polars as pl
 import trio
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from duckdb import DuckDBPyConnection, connect
 
 from runner import Runner
 from server import ClientManager
+from scheduler import TrioScheduler
 from sql.file import iter_sql_statements
 from task import TaskManager
 
@@ -25,7 +25,7 @@ async def main():
     sql_filepath = Path(args.file)
 
     conn: DuckDBPyConnection = connect(database=":memory:")
-    scheduler = AsyncIOScheduler()
+    scheduler = TrioScheduler()
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
     runner = Runner(conn, PROPERTIES_SCHEMA, task_manager, client_manager)

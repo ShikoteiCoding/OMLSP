@@ -15,7 +15,9 @@ CreateViewContext = namedtuple("CreateViewContext", ["name", "upstreams", "query
 CreateMaterializedViewContext = namedtuple(
     "CreateMaterializedViewContext", ["name", "upstreams"]
 )
-CreateSinkContext = namedtuple("CreateSinkContext", ["name", "upstreams", "properties", "query"])
+CreateSinkContext = namedtuple(
+    "CreateSinkContext", ["name", "upstreams", "properties", "query"]
+)
 
 SelectContext = namedtuple(
     "SelectContext", ["columns", "table", "alias", "where", "joins", "query"]

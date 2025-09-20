@@ -29,7 +29,6 @@ class CreateKind(StrEnum):
 
 
 class Omlsp(Postgres):
-
     class Tokenizer(Tokenizer):
         KEYWORDS = {
             **Postgres.Tokenizer.KEYWORDS,
@@ -40,6 +39,7 @@ class Omlsp(Postgres):
     class Parser(Postgres.Parser):
         def _parse_table_hints(self) -> list[exp.Expression] | None:
             return None
+
 
 def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
@@ -209,7 +209,7 @@ def build_create_sink_context(
         name=updated_create_statement.this,
         upstreams=upstreams,
         properties=properties,
-        query="SELECT 1;"
+        query="SELECT 1;",
     )
 
 

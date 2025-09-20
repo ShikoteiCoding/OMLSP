@@ -3,7 +3,7 @@ from typing import Any, Callable, TypeAlias
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from commons.utils import Channel
+from channel import Channel
 
 TaskOutput: TypeAlias = Any
 TaskId = int | str
