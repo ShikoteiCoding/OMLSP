@@ -1,6 +1,10 @@
 import trio
 
-from commons.utils import Channel
+from duckdb import DuckDBPyConnection
+from loguru import logger
+
+from channel import Channel
+from scheduler import TrioScheduler
 from context.context import (
     CreateLookupTableContext,
     CreateSinkContext,
@@ -22,13 +26,15 @@ from loguru import logger
 
 class TaskManager:
     conn: DuckDBPyConnection
+    scheduler: TrioScheduler
 
     _sources: dict[TaskId, SourceTask] = {}
     _nursery: trio.Nursery
     _taskctx_channel: Channel[TaskContext]
 
-    def __init__(self, conn: DuckDBPyConnection):
+    def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
         self.conn = conn
+        self.scheduler = scheduler
 
     async def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._taskctx_channel = channel
@@ -38,11 +44,24 @@ class TaskManager:
         self._running = True
 
         async with trio.open_nursery() as nursery:
+            # TODO: Reverse dependency injection
+            # TaskManager & scheduler should not be linked together
+            token = trio.lowlevel.current_trio_token()
+            self.scheduler._configure({"_nursery": nursery, "_trio_token": token})
+            self.scheduler.start()
+
             self._nursery = nursery
+
             nursery.start_soon(self._process)
             nursery.start_soon(self._watch_for_shutdown)
 
-    def _register_task(self, ctx: TaskContext) -> BaseTask | None:
+            logger.info("[TaskManager] Started.")
+            while self._running:
+                await trio.sleep(1)
+
+        logger.info("[TaskManager] Stopped.")
+
+    def _register_one_task(self, ctx: TaskContext):
         task_id = ctx.name
 
         if isinstance(ctx, CreateSinkContext):
@@ -58,8 +77,8 @@ class TaskManager:
         elif isinstance(ctx, SourceTaskContext):
             source = SourceTask(task_id, self.conn, ctx.trigger)
             self._sources[task_id] = source.register(build_source_executable(ctx))
-
-            return source
+            _ = self.scheduler.add_job(func=source.run, trigger=ctx.trigger)
+            return None
 
         elif isinstance(ctx, CreateLookupTableContext):
             build_lookup_table_prehook(ctx, self.conn)
@@ -71,10 +90,10 @@ class TaskManager:
 
     async def _process(self):
         async for taskctx in self._taskctx_channel:
-            task = self._register_task(taskctx)
-            logger.info(
-                f'[TaskManager] registered {task.__class__.__name__} "{task.task_id}"'
-            )
+            task = self._register_one_task(taskctx)
+            # logger.info(
+            #     f'[TaskManager] registered {task.__class__.__name__} "{task.task_id}"'
+            # )
             if task is None:
                 continue
             self._nursery.start_soon(task.run)
