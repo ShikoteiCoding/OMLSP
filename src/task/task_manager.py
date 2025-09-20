@@ -42,7 +42,7 @@ class TaskManager:
             nursery.start_soon(self._process)
             nursery.start_soon(self._watch_for_shutdown)
 
-    def _build_task(self, ctx: TaskContext) -> BaseTask | None:
+    def _register_task(self, ctx: TaskContext) -> BaseTask | None:
         task_id = ctx.name
 
         if isinstance(ctx, CreateSinkContext):
@@ -71,13 +71,13 @@ class TaskManager:
 
     async def _process(self):
         async for taskctx in self._taskctx_channel:
-            task = self._build_task(taskctx)
-            if task is None:
-                continue
-            self._nursery.start_soon(task.run)
+            task = self._register_task(taskctx)
             logger.info(
                 f'[TaskManager] registered {task.__class__.__name__} "{task.task_id}"'
             )
+            if task is None:
+                continue
+            self._nursery.start_soon(task.run)
 
     async def _watch_for_shutdown(self):
         try:
