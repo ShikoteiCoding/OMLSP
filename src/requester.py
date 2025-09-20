@@ -44,14 +44,14 @@ async def async_request(
                 data = response.json()
                 return parse_response(data, jq)
 
-            logger.warning(f"request failed {url}: {response.status_code}")
+            logger.error(f"request failed {url}: {response.status_code}")
 
         attempt += 1
         if attempt < MAX_RETRIES:
             delay = 2**attempt
             await trio.sleep(delay)
 
-    logger.error(f"request to {url} failed after {retries} attempts")
+    logger.error(f"request to {url} failed after {MAX_RETRIES} attempts")
     return []
 
 

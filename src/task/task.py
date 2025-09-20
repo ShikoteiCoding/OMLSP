@@ -35,9 +35,6 @@ class SourceTask(BaseTask):
         return self._sender
 
     async def run(self):
-        if self._executable is None:
-            logger.info(f"No executable registered")
-            return
         # TODO replace with external scheduler
         async for _ in minimal_scheduler(self._trigger):
             result = await self._executable(task_id=self.task_id, con=self._conn)
