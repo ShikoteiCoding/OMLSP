@@ -197,13 +197,13 @@ def build_create_table_context(
     updated_create_statement.set(
         "this", updated_table_statement
     )  # overwrite modified table statement
-    period = float(properties.pop("schedule"))
+    trigger = str(properties.pop("schedule"))
 
     return CreateTableContext(
         name=table_name,
         properties=properties,
         query=get_duckdb_sql(updated_create_statement),
-        trigger=period,
+        trigger=trigger,
     )
 
 

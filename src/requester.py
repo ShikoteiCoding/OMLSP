@@ -8,6 +8,7 @@ from loguru import logger
 
 MAX_RETRIES = 3
 
+
 def parse_http_properties(params: dict[str, str]) -> dict:
     parsed_params = {}
     parsed_params["headers"] = {}
@@ -47,11 +48,12 @@ async def async_request(
 
         attempt += 1
         if attempt < MAX_RETRIES:
-            delay =  2 ** attempt
+            delay = 2**attempt
             await trio.sleep(delay)
 
     logger.error(f"request to {url} failed after {retries} attempts")
     return []
+
 
 def sync_request(
     client: httpx.Client,
