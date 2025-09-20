@@ -11,7 +11,8 @@ from engine.engine import (
     build_source_executable,
     build_lookup_table_prehook,
 )
-from task.task import TaskId, SourceTask, SinkTask
+from sink.sink import build_sink_connector
+from task.task import TaskId, BaseTask, SourceTask, SinkTask
 
 from duckdb import DuckDBPyConnection
 
@@ -41,34 +42,42 @@ class TaskManager:
             nursery.start_soon(self._process)
             nursery.start_soon(self._watch_for_shutdown)
 
-    async def _register_one_task(self, ctx: TaskContext):
+    def _build_task(self, ctx: TaskContext) -> BaseTask | None:
         task_id = ctx.name
 
         if isinstance(ctx, CreateSinkContext):
             # TODO: add Transform task to handle subqueries
             # TODO: subscribe to many upstreams
-            sink = SinkTask(task_id, ctx.properties)
+            sink = SinkTask(task_id)
+            # sink.register(build_sink_connector(ctx.properties))
             for upstream in ctx.upstreams:
                 sink.subscribe(self._sources[upstream].get_sender())
 
-            self._nursery.start_soon(sink.run)  # use parent nursery
-            logger.info(f'[TaskManager] registered sink task "{task_id}"')
+            return sink
 
         elif isinstance(ctx, SourceTaskContext):
             source = SourceTask(task_id, self.conn, ctx.trigger)
             self._sources[task_id] = source.register(build_source_executable(ctx))
 
-            self._nursery.start_soon(self._sources[task_id].run)  # use parent nursery
-            logger.info(f'[TaskManager] registered source task "{task_id}"')
+            return source
 
         elif isinstance(ctx, CreateLookupTableContext):
             build_lookup_table_prehook(ctx, self.conn)
-            logger.info(f'[TaskManager] registered lookup task "{task_id}"')
-            return
+            return None
+
+        else:
+            logger.warning(f"Unknown task context: {ctx}")
+            return None
 
     async def _process(self):
         async for taskctx in self._taskctx_channel:
-            await self._register_one_task(taskctx)
+            task = self._build_task(taskctx)
+            if task is None:
+                continue
+            self._nursery.start_soon(task.run)
+            logger.info(
+                f'[TaskManager] registered {task.__class__.__name__} "{task.task_id}"'
+            )
 
     async def _watch_for_shutdown(self):
         try:
