@@ -109,7 +109,6 @@ class Runner:
 
             # dispatch to task manager
             if isinstance(ctx, TaskContext):
-                logger.error(ctx)
                 await self._taskctx_channel.send(ctx)
 
     # TODO: return ValidEval / InvalidEval objects to handle dynamic errors before registering

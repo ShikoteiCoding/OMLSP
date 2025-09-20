@@ -2,6 +2,7 @@ import trio
 
 from duckdb import DuckDBPyConnection
 
+from apscheduler.job import Job
 from channel import Channel
 from scheduler import TrioScheduler
 from context.context import (
@@ -28,6 +29,7 @@ class TaskManager:
     _task_id_to_task: dict[TaskId, BaseTask] = {}
     _nursery: trio.Nursery
     _taskctx_channel: Channel[TaskContext]
+    _task_id_to_job: dict[TaskId, Job] = {}
 
     def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
         self.conn = conn
@@ -42,6 +44,9 @@ class TaskManager:
 
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
+            token = trio.lowlevel.current_trio_token()
+            self.scheduler._configure({"_nursery": nursery, "_trio_token": token})
+            self.scheduler.start()
             nursery.start_soon(self._process)
             nursery.start_soon(self._watch_for_shutdown)
 
@@ -59,6 +64,7 @@ class TaskManager:
             task = SinkTask(task_id)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
+            logger.info(f"[TaskManager] registered sink task '{task_id}'")
 
         elif isinstance(ctx, SourceTaskContext):
             # Executable could be attached to context
@@ -66,12 +72,11 @@ class TaskManager:
             task = SourceTask(task_id, self.conn)
             self._sources[task_id] = task.register(build_source_executable(ctx))
             _ = self.scheduler.add_job(func=task.run, trigger=ctx.trigger)
-            logger.info(f'[TaskManager] registered source task "{task_id}"')
+            logger.info(f"[TaskManager] registered source task '{task_id}'")
 
         elif isinstance(ctx, CreateLookupTableContext):
             build_lookup_table_prehook(ctx, self.conn)
 
-        logger.warning(f"Unknown task context: {ctx}")
         if task:
             self._task_id_to_task[task_id] = task
 
