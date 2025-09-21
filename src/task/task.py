@@ -24,17 +24,18 @@ class BaseTask(ABC):
 
 
 class SourceTask(BaseTask):
-    def __init__(self, task_id: str, conn: DuckDBPyConnection, trigger: str):
+    _running = False
+    _sender: Channel
+    _executable: Callable
+
+    def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._sender = Channel()
-        self._trigger = trigger
-        self._executable = None
 
     def get_sender(self) -> Channel:
         return self._sender
 
     async def run(self):
-        # TODO replace with external scheduler
         result = await self._executable(task_id=self.task_id, conn=self._conn)
         if hasattr(self, "_sender"):
             await self._sender.send(result)

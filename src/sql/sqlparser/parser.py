@@ -205,10 +205,13 @@ def build_create_sink_context(
     expr = updated_create_statement.expression
 
     # TODO: support multiple upstreams merged/unioned
+    ctx = extract_select_context(expr)
     if isinstance(expr, exp.Select):
-        upstreams = [extract_select_context(expr).table]        
+        upstreams = [ctx.table]        
     else:
-        upstreams = [expr.copy().this] if expr else []
+        return InvalidContext(
+        reason=f"Unsupported sink query: {expr}"
+    )
 
     return CreateSinkContext(
         name=updated_create_statement.this,
