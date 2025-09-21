@@ -1,10 +1,12 @@
-import httpx
-import jq
 import trio
+import jq
+import httpx
 
 from typing import Any, Callable, Coroutine
 
 from loguru import logger
+
+MAX_RETRIES = 5
 
 
 def parse_http_properties(params: dict[str, str]) -> dict:
@@ -32,22 +34,24 @@ async def async_request(
     json={},
     **kwarg,
 ) -> list[dict]:
-    response = await client.request(
-        method=method,
-        url=url,
-        headers=headers,
-        json=json,
-    )
-    logger.debug(f"response for {url}: {response.status_code}")
+    attempt = 0
+    while attempt < MAX_RETRIES:
+        response = await client.request(method, url, headers=headers, json=json)
 
-    if response.is_success:
-        return parse_response(response.json(), jq)
+        logger.debug(f"response for {url}: {response.status_code}")
 
-    # TODO: add retry on fail here
-    try:
-        response.raise_for_status()
-    except Exception as e:
-        logger.warning(f"unable to request: {e}")
+        if response.is_success:
+            data = response.json()
+            return parse_response(data, jq)
+
+        logger.error(f"request failed {url}: {response.status_code}")
+
+    attempt += 1
+    if attempt < MAX_RETRIES:
+        delay = attempt
+        await trio.sleep(delay)
+
+    logger.error(f"request to {url} failed after {MAX_RETRIES} attempts")
     return []
 
 
