@@ -17,7 +17,7 @@ from duckdb.typing import VARCHAR, DuckDBPyType
 from loguru import logger
 
 from context.context import (
-    CreateLookupTableContext,
+    CreateHTTPLookupTableContext,
     SelectContext,
     SourceTaskContext,
 )
@@ -181,7 +181,7 @@ def build_source_executable(ctx: SourceTaskContext):
 
 
 def build_lookup_table_prehook(
-    create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
+    create_table_context: CreateHTTPLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
     properties = create_table_context.properties
     table_name = create_table_context.name
@@ -292,6 +292,7 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
     return pl.DataFrame()
 
+
 def build_sink_executable(properties: dict[str, str]):
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
@@ -300,6 +301,7 @@ def build_sink_executable(properties: dict[str, str]):
         producer,
         topic,
     )
+
 
 async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
     records = df.to_dicts()
@@ -312,6 +314,7 @@ async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
         producer.flush()
 
     await trio.to_thread.run_sync(_produce_all)
+
 
 if __name__ == "__main__":
     from duckdb import connect

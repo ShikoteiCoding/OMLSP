@@ -4,9 +4,8 @@ from duckdb import DuckDBPyConnection
 from loguru import logger
 
 from context.context import (
-    CreateLookupTableContext,
-    CreateSinkContext,
     CreateTableContext,
+    CreateSinkContext,
     CreateViewContext,
     SelectContext,
 )
@@ -30,8 +29,7 @@ def init_metadata_store(con: DuckDBPyConnection) -> None:
     table_metadata = f"""
     CREATE TABLE {METADATA_TABLE_NAME} (
         table_name STRING,
-        last_batch_id INTEGER,
-        is_lookup BOOLEAN
+        last_batch_id INTEGER
     )
     """
     con.sql(table_metadata)
@@ -51,20 +49,12 @@ def init_metadata_store(con: DuckDBPyConnection) -> None:
     con.sql(sink_metadata)
 
 
-def insert_table_metadata(
-    con: DuckDBPyConnection, context: CreateTableContext | CreateLookupTableContext
-) -> None:
+def insert_table_metadata(con: DuckDBPyConnection, context: CreateTableContext) -> None:
     table_name = context.name
-    if isinstance(context, CreateTableContext):
-        insert = f"""
-        INSERT INTO {METADATA_TABLE_NAME} (table_name, last_batch_id, is_lookup)
-        VALUES ('{table_name}', 0, false);
-        """
-    elif isinstance(context, CreateLookupTableContext):
-        insert = f"""
-        INSERT INTO {METADATA_TABLE_NAME} (table_name, last_batch_id, is_lookup)
-        VALUES ('{table_name}', 0, true);
-        """
+    insert = f"""
+    INSERT INTO {METADATA_TABLE_NAME} (table_name, last_batch_id)
+    VALUES ('{table_name}', 0);
+    """
     con.sql(insert)
 
 
@@ -135,7 +125,7 @@ def get_tables(con: DuckDBPyConnection) -> list:
 
 def create_table(
     con: DuckDBPyConnection,
-    context: CreateTableContext | CreateLookupTableContext,
+    context: CreateTableContext,
 ) -> str:
     query = context.query
     con.execute(query)

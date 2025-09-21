@@ -7,9 +7,8 @@ from typing import Any
 from channel import Channel
 from context.context import (
     CommandContext,
-    CreateLookupTableContext,
-    CreateSinkContext,
     CreateTableContext,
+    CreateSinkContext,
     CreateViewContext,
     EvaluableContext,
     InvalidContext,
@@ -113,7 +112,7 @@ class Runner:
 
     # TODO: return ValidEval / InvalidEval objects to handle dynamic errors before registering
     def _eval_ctx(self, client_id: ClientId, ctx: EvaluableContext) -> str:
-        if isinstance(ctx, (CreateTableContext, CreateLookupTableContext)):
+        if isinstance(ctx, (CreateTableContext)):
             return create_table(self.conn, ctx)
 
         elif isinstance(ctx, CreateViewContext):

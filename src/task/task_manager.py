@@ -5,7 +5,7 @@ from duckdb import DuckDBPyConnection
 from channel import Channel
 from scheduler import TrioScheduler
 from context.context import (
-    CreateLookupTableContext,
+    CreateHTTPLookupTableContext,
     CreateSinkContext,
     SourceTaskContext,
     TaskContext,
@@ -13,7 +13,7 @@ from context.context import (
 from engine.engine import (
     build_lookup_table_prehook,
     build_source_executable,
-    build_sink_executable
+    build_sink_executable,
 )
 from task.task import TaskId, BaseTask, SourceTask, SinkTask
 
@@ -75,12 +75,12 @@ class TaskManager:
             task = SourceTask(task_id, self.conn)
             self._sources[task_id] = task.register(build_source_executable(ctx))
             _ = self.scheduler.add_job(
-            func=task.run,
-            trigger=ctx.trigger,
+                func=task.run,
+                trigger=ctx.trigger,
             )
             logger.info(f"[TaskManager] registered source task '{task_id}'")
 
-        elif isinstance(ctx, CreateLookupTableContext):
+        elif isinstance(ctx, CreateHTTPLookupTableContext):
             # TODO: is this the place to build lookup ? grr
             build_lookup_table_prehook(ctx, self.conn)
             logger.info(f"[TaskManager] built lookup table'{task_id}'")

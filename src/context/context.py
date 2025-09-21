@@ -2,12 +2,15 @@ from collections import namedtuple
 from typing import Union
 
 # --- Context definitions ---
-CreateTableContext = namedtuple(
+CreateHTTPTableContext = namedtuple(
     "CreateTableContext", ["name", "properties", "query", "trigger"]
 )
-CreateLookupTableContext = namedtuple(
+CreateHTTPLookupTableContext = namedtuple(
     "CreateLookupTableContext",
     ["name", "properties", "query", "dynamic_columns", "columns"],
+)
+CreateWSTableContext = namedtuple(
+    "CreateWSTableContext", ["name", "properties", "query"]
 )
 
 # TODO: implement those new contexts
@@ -31,16 +34,18 @@ InvalidContext = namedtuple("InvalidContext", ["reason"])
 # --- Unions for type hints ---
 # Context part of task flow
 TaskContext = Union[
-    CreateLookupTableContext,
-    CreateTableContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateViewContext,
     CreateMaterializedViewContext,
     CreateSinkContext,
 ]
 
 EvaluableContext = Union[
-    CreateLookupTableContext,
-    CreateTableContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
     SetContext,
@@ -50,8 +55,9 @@ EvaluableContext = Union[
 
 # Everything except Invalid
 QueryContext = Union[
-    CreateLookupTableContext,
-    CreateTableContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
     SetContext,
@@ -59,5 +65,10 @@ QueryContext = Union[
     SelectContext,
 ]
 
+# Table contexts of different connector type
+CreateTableContext = Union[
+    CreateHTTPLookupTableContext, CreateHTTPTableContext, CreateWSTableContext
+]
+
 # Sub type of TaskContext
-SourceTaskContext = Union[CreateTableContext]
+SourceTaskContext = Union[CreateHTTPTableContext]

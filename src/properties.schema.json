@@ -81,33 +81,50 @@
       "additionalProperties": true
     },
     {
-    "title": "Kafka Sink Connector",
-    "type": "object",
-    "required": [
-      "connector",
-      "topic",
-      "server"
-    ],
-    "properties": {
-      "connector": {
-        "const": "kafka",
-        "description": "Must be 'kafka'"
+      "title": "Websocket Connector",
+      "type": "object",
+      "required": ["connector", "url"],
+      "properties": {
+        "connector": {
+          "const": "ws",
+          "description": "Must be 'ws'"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^wss?://.+|^\\$.*",
+          "description": "Must be a valid URL or an expression starting with $"
+        }
       },
-      "topic": {
-        "type": "string",
-        "description": "The Kafka topic to write to"
-      },
-      "server": {
-        "type": "string",
-        "description": "The Kafka bootstrap server address"
-      },
-      "format": {
-        "type": "string",
-        "description": "The data format",
-        "default": "json"
-      }
+      "additionalProperties": true
     },
-    "additionalProperties": false
-  }
+    {
+      "title": "Kafka Sink Connector",
+      "type": "object",
+      "required": [
+        "connector",
+        "topic",
+        "server"
+      ],
+      "properties": {
+        "connector": {
+          "const": "kafka",
+          "description": "Must be 'kafka'"
+        },
+        "topic": {
+          "type": "string",
+          "description": "The Kafka topic to write to"
+        },
+        "server": {
+          "type": "string",
+          "description": "The Kafka bootstrap server address"
+        },
+        "format": {
+          "type": "string",
+          "description": "The data format",
+          "default": "json"
+        }
+      },
+      "additionalProperties": false
+    }
   ]
 }

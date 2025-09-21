@@ -13,6 +13,22 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
+CREATE TABLE binance_mini_tickers (
+    event_type STRING,
+    event_time BIGINT,
+    symbol STRING,
+    close FLOAT,
+    open FLOAT,
+    high FLOAT,
+    low FLOAT,
+    base_volume BIGINT,
+    quote_volume BIGINT
+)
+WITH (
+    'connector' = 'ws',
+    'url' = 'wss://fstream.binance.com/ws/BTCUSDT@miniTicker',
+);
+
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
     start_time TIMESTAMP_S,
