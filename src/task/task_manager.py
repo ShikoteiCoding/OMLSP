@@ -13,8 +13,8 @@ from context.context import (
 from engine.engine import (
     build_lookup_table_prehook,
     build_source_executable,
+    build_sink_executable
 )
-from sink.sink import build_sink_connector
 from task.task import TaskId, BaseTask, SourceTask, SinkTask
 
 
@@ -64,7 +64,7 @@ class TaskManager:
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(
-                build_sink_connector(ctx.properties)
+                build_sink_executable(ctx.properties)
             )
             _ = self.scheduler.add_job(func=task.run)
             logger.info(f"[TaskManager] registered sink task '{task_id}'")
@@ -77,7 +77,6 @@ class TaskManager:
             _ = self.scheduler.add_job(
             func=task.run,
             trigger=ctx.trigger,
-            misfire_grace_time=20,  # Currently needed because tasks aren't fully ready at firing               
             )
             logger.info(f"[TaskManager] registered source task '{task_id}'")
 

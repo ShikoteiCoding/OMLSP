@@ -6,7 +6,7 @@ from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 
 
 def parse_http_properties(params: dict[str, str]) -> dict:
@@ -48,7 +48,7 @@ async def async_request(
 
     attempt += 1
     if attempt < MAX_RETRIES:
-        delay = 2**attempt
+        delay = attempt
         await trio.sleep(delay)
 
     logger.error(f"request to {url} failed after {MAX_RETRIES} attempts")
