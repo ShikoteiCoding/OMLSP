@@ -1,7 +1,6 @@
 import trio
 
 from duckdb import DuckDBPyConnection
-from loguru import logger
 
 from channel import Channel
 from scheduler import TrioScheduler
@@ -14,22 +13,27 @@ from context.context import (
 from engine.engine import (
     build_lookup_table_prehook,
     build_source_executable,
+    build_sink_executable
 )
-from task.task import Task, TaskId
+from task.task import TaskId, BaseTask, SourceTask, SinkTask
+
+
+from loguru import logger
 
 
 class TaskManager:
     conn: DuckDBPyConnection
     scheduler: TrioScheduler
 
-    _sources: dict[TaskId, Task] = {}
-    _task_id_to_task: dict[TaskId, Task] = {}
+    _sources: dict[TaskId, SourceTask] = {}
+    _task_id_to_task: dict[TaskId, BaseTask] = {}
     _nursery: trio.Nursery
     _taskctx_channel: Channel[TaskContext]
 
     def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
         self.conn = conn
         self.scheduler = scheduler
+        self._token = trio.lowlevel.current_trio_token()
 
     async def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._taskctx_channel = channel
@@ -39,76 +43,47 @@ class TaskManager:
         self._running = True
 
         async with trio.open_nursery() as nursery:
-            # TODO: Reverse dependency injection
-            # TaskManager & scheduler should not be linked together
-            token = trio.lowlevel.current_trio_token()
-            self.scheduler._configure({"_nursery": nursery, "_trio_token": token})
-            self.scheduler.start()
-
             self._nursery = nursery
-
+            self.scheduler._configure({"_nursery": nursery, "_trio_token": self._token})
+            self.scheduler.start()
             nursery.start_soon(self._process)
             nursery.start_soon(self._watch_for_shutdown)
-
-            logger.info("[TaskManager] Started.")
-            while self._running:
-                await trio.sleep(1)
-
-        logger.info("[TaskManager] Stopped.")
-
-    async def _register_one_task(self, ctx: TaskContext):
-        task_id = ctx.name
-
-        task = Task(task_id=task_id, conn=self.conn)
-
-        # TODO: build according properties
-        if isinstance(ctx, CreateSinkContext):
-            # props = ctx.properties
-            # self._nursery.start_soon(
-            #     run_kafka_sink,
-            #     self.conn,
-            #     ctx.upstreams,
-            #     props["topic"],
-            #     props["server"],
-            #     ctx.name,
-            # )
-            logger.info(f'[TaskManager] registered sink task "{task_id}"')
-
-        elif isinstance(ctx, CreateLookupTableContext):
-            build_lookup_table_prehook(ctx, self.conn)
-            logger.info(f'[TaskManager] registered lookup task "{task_id}"')
-            return
-
-        elif isinstance(ctx, SourceTaskContext):  # register to scheduler
-            # Executable could be attached to context
-            # But we might want it dynamic later (i.e built at run time)
-            self._sources[task_id] = task.register(build_source_executable(ctx))
-            _ = self.scheduler.add_job(func=task.run, trigger=ctx.trigger)
-            logger.info(f'[TaskManager] registered source task "{task_id}"')
-
-        else:
-            for upstream in ctx.upstreams:
-                upstream_task = self._task_id_to_task[upstream]
-                task.subscribe(upstream_task.get_sender())
-
-        self._task_id_to_task[task_id] = task
 
     async def _process(self):
         async for taskctx in self._taskctx_channel:
             await self._register_one_task(taskctx)
 
-    async def _run_task(self, task: Task):
-        task._running = True
-        logger.info(f"[TaskManager] Task '{task.task_id}' started.")
+    async def _register_one_task(self, ctx: TaskContext) -> None:
+        task_id = ctx.name
+        task = None
 
-        try:
-            await task.run()
-        except Exception as e:
-            logger.info(f"[TaskManager] Task '{task.task_id}' failed: {e}")
-        else:
-            logger.info(f"[TaskManager] Task '{task.task_id}' completed successfully.")
-        finally:
-            task._running = False
+        if isinstance(ctx, CreateSinkContext):
+            # TODO: add Transform task to handle subqueries
+            # TODO: subscribe to many upstreams
+            task = SinkTask(task_id)
+            for name in ctx.upstreams:
+                task.subscribe(self._sources[name].get_sender())
+            self._task_id_to_task[task_id] = task.register(
+                build_sink_executable(ctx.properties)
+            )
+            _ = self.scheduler.add_job(func=task.run)
+            logger.info(f"[TaskManager] registered sink task '{task_id}'")
+
+        elif isinstance(ctx, SourceTaskContext):
+            # Executable could be attached to context
+            # But we might want it dynamic later (i.e built at run time)
+            task = SourceTask(task_id, self.conn)
+            self._sources[task_id] = task.register(build_source_executable(ctx))
+            _ = self.scheduler.add_job(
+            func=task.run,
+            trigger=ctx.trigger,
+            )
+            logger.info(f"[TaskManager] registered source task '{task_id}'")
+
+        elif isinstance(ctx, CreateLookupTableContext):
+            # TODO: is this the place to build lookup ? grr
+            build_lookup_table_prehook(ctx, self.conn)
+            logger.info(f"[TaskManager] built lookup table'{task_id}'")
 
     async def _watch_for_shutdown(self):
         try:
@@ -123,6 +98,6 @@ class TaskManager:
         for _, task in self._sources.items():
             s.append(str(task))
         s.append("dags:")
-        for _, task in self._task_id_to_task.items():
-            s.append(str(task))
+        # for _, task in self._task_id_to_task.items():
+        #     s.append(str(task))
         return "\n".join(s)

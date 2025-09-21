@@ -1,6 +1,6 @@
-from datetime import timezone
 from enum import StrEnum
 from typing import Any
+from datetime import timezone
 
 import jsonschema
 from apscheduler.triggers.cron import CronTrigger
@@ -129,6 +129,8 @@ def parse_create_properties(
                 value = val_exp.this
             else:  # fallback to raw SQL
                 value = val_exp.sql(dialect=None)
+        elif isinstance(prop, exp.SequenceProperties):
+            continue
         else:
             logger.warning(f"Unknown property: {type(prop)} - {prop}")
         custom_properties[key] = value
@@ -203,7 +205,13 @@ def build_create_sink_context(
     expr = updated_create_statement.expression
 
     # TODO: support multiple upstreams merged/unioned
-    upstreams = [extract_select_context(expr)]
+    ctx = extract_select_context(expr)
+    if isinstance(expr, exp.Select):
+        upstreams = [ctx.table]        
+    else:
+        return InvalidContext(
+        reason=f"Unsupported sink query: {expr}"
+    )
 
     return CreateSinkContext(
         name=updated_create_statement.this,
