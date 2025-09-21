@@ -53,8 +53,5 @@ class SinkTask(BaseTask):
         # TODO: receive many upstreams
         receiver = self._receivers[0]
         async for df in receiver:
-            if df is None:
-                continue
-
             logger.info(f"[SinkTask{{{self.task_id}}}] got:\n{df}")
-            await self._executable(df=df)
+            # await self._executable(df=df)
