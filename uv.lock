@@ -327,7 +327,6 @@ dependencies = [
     { name = "polars" },
     { name = "prompt-toolkit" },
     { name = "pyarrow" },
-    { name = "pytest-trio" },
     { name = "sqlglot" },
     { name = "trio" },
 ]
@@ -335,6 +334,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pytest-trio" },
     { name = "ruff" },
     { name = "vcrpy" },
 ]
@@ -353,7 +353,6 @@ requires-dist = [
     { name = "polars", specifier = ">=1.31.0" },
     { name = "prompt-toolkit", specifier = ">=3.0" },
     { name = "pyarrow", specifier = ">=21.0.0" },
-    { name = "pytest-trio", specifier = ">=0.8.0" },
     { name = "sqlglot", specifier = "==27.1.0" },
     { name = "trio", specifier = ">=0.30.0" },
 ]
@@ -361,6 +360,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = "==8.4.1" },
+    { name = "pytest-trio", specifier = ">=0.8.0" },
     { name = "ruff", specifier = ">=0.12.3" },
     { name = "vcrpy", specifier = "==6.0.2" },
 ]
