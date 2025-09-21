@@ -206,7 +206,7 @@ def build_create_sink_context(
 
     # TODO: support multiple upstreams merged/unioned
     ctx = extract_select_context(expr)
-    if isinstance(expr, exp.Select):
+    if isinstance(ctx, SelectContext):
         upstreams = [ctx.table]        
     else:
         return InvalidContext(

@@ -1,5 +1,5 @@
 import argparse
-import asyncio
+import trio
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -11,25 +11,25 @@ from prompt_toolkit.styles.pygments import style_from_pygments_cls
 from pygments.styles import get_style_by_name
 
 
-async def show_spinner():
+async def show_spinner(cancel_scope: trio.CancelScope):
     spinner_chars = [".  ", ".. ", "...", "..."]
     while True:
         for char in spinner_chars:
             print_formatted_text(HTML(f"<b><red>{char}</red></b> "), end="\r")
-            await asyncio.sleep(1)
+            await trio.sleep(1)
 
 
-async def connect(host: str, port: int, client_id: str) -> None:
-    """
-    Connect to the server and send SELECT queries
-    """
-    reader, writer = await asyncio.open_connection(host, port)
-    print(
-        f"Client {client_id} connected to {host}:{port}, write SELECT queries or exit to quit:"
-    )
+async def spinner_task(cancel_scope: trio.CancelScope):
+    """Wrapper task to run spinner and stop it via CancelScope."""
+    with cancel_scope:
+        await show_spinner(cancel_scope)
 
+
+def create_prompt_session(client_id: str) -> PromptSession:
+    """Create a configured PromptSession with bindings and completer."""
     style = style_from_pygments_cls(get_style_by_name("monokai"))
     bindings = KeyBindings()
+
     sql_completer = WordCompleter(
         ["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "JOIN", "SHOW TABLES"],
         ignore_case=True,
@@ -43,7 +43,7 @@ async def connect(host: str, port: int, client_id: str) -> None:
         else:
             event.app.current_buffer.insert_text("\n")
 
-    session = PromptSession(
+    return PromptSession(
         f"Client {client_id} > ",
         multiline=True,
         key_bindings=bindings,
@@ -51,24 +51,51 @@ async def connect(host: str, port: int, client_id: str) -> None:
         completer=sql_completer,
     )
 
-    with patch_stdout():
-        while True:
-            query = await session.prompt_async()
-            query = query.strip()
-            if query.lower() == "exit":
-                writer.write(b"exit\n")
-                await writer.drain()
-                break
 
-            writer.write(f"{query}\n".encode())
-            await writer.drain()
+async def connect(host: str, port: int, client_id: str) -> None:
+    """
+    Connect to the server and send SELECT queries.
+    """
+    session = create_prompt_session(client_id)
 
-            spinner_task = asyncio.create_task(show_spinner())
-            response = await reader.readuntil(b"\n\n")
-            spinner_task.cancel()
-            print(" " * 10, end="\r")
-            print(f"Client {client_id} > {response.decode().strip()}")
-            reader._buffer.clear()  # type: ignore
+    async with trio.open_nursery() as nursery:
+        async with await trio.open_tcp_stream(host, port) as client_stream:
+            print(
+                f"Client {client_id} connected to {host}:{port}, type 'exit' to quit."
+            )
+
+            with patch_stdout():
+                while True:
+                    # Run prompt_toolkit prompt in a separate thread
+                    query = await trio.to_thread.run_sync(session.prompt)
+                    query = query.strip()
+
+                    if query.lower() == "exit":
+                        await client_stream.send_all(b"exit\n")
+                        break
+
+                    # Send query to server
+                    await client_stream.send_all(f"{query}\n".encode())
+
+                    # ---- START SPINNER ----
+                    spinner_cancel_scope = trio.CancelScope()
+                    nursery.start_soon(spinner_task, spinner_cancel_scope)
+
+                    # Wait for response
+                    data = await client_stream.receive_some(4096)
+
+                    # ---- STOP SPINNER ----
+                    spinner_cancel_scope.cancel()
+
+                    # Clear spinner line
+                    print(" " * 20, end="\r")
+
+                    # Display server response
+                    if data:
+                        print(f"Client {client_id} > {data.decode().strip()}")
+                    else:
+                        print(f"Client {client_id} > [Server closed connection]")
+                        break
 
 
 if __name__ == "__main__":
@@ -85,4 +112,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    asyncio.run(connect(args.host, args.port, args.client_id))
+    async def main():
+        await connect(args.host, args.port, args.client_id)
+
+    trio.run(main)
