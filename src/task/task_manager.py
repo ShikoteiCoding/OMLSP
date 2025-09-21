@@ -74,7 +74,11 @@ class TaskManager:
             # But we might want it dynamic later (i.e built at run time)
             task = SourceTask(task_id, self.conn)
             self._sources[task_id] = task.register(build_source_executable(ctx))
-            _ = self.scheduler.add_job(func=task.run, trigger=ctx.trigger)
+            _ = self.scheduler.add_job(
+            func=task.run,
+            trigger=ctx.trigger,
+            misfire_grace_time=20,  # Currently needed because tasks aren't fully ready at firing               
+            )
             logger.info(f"[TaskManager] registered source task '{task_id}'")
 
         elif isinstance(ctx, CreateLookupTableContext):
