@@ -49,7 +49,7 @@ class SelectContext:
     table: str
     alias: str
     where: str
-    joins: str
+    joins: dict[str, str]
     query: str
 
 
