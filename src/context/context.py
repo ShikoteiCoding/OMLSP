@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Optional, Any, Union
+from typing import Any, Union
+from apscheduler.triggers.cron import CronTrigger
 
 # ---------- Table Contexts ----------
 @dataclass
@@ -7,7 +8,7 @@ class CreateTableContext:
     name: str
     properties: dict[str, Any]
     query: str
-    trigger: Optional[str] = None
+    trigger: CronTrigger
 
 
 @dataclass
@@ -46,9 +47,9 @@ class CreateSinkContext:
 class SelectContext:
     columns: list[str]
     table: str
-    alias: Optional[str]
-    where: Optional[str]
-    joins: list[str]
+    alias: str
+    where: str
+    joins: str
     query: str
 
 
