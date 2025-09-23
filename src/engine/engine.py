@@ -20,6 +20,7 @@ from context.context import (
     CreateLookupTableContext,
     SelectContext,
     SourceTaskContext,
+    TransformTaskContext,
 )
 from inout import persist
 from metadata import (
@@ -301,7 +302,11 @@ def build_sink_executable(properties: dict[str, str]):
         topic,
     )
 
-async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
+async def kafka_sink(
+        producer: Producer, 
+        topic: str, 
+        df: pl.DataFrame
+    ):
     records = df.to_dicts()
 
     def _produce_all():
@@ -312,6 +317,35 @@ async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
         producer.flush()
 
     await trio.to_thread.run_sync(_produce_all)
+
+def build_transform_executable(ctx: TransformTaskContext, is_materialized: bool):
+    return partial(
+        transform_executable,
+        ctx.name,
+        ctx.columns,
+        is_materialized,
+    )
+
+async def transform_executable(
+    view_name: str,
+    columns: list[str],
+    is_materialized: bool,
+    conn: DuckDBPyConnection, 
+    df: pl.DataFrame,
+) -> pl.DataFrame:
+    batch_id = get_batch_id_from_table_metadata(conn, view_name)
+    
+    if len(columns) == 0:
+        columns = df.columns
+    transform_df = df.select(columns)
+
+    if is_materialized:
+        epoch = int(time.time() * 1_000)
+        await persist(transform_df, batch_id, epoch, view_name, conn)
+
+    update_batch_id_in_table_metadata(conn, view_name, batch_id + 1)
+    return transform_df
+
 
 if __name__ == "__main__":
     from duckdb import connect

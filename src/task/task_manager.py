@@ -8,14 +8,16 @@ from context.context import (
     CreateLookupTableContext,
     CreateSinkContext,
     SourceTaskContext,
+    TransformTaskContext,
     TaskContext,
 )
 from engine.engine import (
     build_lookup_table_prehook,
     build_source_executable,
-    build_sink_executable
+    build_sink_executable,
+    build_transform_executable,
 )
-from task.task import TaskId, BaseTask, SourceTask, SinkTask
+from task.task import TaskId, BaseTask, SourceTask, SinkTask, TransformTask
 
 
 from loguru import logger
@@ -79,6 +81,17 @@ class TaskManager:
             trigger=ctx.trigger,
             )
             logger.info(f"[TaskManager] registered source task '{task_id}'")
+
+        elif isinstance(ctx, TransformTaskContext):
+            task = TransformTask(task_id, self.conn)
+            for name in ctx.upstreams:
+                task.subscribe(self._sources[name].get_sender())
+            is_materialized = False 
+            self._transforms[task_id] = task.register(
+                build_transform_executable(ctx, is_materialized)
+            )
+            _ = self.scheduler.add_job(func=task.run)
+            logger.info(f"[TaskManager] registered view '{task_id}'")
 
         elif isinstance(ctx, CreateLookupTableContext):
             # TODO: is this the place to build lookup ? grr

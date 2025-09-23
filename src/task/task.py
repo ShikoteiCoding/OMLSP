@@ -55,3 +55,23 @@ class SinkTask(BaseTask):
         async for df in receiver:
             logger.info(f"[SinkTask{{{self.task_id}}}] got:\n{df}")
             # await self._executable(df=df)
+
+class TransformTask(BaseTask):
+    def __init__(self, task_id: str, conn: DuckDBPyConnection):
+        super().__init__(task_id, conn)
+        self._receivers: list[Channel] = []
+        self._sender = Channel()
+
+    def subscribe(self, recv: Channel):
+        self._receivers.append(recv)
+
+    def get_sender(self) -> Channel:
+        return self._sender
+
+    async def run(self):
+        receiver = self._receivers[0]
+        async for df in receiver:
+            result = await self._executable(df=df, conn=self._conn)
+            logger.info(f"[ViewTask{{{self.task_id}}}] got:\n{result}")
+            if hasattr(self, "_sender"):
+                await self._send_channel.send(result)

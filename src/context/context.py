@@ -11,9 +11,9 @@ CreateLookupTableContext = namedtuple(
 )
 
 # TODO: implement those new contexts
-CreateViewContext = namedtuple("CreateViewContext", ["name", "upstreams", "query"])
+CreateViewContext = namedtuple("CreateViewContext", ["name", "upstreams", "columns", "query"])
 CreateMaterializedViewContext = namedtuple(
-    "CreateMaterializedViewContext", ["name", "upstreams"]
+    "CreateMaterializedViewContext", ["name", "upstreams", "columns", "query"]
 )
 CreateSinkContext = namedtuple(
     "CreateSinkContext", ["name", "upstreams", "properties", "query"]
@@ -61,3 +61,5 @@ QueryContext = Union[
 
 # Sub type of TaskContext
 SourceTaskContext = Union[CreateTableContext]
+
+TransformTaskContext = Union[CreateMaterializedViewContext, CreateViewContext]
