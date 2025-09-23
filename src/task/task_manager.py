@@ -6,7 +6,7 @@ from channel import Channel
 from scheduler import TrioScheduler
 from context.context import (
     CreateHTTPLookupTableContext,
-    CreateSinkContext,
+    SinkTaskContext,
     SourceTaskContext,
     TaskContext,
 )
@@ -57,15 +57,13 @@ class TaskManager:
         task_id = ctx.name
         task = None
 
-        if isinstance(ctx, CreateSinkContext):
+        if isinstance(ctx, SinkTaskContext):
             # TODO: add Transform task to handle subqueries
             # TODO: subscribe to many upstreams
             task = SinkTask(task_id)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
-            self._task_id_to_task[task_id] = task.register(
-                build_sink_executable(ctx.properties)
-            )
+            self._task_id_to_task[task_id] = task.register(build_sink_executable(ctx))
             _ = self.scheduler.add_job(func=task.run)
             logger.info(f"[TaskManager] registered sink task '{task_id}'")
 
