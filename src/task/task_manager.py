@@ -7,15 +7,24 @@ from scheduler import TrioScheduler
 from context.context import (
     CreateHTTPLookupTableContext,
     SinkTaskContext,
-    SourceTaskContext,
+    ScheduledTaskContext,
+    ContinousTaskContext,
     TaskContext,
 )
 from engine.engine import (
     build_lookup_table_prehook,
-    build_source_executable,
+    build_continuous_source_executable,
+    build_scheduled_source_executable,
     build_sink_executable,
 )
-from task.task import TaskId, BaseTask, SourceTask, SinkTask
+from task.task import (
+    TaskId,
+    BaseTaskT,
+    BaseSourceTaskT,
+    ContinuousSourceTask,
+    ScheduledSourceTask,
+    SinkTask,
+)
 
 
 from loguru import logger
@@ -25,8 +34,8 @@ class TaskManager:
     conn: DuckDBPyConnection
     scheduler: TrioScheduler
 
-    _sources: dict[TaskId, SourceTask] = {}
-    _task_id_to_task: dict[TaskId, BaseTask] = {}
+    _sources: dict[TaskId, BaseSourceTaskT] = {}
+    _task_id_to_task: dict[TaskId, BaseTaskT] = {}
     _nursery: trio.Nursery
     _taskctx_channel: Channel[TaskContext]
 
@@ -65,23 +74,41 @@ class TaskManager:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(build_sink_executable(ctx))
             _ = self.scheduler.add_job(func=task.run)
-            logger.info(f"[TaskManager] registered sink task '{task_id}'")
+            logger.success(f"[TaskManager] registered sink task '{task_id}'")
 
-        elif isinstance(ctx, SourceTaskContext):
+        elif isinstance(ctx, ScheduledTaskContext):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
-            task = SourceTask(task_id, self.conn)
-            self._sources[task_id] = task.register(build_source_executable(ctx))
+            task = ScheduledSourceTask[ctx._out_type](task_id, self.conn)
+            self._sources[task_id] = task.register(
+                build_scheduled_source_executable(ctx)
+            )
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
             )
-            logger.info(f"[TaskManager] registered source task '{task_id}'")
+            logger.success(
+                f"[TaskManager] registered scheduled source task '{task_id}'"
+            )
+
+        elif isinstance(ctx, ContinousTaskContext):
+            # Executable could be attached to context
+            # But we might want it dynamic later (i.e built at run time)
+            task = ContinuousSourceTask[ctx._out_type](task_id, self.conn)
+            self._sources[task_id] = task.register(
+                build_continuous_source_executable(ctx)
+            )
+            _ = self.scheduler.add_job(
+                func=task.run,
+            )
+            logger.success(
+                f"[TaskManager] registered continuous source task '{task_id}'"
+            )
 
         elif isinstance(ctx, CreateHTTPLookupTableContext):
             # TODO: is this the place to build lookup ? grr
             build_lookup_table_prehook(ctx, self.conn)
-            logger.info(f"[TaskManager] built lookup table'{task_id}'")
+            logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
 
     async def _watch_for_shutdown(self):
         try:

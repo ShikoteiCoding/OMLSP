@@ -1,5 +1,7 @@
-from dataclasses import dataclass
-from typing import Any, Union
+import polars as pl
+
+from dataclasses import dataclass, field
+from typing import Any, Union, Type
 from apscheduler.triggers.cron import CronTrigger
 from duckdb.typing import DuckDBPyType
 
@@ -14,6 +16,21 @@ class CreateHTTPTableContext:
     query: str
     trigger: CronTrigger
 
+    # executable of http table context
+    # returns a polars dataframe
+    _out_type: Type = field(default=pl.DataFrame)
+
+
+@dataclass
+class CreateWSTableContext:
+    name: str
+    properties: dict[str, Any]
+    query: str
+
+    # executable of ws table context
+    # returns a polars dataframe
+    _out_type: Type = field(default=pl.DataFrame)
+
 
 @dataclass
 class CreateHTTPLookupTableContext:
@@ -22,13 +39,6 @@ class CreateHTTPLookupTableContext:
     query: str
     dynamic_columns: list[str]
     columns: dict[str, DuckDBPyType]
-
-
-@dataclass
-class CreateWSTableContext:
-    name: str
-    properties: dict[str, Any]
-    query: str
 
 
 # ---------- View / Sink Contexts ----------
@@ -118,6 +128,7 @@ CreateTableContext = Union[
     CreateHTTPLookupTableContext, CreateHTTPTableContext, CreateWSTableContext
 ]
 
-SourceTaskContext = Union[CreateHTTPTableContext]
+ScheduledTaskContext = Union[CreateHTTPTableContext]
+ContinousTaskContext = Union[CreateWSTableContext]
 
 SinkTaskContext = Union[CreateSinkContext]

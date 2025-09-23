@@ -1,10 +1,17 @@
 from pathlib import Path
 from typing import Generator
 
+from loguru import logger
+
 
 def iter_sql_statements(path: Path | str) -> Generator[str, None, None]:
+    content = ""
+
     with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
+        while line := f.readline():
+            if line.startswith("--"):
+                continue
+            content += line
 
     statements = [stmt.lstrip() for stmt in content.split(";") if stmt != ""]
 
@@ -26,6 +33,6 @@ if __name__ == "__main__":
 
     try:
         for i, sql_statement in enumerate(iter_sql_statements("example.sql")):
-            print(sql_statement)
+            logger.success(sql_statement)
     except (FileNotFoundError, IOError) as e:
-        print(e)
+        logger.error(e)

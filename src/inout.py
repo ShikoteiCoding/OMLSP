@@ -13,4 +13,4 @@ async def persist(
     connection: Any,
 ) -> None:
     connection.execute(f"INSERT INTO {table_name} SELECT * FROM df")
-    logger.info(f"[{table_name}{{{batch_id}}}] {len(df)} records inserted @ {epoch}")
+    logger.debug(f"[{table_name}{{{batch_id}}}] {len(df)} records inserted @ {epoch}")

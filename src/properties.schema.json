@@ -83,7 +83,7 @@
     {
       "title": "Websocket Connector",
       "type": "object",
-      "required": ["connector", "url"],
+      "required": ["connector", "url", "jq"],
       "properties": {
         "connector": {
           "const": "ws",
@@ -93,6 +93,10 @@
           "type": "string",
           "pattern": "^wss?://.+|^\\$.*",
           "description": "Must be a valid URL or an expression starting with $"
+        },
+        "jq": {
+          "type": "string",
+          "description": "Must be a valid jq expression"
         }
       },
       "additionalProperties": true

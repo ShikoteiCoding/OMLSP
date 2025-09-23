@@ -1,8 +1,11 @@
 import trio
 import jq
 import httpx
+import json
+from trio_websocket import open_websocket_url
 
-from typing import Any, Callable, Coroutine
+from functools import partial
+from typing import Any, Callable, Coroutine, AsyncGenerator
 
 from loguru import logger
 
@@ -22,6 +25,18 @@ def parse_http_properties(params: dict[str, str]) -> dict:
             parsed_params["json"][key.split(".")[1]] = value
         else:
             parsed_params[key] = value
+    return parsed_params
+
+
+def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
+    parsed_params = {}
+
+    for key, value in params.items():
+        if key == "jq":
+            parsed_params["jq"] = jq.compile(value)
+        else:
+            parsed_params[key] = value
+
     return parsed_params
 
 
@@ -89,11 +104,18 @@ def parse_response(data: dict, jq: Any = None) -> list[dict]:
     return res
 
 
-async def http_requester(properties: dict) -> list[dict]:
+async def http_requester(properties: dict[str, Any]) -> list[dict]:
     async with httpx.AsyncClient() as client:
         logger.debug(f"running request with properties: {properties}")
         res = await async_request(client, **properties)
         return res
+
+
+async def ws_generator(properties: dict[str, Any]) -> AsyncGenerator[Any, list[dict]]:
+    async with open_websocket_url(properties["url"]) as ws:
+        message = await ws.get_message()
+        res = json.loads(message)
+        yield parse_response(res, properties["jq"])
 
 
 def sync_http_requester(properties: dict) -> list[dict]:
@@ -103,7 +125,7 @@ def sync_http_requester(properties: dict) -> list[dict]:
 
 
 def build_http_requester(
-    properties: dict, is_async: bool = True
+    properties: dict[str, Any], is_async: bool = True
 ) -> Callable[[], Coroutine[Any, Any, list[dict]]] | Callable[[], list[dict]]:
     http_properties = parse_http_properties(properties)
 
@@ -118,6 +140,12 @@ def build_http_requester(
         return sync_http_requester(http_properties)
 
     return _sync_inner
+
+
+def build_ws_generator(
+    properties: dict[str, Any],
+) -> Callable[[], AsyncGenerator[Any, list[dict]]]:
+    return partial(ws_generator, properties=parse_ws_properties(properties))
 
 
 if __name__ == "__main__":

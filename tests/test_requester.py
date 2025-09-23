@@ -1,5 +1,5 @@
 import pytest
-from src.requester import build_http_requester
+from external import build_http_requester
 
 
 @pytest.mark.trio

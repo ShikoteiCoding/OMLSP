@@ -26,7 +26,18 @@ CREATE TABLE binance_mini_tickers (
 )
 WITH (
     'connector' = 'ws',
-    'url' = 'wss://fstream.binance.com/ws/BTCUSDT@miniTicker',
+    'url' = 'wss://fstream.binance.com/ws/!ticker@arr',
+    'jq' = '.[:2][] | {
+        event_type: .e,
+        event_time: .E,
+        symbol: .s,
+        close: .c,
+        open: .o,
+        high: .h,
+        low: .l,
+        base_volume: .v,
+        quote_volume: .q
+    }'
 );
 
 CREATE TEMPORARY TABLE ohlc (
@@ -132,13 +143,12 @@ FROM all_tickers AS ALT
 LEFT JOIN all_tickers AS ALT2 
     on ALT.symbol = ALT2.symbol;
 -- Test sink from table
-CREATE SINK all_tickers_sink FROM all_tickers
-WITH (
-    connector = 'kafka',
-    topic = 'tickers_topic',
-    server = 'localhost:9092',
-);
-
+-- CREATE SINK all_tickers_sink FROM all_tickers
+-- WITH (
+--     connector = 'kafka',
+--     topic = 'tickers_topic',
+--     server = 'localhost:9092',
+-- );
 CREATE VIEW my_first_view AS
 SELECT
     symbol

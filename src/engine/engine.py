@@ -4,22 +4,26 @@ import trio
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from duckdb import DuckDBPyConnection
+from duckdb.functional import FunctionNullHandling, PythonUDFType
+from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
-from types import FunctionType
-from typing import Any, Iterable
+from types import FunctionType, CoroutineType
+from typing import Any, Iterable, Callable, AsyncGenerator
 
 import polars as pl
 import pyarrow as pa
-from duckdb import DuckDBPyConnection, struct_type
-from duckdb.functional import FunctionNullHandling, PythonUDFType
-from duckdb.typing import VARCHAR, DuckDBPyType
+from duckdb import struct_type
 from loguru import logger
 
 from context.context import (
     CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     SelectContext,
-    SourceTaskContext,
+    ScheduledTaskContext,
+    ContinousTaskContext,
     SinkTaskContext,
 )
 from inout import persist
@@ -30,7 +34,7 @@ from metadata import (
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
 )
-from requester import build_http_requester
+from external import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
 
 
@@ -138,12 +142,12 @@ def build_scalar_udf(
     }
 
 
-async def source_executable(
+async def http_source_executable(
+    task_id: str,
+    conn: DuckDBPyConnection,
     table_name: str,
     start_time: datetime,
     http_requester: FunctionType,
-    task_id: str,
-    conn: DuckDBPyConnection,
     *args,
     **kwargs,
 ) -> pl.DataFrame:
@@ -170,15 +174,73 @@ async def source_executable(
     return df
 
 
-def build_source_executable(ctx: SourceTaskContext):
+def build_http_source_executable(
+    ctx: CreateHTTPTableContext,
+) -> Callable[[str, DuckDBPyConnection], CoroutineType[Any, Any, pl.DataFrame]]:
     start_time = datetime.now(timezone.utc)
     properties = ctx.properties
     return partial(
-        source_executable,
+        http_source_executable,
         table_name=ctx.name,
         start_time=start_time,
         http_requester=build_http_requester(properties, is_async=True),
     )
+
+
+async def ws_source_executable(
+    task_id: str,
+    conn: DuckDBPyConnection,
+    table_name: str,
+    ws_generator: Callable[[], AsyncGenerator[Any, list[dict]]],
+    *args,
+    **kwargs,
+) -> AsyncGenerator[Any, pl.DataFrame]:
+    logger.info(f"[{task_id}] - starting ws executable")
+    batch_id = get_batch_id_from_table_metadata(conn, table_name)
+    while True:
+        async for records in ws_generator():
+            if len(records) > 0:
+                epoch = int(time.time() * 1_000)
+                # TODO: type polars with duckdb table catalog
+                df = pl.from_records(records)
+                await persist(df, batch_id, epoch, table_name, conn)
+            else:
+                df = pl.DataFrame()
+
+            yield df
+            update_batch_id_in_table_metadata(conn, table_name, batch_id + 1)
+
+
+def build_ws_source_executable(
+    ctx: CreateWSTableContext,
+) -> Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, pl.DataFrame]]:
+    properties = ctx.properties
+    table_name = ctx.name
+    return partial(
+        ws_source_executable,
+        table_name=table_name,
+        ws_generator=build_ws_generator(properties),
+    )
+
+
+def build_scheduled_source_executable(
+    ctx: ScheduledTaskContext,
+) -> Callable[[str, DuckDBPyConnection], CoroutineType[Any, Any, pl.DataFrame]]:
+    if isinstance(ctx, CreateHTTPTableContext):
+        return build_http_source_executable(ctx)
+
+    else:
+        raise NotImplementedError()
+
+
+def build_continuous_source_executable(
+    ctx: ContinousTaskContext,
+) -> Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, pl.DataFrame]]:
+    if isinstance(ctx, CreateWSTableContext):
+        return build_ws_source_executable(ctx)
+
+    else:
+        raise NotImplementedError()
 
 
 def build_lookup_table_prehook(
@@ -300,12 +362,18 @@ def build_sink_executable(ctx: SinkTaskContext):
     topic = properties["topic"]
     return partial(
         kafka_sink,
-        producer,
-        topic,
+        producer=producer,
+        topic=topic,
     )
 
 
-async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
+async def kafka_sink(
+    task_id: str,
+    conn: DuckDBPyConnection,
+    producer: Producer,
+    topic: str,
+    df: pl.DataFrame,
+):
     records = df.to_dicts()
 
     def _produce_all():
