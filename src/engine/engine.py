@@ -20,6 +20,7 @@ from context.context import (
     CreateLookupTableContext,
     SelectContext,
     SourceTaskContext,
+    SinkTaskContext,
 )
 from inout import persist
 from metadata import (
@@ -292,7 +293,8 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
     return pl.DataFrame()
 
-def build_sink_executable(properties: dict[str, str]):
+def build_sink_executable(ctx: SinkTaskContext):
+    properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
     return partial(
