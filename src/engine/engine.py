@@ -21,6 +21,7 @@ from context.context import (
     SelectContext,
     SourceTaskContext,
     TransformTaskContext,
+    SinkTaskContext,
 )
 from inout import persist
 from metadata import (
@@ -293,7 +294,8 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
     return pl.DataFrame()
 
-def build_sink_executable(properties: dict[str, str]):
+def build_sink_executable(ctx: SinkTaskContext):
+    properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
     return partial(
@@ -333,17 +335,17 @@ async def transform_executable(
     conn: DuckDBPyConnection, 
     df: pl.DataFrame,
 ) -> pl.DataFrame:
-    batch_id = get_batch_id_from_table_metadata(conn, view_name)
     
-    if len(columns) == 0:
+    if columns == [""]:
         columns = df.columns
     transform_df = df.select(columns)
 
     if is_materialized:
+        batch_id = get_batch_id_from_table_metadata(conn, view_name)
         epoch = int(time.time() * 1_000)
         await persist(transform_df, batch_id, epoch, view_name, conn)
+        update_batch_id_in_table_metadata(conn, view_name, batch_id + 1)
 
-    update_batch_id_in_table_metadata(conn, view_name, batch_id + 1)
     return transform_df
 
 

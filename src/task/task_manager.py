@@ -6,7 +6,7 @@ from channel import Channel
 from scheduler import TrioScheduler
 from context.context import (
     CreateLookupTableContext,
-    CreateSinkContext,
+    SinkTaskContext,
     SourceTaskContext,
     TransformTaskContext,
     TaskContext,
@@ -59,14 +59,14 @@ class TaskManager:
         task_id = ctx.name
         task = None
 
-        if isinstance(ctx, CreateSinkContext):
+        if isinstance(ctx, SinkTaskContext):
             # TODO: add Transform task to handle subqueries
             # TODO: subscribe to many upstreams
             task = SinkTask(task_id)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(
-                build_sink_executable(ctx.properties)
+                build_sink_executable(ctx)
             )
             _ = self.scheduler.add_job(func=task.run)
             logger.info(f"[TaskManager] registered sink task '{task_id}'")
@@ -87,11 +87,11 @@ class TaskManager:
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             is_materialized = False 
-            self._transforms[task_id] = task.register(
+            self._sources[task_id] = task.register(
                 build_transform_executable(ctx, is_materialized)
             )
             _ = self.scheduler.add_job(func=task.run)
-            logger.info(f"[TaskManager] registered view '{task_id}'")
+            logger.info(f"[TaskManager] registered transform task '{task_id}'")
 
         elif isinstance(ctx, CreateLookupTableContext):
             # TODO: is this the place to build lookup ? grr
