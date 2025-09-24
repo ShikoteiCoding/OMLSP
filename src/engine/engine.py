@@ -1,4 +1,7 @@
 import time
+import json
+import trio
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
@@ -17,6 +20,7 @@ from context.context import (
     CreateLookupTableContext,
     SelectContext,
     SourceTaskContext,
+    SinkTaskContext,
 )
 from inout import persist
 from metadata import (
@@ -27,6 +31,8 @@ from metadata import (
     update_batch_id_in_table_metadata,
 )
 from requester import build_http_requester
+from confluent_kafka import Producer
+
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
@@ -137,14 +143,14 @@ async def source_executable(
     start_time: datetime,
     http_requester: FunctionType,
     task_id: str,
-    con: DuckDBPyConnection,
+    conn: DuckDBPyConnection,
     *args,
     **kwargs,
 ) -> pl.DataFrame:
     # TODO: no provided api execution_time
     # using trigger.get_next_fire_time is costly (see code)
     execution_time = start_time
-    batch_id = get_batch_id_from_table_metadata(con, table_name)
+    batch_id = get_batch_id_from_table_metadata(conn, table_name)
     logger.info(f"[{table_name}{{{batch_id}}}] / @ {execution_time}")
 
     records = await http_requester()
@@ -156,11 +162,11 @@ async def source_executable(
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
-        await persist(df, batch_id, epoch, table_name, con)
+        await persist(df, batch_id, epoch, table_name, conn)
     else:
         df = pl.DataFrame()
 
-    update_batch_id_in_table_metadata(con, table_name, batch_id + 1)
+    update_batch_id_in_table_metadata(conn, table_name, batch_id + 1)
     return df
 
 
@@ -287,6 +293,27 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
     return pl.DataFrame()
 
+def build_sink_executable(ctx: SinkTaskContext):
+    properties = ctx.properties
+    producer = Producer({"bootstrap.servers": properties["server"]})
+    topic = properties["topic"]
+    return partial(
+        kafka_sink,
+        producer,
+        topic,
+    )
+
+async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
+    records = df.to_dicts()
+
+    def _produce_all():
+        for record in records:
+            payload = json.dumps(record).encode("utf-8")
+            producer.produce(topic, value=payload)
+            producer.poll(0)
+        producer.flush()
+
+    await trio.to_thread.run_sync(_produce_all)
 
 if __name__ == "__main__":
     from duckdb import connect

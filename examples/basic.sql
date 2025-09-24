@@ -13,7 +13,7 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
-CREATE TEMP TABLE ohlc (
+CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
     start_time TIMESTAMP_S,
     open FLOAT,
@@ -120,14 +120,6 @@ CREATE SINK all_tickers_sink FROM all_tickers
 WITH (
     connector = 'kafka',
     topic = 'tickers_topic',
-    server = 'localhost:9092',
-);
-
--- Test sink from select
-CREATE SINK all_tickers_sink_bis FROM (SELECT symbolName, buy FROM all_tickers)
-WITH (
-    connector = 'kafka',
-    topic = 'tickers_topic_2',
     server = 'localhost:9092',
 );
 

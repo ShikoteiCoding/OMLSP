@@ -1,6 +1,6 @@
-from datetime import timezone
 from enum import StrEnum
 from typing import Any
+from datetime import timezone
 
 import jsonschema
 from apscheduler.triggers.cron import CronTrigger
@@ -29,7 +29,6 @@ class CreateKind(StrEnum):
 
 
 class Omlsp(Postgres):
-
     class Tokenizer(Tokenizer):
         KEYWORDS = {
             **Postgres.Tokenizer.KEYWORDS,
@@ -40,6 +39,7 @@ class Omlsp(Postgres):
     class Parser(Postgres.Parser):
         def _parse_table_hints(self) -> list[exp.Expression] | None:
             return None
+
 
 def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
@@ -129,6 +129,8 @@ def parse_create_properties(
                 value = val_exp.this
             else:  # fallback to raw SQL
                 value = val_exp.sql(dialect=None)
+        elif isinstance(prop, exp.SequenceProperties):
+            continue
         else:
             logger.warning(f"Unknown property: {type(prop)} - {prop}")
         custom_properties[key] = value
@@ -203,13 +205,19 @@ def build_create_sink_context(
     expr = updated_create_statement.expression
 
     # TODO: support multiple upstreams merged/unioned
-    upstreams = [extract_select_context(expr)]
+    ctx = extract_select_context(expr)
+    if isinstance(ctx, SelectContext):
+        upstreams = [ctx.table]        
+    else:
+        return InvalidContext(
+        reason=f"Unsupported sink query: {expr}"
+    )
 
     return CreateSinkContext(
         name=updated_create_statement.this,
         upstreams=upstreams,
         properties=properties,
-        query="SELECT 1;"
+        query="SELECT 1;",
     )
 
 
