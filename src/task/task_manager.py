@@ -75,7 +75,9 @@ class TaskManager:
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             task = SourceTask(task_id, self.conn)
-            self._sources[task_id] = task.register(build_source_executable(ctx))
+            self._sources[task_id] = task.register(
+                build_source_executable(ctx)
+            )
             _ = self.scheduler.add_job(
             func=task.run,
             trigger=ctx.trigger,

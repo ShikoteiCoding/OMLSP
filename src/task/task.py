@@ -50,7 +50,7 @@ class SinkTask(BaseTask):
         self._receivers: list[Channel] = []
 
     def subscribe(self, recv: Channel):
-        self._receivers.append(recv)
+        self._receivers.append(recv.clone())
 
     async def run(self):
         # TODO: receive many upstreams
@@ -70,7 +70,7 @@ class TransformTask(BaseTask):
         self._sender = Channel()
 
     def subscribe(self, recv: Channel):
-        self._receivers.append(recv)
+        self._receivers.append(recv.clone())
 
     def get_sender(self) -> Channel:
         return self._sender
