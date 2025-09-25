@@ -17,6 +17,7 @@ from context.context import (
     CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
     InvalidContext,
     QueryContext,
     SelectContext,
@@ -250,16 +251,26 @@ def build_create_sink_context(
 
 def build_create_view_context(
     statement: exp.Create,
-) -> CreateViewContext | InvalidContext:
+) -> CreateViewContext | CreateMaterializedViewContext | InvalidContext:
     name = statement.this.name
 
     ctx = extract_select_context(statement.expression)
     if isinstance(ctx, InvalidContext):
         return ctx
+    
 
     # TODO: support multiple upstreams merged/unioned
     # TODO: add where clause
     upstreams = [ctx.table]
+
+    if "MATERIALIZED" in str(statement.this):
+        return CreateMaterializedViewContext(
+            name=name,
+            upstreams=upstreams,
+            columns=ctx.columns,
+            query=get_duckdb_sql(ctx),
+        )
+    
     return CreateViewContext(
         name=name,
         upstreams=upstreams,

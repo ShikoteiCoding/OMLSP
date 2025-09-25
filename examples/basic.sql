@@ -149,7 +149,7 @@ LEFT JOIN all_tickers AS ALT2
 --     topic = 'tickers_topic',
 --     server = 'localhost:9092',
 -- );
-CREATE VIEW my_first_view AS
+CREATE MATERIALIZED VIEW my_first_view AS
 SELECT
     symbol
 FROM all_tickers;
