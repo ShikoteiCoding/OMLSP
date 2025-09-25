@@ -261,7 +261,10 @@ def build_create_view_context(
     # TODO: add where clause
     upstreams = [ctx.table]
     return CreateViewContext(
-        name=name, upstreams=upstreams, columns=ctx.columns, query=get_duckdb_sql(statement)
+        name=name,
+        upstreams=upstreams,
+        columns=ctx.columns,
+        query=get_duckdb_sql(statement),
     )
 
 

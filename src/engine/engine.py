@@ -386,6 +386,7 @@ async def kafka_sink(
 
     await trio.to_thread.run_sync(_produce_all)
 
+
 def build_transform_executable(ctx: TransformTaskContext, is_materialized: bool):
     return partial(
         transform_executable,
@@ -394,14 +395,14 @@ def build_transform_executable(ctx: TransformTaskContext, is_materialized: bool)
         is_materialized,
     )
 
+
 async def transform_executable(
     view_name: str,
     columns: list[str],
     is_materialized: bool,
-    conn: DuckDBPyConnection, 
+    conn: DuckDBPyConnection,
     df: pl.DataFrame,
 ) -> pl.DataFrame:
-    
     if columns == [""]:
         columns = df.columns
     transform_df = df.select(columns)

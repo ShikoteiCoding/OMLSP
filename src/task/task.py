@@ -117,6 +117,7 @@ class SinkTask(BaseTaskT, Generic[T]):
             logger.info(f"[SinkTask{{{self.task_id}}}] got:\n{df}")
             # await self._executable(df=df)
 
+
 class TransformTask(BaseTaskT, Generic[T]):
     _sender: Channel[T]
     _receivers: list[Channel[T]]
@@ -126,7 +127,7 @@ class TransformTask(BaseTaskT, Generic[T]):
         super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
         self._sender = Channel()
-    
+
     def register(self, executable: Callable) -> TransformTask[T]:
         self._executable = executable
         return self

@@ -17,7 +17,7 @@ class Channel(Generic[T]):
     async def send(self, data: T) -> None:
         await self._send_ch.send(data)
 
-        #TODO broadcast channel instead of clones
+        # TODO broadcast channel instead of clones
         for sub in list(self._subscribers):
             try:
                 await sub.send(data)
@@ -26,7 +26,7 @@ class Channel(Generic[T]):
 
     async def recv(self) -> T:
         return await self._recv_ch.receive()
-    
+
     def clone(self) -> "Channel[T]":
         send, recv = trio.open_memory_channel[T](self.size)
         self._subscribers.append(send)
