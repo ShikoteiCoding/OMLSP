@@ -24,6 +24,7 @@ from context.context import (
     SelectContext,
     ScheduledTaskContext,
     ContinousTaskContext,
+    TransformTaskContext,
     SinkTaskContext,
 )
 from inout import persist
@@ -384,6 +385,34 @@ async def kafka_sink(
         producer.flush()
 
     await trio.to_thread.run_sync(_produce_all)
+
+def build_transform_executable(ctx: TransformTaskContext, is_materialized: bool):
+    return partial(
+        transform_executable,
+        ctx.name,
+        ctx.columns,
+        is_materialized,
+    )
+
+async def transform_executable(
+    view_name: str,
+    columns: list[str],
+    is_materialized: bool,
+    conn: DuckDBPyConnection, 
+    df: pl.DataFrame,
+) -> pl.DataFrame:
+    
+    if columns == [""]:
+        columns = df.columns
+    transform_df = df.select(columns)
+
+    if is_materialized:
+        batch_id = get_batch_id_from_table_metadata(conn, view_name)
+        epoch = int(time.time() * 1_000)
+        await persist(transform_df, batch_id, epoch, view_name, conn)
+        update_batch_id_in_table_metadata(conn, view_name, batch_id + 1)
+
+    return transform_df
 
 
 if __name__ == "__main__":

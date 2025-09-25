@@ -9,6 +9,7 @@ from context.context import (
     SinkTaskContext,
     ScheduledTaskContext,
     ContinousTaskContext,
+    TransformTaskContext,
     TaskContext,
 )
 from engine.engine import (
@@ -16,6 +17,7 @@ from engine.engine import (
     build_continuous_source_executable,
     build_scheduled_source_executable,
     build_sink_executable,
+    build_transform_executable
 )
 from task.task import (
     TaskId,
@@ -25,6 +27,7 @@ from task.task import (
     ScheduledSourceTask,
     SinkTask,
 )
+from task.task import TransformTask
 
 
 from loguru import logger
@@ -109,6 +112,17 @@ class TaskManager:
             # TODO: is this the place to build lookup ? grr
             build_lookup_table_prehook(ctx, self.conn)
             logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
+
+        elif isinstance(ctx, TransformTaskContext):
+            task = TransformTask(task_id, self.conn)
+            for name in ctx.upstreams:
+                task.subscribe(self._sources[name].get_sender())
+            is_materialized = False 
+            self._task_id_to_task[task_id] = task.register(
+                build_transform_executable(ctx, is_materialized)
+            )
+            _ = self.scheduler.add_job(func=task.run)
+            logger.info(f"[TaskManager] registered transform task '{task_id}'")
 
     async def _watch_for_shutdown(self):
         try:

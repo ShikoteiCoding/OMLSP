@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import polars as pl
 
 from abc import ABC, abstractmethod
@@ -21,7 +23,7 @@ class BaseTaskT(ABC, Generic[T]):
         self._conn = conn
 
     @abstractmethod
-    def register(self, executable: Callable):
+    def register(self, executable: Callable) -> BaseTaskT[T]:
         pass
 
     @abstractmethod
@@ -35,6 +37,11 @@ class BaseSourceTaskT(BaseTaskT, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection | None = None):
         super().__init__(task_id, conn)
         self._sender = Channel[T]()
+
+    @abstractmethod
+    def register(self, executable: Callable) -> BaseSourceTaskT[T]:
+        self._executable = executable
+        return self
 
     @abstractmethod
     def get_sender(self) -> Channel:
@@ -51,7 +58,7 @@ class ScheduledSourceTask(BaseSourceTaskT, Generic[T]):
 
     def register(
         self, executable: Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, T]]
-    ):
+    ) -> ScheduledSourceTask[T]:
         self._executable = executable
         return self
 
@@ -74,7 +81,7 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
 
     def register(
         self, executable: Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, T]]
-    ):
+    ) -> ContinuousSourceTask[T]:
         self._executable = executable
         return self
 
@@ -86,22 +93,22 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
             await self._sender.send(result)
 
 
-class SinkTask(BaseTaskT):
+class SinkTask(BaseTaskT, Generic[T]):
     def __init__(self, task_id: str):
         super().__init__(task_id)
-        self._receivers: list[Channel] = []
+        self._receivers: list[Channel[T]] = []
 
     def register(
         self,
         executable: Callable[
             [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, T]
         ],
-    ):
+    ) -> SinkTask[T]:
         self._executable = executable
         return self
 
     def subscribe(self, recv: Channel):
-        self._receivers.append(recv)
+        self._receivers.append(recv.clone())
 
     async def run(self):
         # TODO: receive many upstreams
@@ -109,3 +116,31 @@ class SinkTask(BaseTaskT):
         async for df in receiver:
             logger.info(f"[SinkTask{{{self.task_id}}}] got:\n{df}")
             # await self._executable(df=df)
+
+class TransformTask(BaseTaskT, Generic[T]):
+    _sender: Channel[T]
+    _receivers: list[Channel[T]]
+    _executable: Callable
+
+    def __init__(self, task_id: str, conn: DuckDBPyConnection):
+        super().__init__(task_id, conn)
+        self._receivers: list[Channel[T]] = []
+        self._sender = Channel()
+    
+    def register(self, executable: Callable) -> TransformTask[T]:
+        self._executable = executable
+        return self
+
+    def subscribe(self, recv: Channel):
+        self._receivers.append(recv.clone())
+
+    def get_sender(self) -> Channel:
+        return self._sender
+
+    async def run(self):
+        receiver = self._receivers[0]
+        async for df in receiver:
+            result = await self._executable(df=df, conn=self._conn)
+            logger.info(f"[TransformTask{{{self.task_id}}}] got:\n{result}")
+            if hasattr(self, "_sender"):
+                await self._sender.send(result)

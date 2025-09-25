@@ -257,9 +257,11 @@ def build_create_view_context(
     if isinstance(ctx, InvalidContext):
         return ctx
 
-    upstreams = list(set(ctx.table) & set(ctx.joins.keys()))
+    # TODO: support multiple upstreams merged/unioned
+    # TODO: add where clause
+    upstreams = [ctx.table]
     return CreateViewContext(
-        name=name, upstreams=upstreams, query=get_duckdb_sql(statement)
+        name=name, upstreams=upstreams, columns=ctx.columns, query=get_duckdb_sql(statement)
     )
 
 

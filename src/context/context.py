@@ -46,6 +46,7 @@ class CreateHTTPLookupTableContext:
 class CreateViewContext:
     name: str
     upstreams: list[str]
+    columns: list[str]
     query: str
 
 
@@ -53,6 +54,8 @@ class CreateViewContext:
 class CreateMaterializedViewContext:
     name: str
     upstreams: list[str]
+    columns: list[str]
+    query: str
 
 
 @dataclass
@@ -132,3 +135,4 @@ ScheduledTaskContext = Union[CreateHTTPTableContext]
 ContinousTaskContext = Union[CreateWSTableContext]
 
 SinkTaskContext = Union[CreateSinkContext]
+TransformTaskContext = Union[CreateMaterializedViewContext, CreateViewContext]
