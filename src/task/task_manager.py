@@ -118,7 +118,7 @@ class TaskManager:
             task = TransformTask(task_id, self.conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
-            
+
             is_materialized = False
             if type(ctx) == CreateMaterializedViewContext:
                 is_materialized = True

@@ -257,20 +257,26 @@ def build_create_view_context(
     ctx = extract_select_context(statement.expression)
     if isinstance(ctx, InvalidContext):
         return ctx
-    
 
     # TODO: support multiple upstreams merged/unioned
     # TODO: add where clause
     upstreams = [ctx.table]
 
-    if "MATERIALIZED" in str(statement.this):
-        return CreateMaterializedViewContext(
-            name=name,
-            upstreams=upstreams,
-            columns=ctx.columns,
-            query=get_duckdb_sql(ctx),
-        )
-    
+    # sqlglot often captures MATERIALIZED/NOT MATERIALIZED as a property
+    properties = statement.args.get("properties")
+    if properties:
+        for prop in properties.expressions:
+            if isinstance(prop, exp.MaterializedProperty):
+                # duckdb doesn't support MATERIALIZED
+                query = get_duckdb_sql(statement)
+                query = query.replace("VIEW", "TABLE", 1) 
+                return CreateMaterializedViewContext(
+                    name=name,
+                    upstreams=upstreams,
+                    columns=ctx.columns,
+                    query=query,
+                )
+
     return CreateViewContext(
         name=name,
         upstreams=upstreams,
