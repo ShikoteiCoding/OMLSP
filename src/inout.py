@@ -4,7 +4,7 @@ import polars as pl
 from loguru import logger
 from duckdb import DuckDBPyConnection
 
-async def persist(
+async def load_in_memory(
     df: pl.DataFrame,
     batch_id: int,
     epoch: int,

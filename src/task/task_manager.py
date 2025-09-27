@@ -90,6 +90,7 @@ class TaskManager:
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
+                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"
@@ -120,7 +121,7 @@ class TaskManager:
                 task.subscribe(self._sources[name].get_sender())
 
             is_materialized = False
-            if type(ctx) == CreateMaterializedViewContext:
+            if isinstance(ctx, CreateMaterializedViewContext):
                 is_materialized = True
 
             self._task_id_to_task[task_id] = task.register(

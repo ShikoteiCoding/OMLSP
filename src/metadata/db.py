@@ -39,6 +39,7 @@ def init_metadata_store(con: DuckDBPyConnection) -> None:
     view_metadata = f"""
     CREATE TABLE {METADATA_VIEW_NAME} (
         view_name STRING,
+        last_batch_id INTEGER
     )
     """
     con.sql(view_metadata)
@@ -71,8 +72,8 @@ def insert_table_metadata(con: DuckDBPyConnection, context: CreateTableContext) 
 def insert_view_metadata(con: DuckDBPyConnection, context: CreateViewContext) -> None:
     view_name = context.name
     insert = f"""
-    INSERT INTO {METADATA_VIEW_NAME} (view_name)
-    VALUES ('{view_name}');
+    INSERT INTO {METADATA_VIEW_NAME} (view_name, last_batch_id)
+    VALUES ('{view_name}', 0);
     """
     con.sql(insert)
 
@@ -205,24 +206,41 @@ def update_batch_id_in_table_metadata(
     """
     con.execute(query)
 
-def get_batch_id_from_view_materialized_metadata(con: DuckDBPyConnection, view_materialized_name: str) -> int:
-    query = f"""
-        SELECT *
-        FROM {METADATA_VIEW_MATERIALIZED_NAME}
-        WHERE view_materialized_name = '{view_materialized_name}';
-    """
-    res = con.sql(query).fetchall()
+def get_batch_id_from_view_metadata(
+    con: DuckDBPyConnection, view_name: str, is_materialized: bool
+) -> int:
+    if is_materialized:
+        query = f"""
+            SELECT *
+            FROM {METADATA_VIEW_MATERIALIZED_NAME}
+            WHERE view_materialized_name = '{view_name}';
+        """
+        res = con.sql(query).fetchall()
+    else:
+        query = f"""
+            SELECT *
+            FROM {METADATA_VIEW_NAME}
+            WHERE view_name = '{view_name}';
+        """
+        res = con.sql(query).fetchall()
     return res[0][1]
 
 
-def update_batch_id_i_view_materialized_metadata(
-    con: DuckDBPyConnection, view_materialized_name: str, batch_id: int
+def update_batch_id_i_view_metadata(
+    con: DuckDBPyConnection, view_name: str, batch_id: int, is_materialized: bool
 ) -> None:
-    query = f"""
-    UPDATE {METADATA_VIEW_MATERIALIZED_NAME}
-    SET last_batch_id={batch_id}
-    WHERE view_materialized_name = '{view_materialized_name}';
-    """
+    if is_materialized:
+        query = f"""
+        UPDATE {METADATA_VIEW_MATERIALIZED_NAME}
+        SET last_batch_id={batch_id}
+        WHERE view_materialized_name = '{view_name}';
+        """
+    else:
+        query = f"""
+        UPDATE {METADATA_VIEW_NAME}
+        SET last_batch_id={batch_id}
+        WHERE view_name = '{view_name}';
+        """ 
     con.execute(query)
 
 def get_table_schema(con: DuckDBPyConnection, table_name: str) -> list[dict[str, Any]]:
