@@ -226,7 +226,7 @@ def get_batch_id_from_view_metadata(
     return res[0][1]
 
 
-def update_batch_id_i_view_metadata(
+def update_batch_id_in_view_metadata(
     con: DuckDBPyConnection, view_name: str, batch_id: int, is_materialized: bool
 ) -> None:
     if is_materialized:

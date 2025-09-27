@@ -13,7 +13,7 @@ from metadata.db import (
     insert_table_metadata,
     resolve_schema,
     update_batch_id_in_table_metadata,
-    update_batch_id_i_view_metadata,
+    update_batch_id_in_view_metadata,
 )
 
 __all__ = [
@@ -31,5 +31,5 @@ __all__ = [
     "insert_table_metadata",
     "resolve_schema",
     "update_batch_id_in_table_metadata",
-    "update_batch_id_i_view_metadata",
+    "update_batch_id_in_view_metadata",
 ]
