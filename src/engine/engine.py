@@ -27,13 +27,15 @@ from context.context import (
     TransformTaskContext,
     SinkTaskContext,
 )
-from inout import persist
+from inout import cache
 from metadata import (
     create_macro_definition,
     get_batch_id_from_table_metadata,
     get_lookup_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
+    get_batch_id_from_view_metadata,
+    update_batch_id_in_view_metadata,
 )
 from external import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
@@ -167,7 +169,7 @@ async def http_source_executable(
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
         df = pl.from_records(records)
-        await persist(df, batch_id, epoch, table_name, conn)
+        await cache(df, batch_id, epoch, table_name, conn)
     else:
         df = pl.DataFrame()
 
@@ -204,7 +206,7 @@ async def ws_source_executable(
                 epoch = int(time.time() * 1_000)
                 # TODO: type polars with duckdb table catalog
                 df = pl.from_records(records)
-                await persist(df, batch_id, epoch, table_name, conn)
+                await cache(df, batch_id, epoch, table_name, conn)
             else:
                 df = pl.DataFrame()
 
@@ -357,7 +359,9 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
     return pl.DataFrame()
 
 
-def build_sink_executable(ctx: SinkTaskContext):
+def build_sink_executable(
+        ctx: SinkTaskContext
+    ) -> CoroutineType[Any, Any, None]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
@@ -374,7 +378,7 @@ async def kafka_sink(
     producer: Producer,
     topic: str,
     df: pl.DataFrame,
-):
+) -> None:
     records = df.to_dicts()
 
     def _produce_all():
@@ -387,7 +391,10 @@ async def kafka_sink(
     await trio.to_thread.run_sync(_produce_all)
 
 
-def build_transform_executable(ctx: TransformTaskContext, is_materialized: bool):
+def build_transform_executable(
+        ctx: TransformTaskContext, 
+        is_materialized: bool
+    ) -> Callable[[str, DuckDBPyConnection], CoroutineType[Any, Any, pl.DataFrame]]:
     return partial(
         transform_executable,
         ctx.name,
@@ -407,11 +414,10 @@ async def transform_executable(
         columns = df.columns
     transform_df = df.select(columns)
 
-    if is_materialized:
-        batch_id = get_batch_id_from_table_metadata(conn, view_name)
-        epoch = int(time.time() * 1_000)
-        await persist(transform_df, batch_id, epoch, view_name, conn)
-        update_batch_id_in_table_metadata(conn, view_name, batch_id + 1)
+    batch_id = get_batch_id_from_view_metadata(conn, view_name, is_materialized)
+    epoch = int(time.time() * 1_000)
+    await cache(transform_df, batch_id, epoch, view_name, conn)
+    update_batch_id_in_view_metadata(conn, view_name, batch_id + 1, is_materialized)
 
     return transform_df
 
