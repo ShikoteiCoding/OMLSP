@@ -1,3 +1,7 @@
+"""
+Task Manager managing registration and running of Tasks.
+"""
+
 import trio
 
 from duckdb import DuckDBPyConnection
@@ -32,6 +36,8 @@ from services import Service
 
 
 from loguru import logger
+
+__all__ = ["TaskManager"]
 
 
 class TaskManager(Service):

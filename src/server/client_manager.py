@@ -1,3 +1,7 @@
+"""
+Client Manager handling TCP SQL requests.
+"""
+
 from functools import partial
 
 import trio

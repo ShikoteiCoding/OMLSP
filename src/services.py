@@ -8,6 +8,8 @@ import trio
 
 from loguru import logger
 
+__all__ = ["Service"]
+
 
 class Service:
     """
