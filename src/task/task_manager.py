@@ -26,43 +26,52 @@ from task.task import (
     ContinuousSourceTask,
     ScheduledSourceTask,
     SinkTask,
+    TransformTask,
 )
-from task.task import TransformTask
+from services import Service
 
 
 from loguru import logger
 
 
-class TaskManager:
+class TaskManager(Service):
+    #: Duckdb connection
     conn: DuckDBPyConnection
+
+    #: Scheduler (trio compatible) to register
+    #: short lived or long lived processes
     scheduler: TrioScheduler
 
+    #: Reference to all sources by task id
+    #: TODO: to deprecate for below mapping
     _sources: dict[TaskId, BaseSourceTaskT] = {}
+
+    #: Reference to all tasks by task id
     _task_id_to_task: dict[TaskId, BaseTaskT] = {}
-    _nursery: trio.Nursery
-    _taskctx_channel: Channel[TaskContext]
+
+    #: Outgoing Task context to be orchestrated
+    _tasks_to_deploy: Channel[TaskContext]
 
     def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
+        super().__init__(name="TaskManager")
         self.conn = conn
         self.scheduler = scheduler
         self._token = trio.lowlevel.current_trio_token()
 
-    async def add_taskctx_channel(self, channel: Channel[TaskContext]):
-        self._taskctx_channel = channel
+    def add_taskctx_channel(self, channel: Channel[TaskContext]):
+        self._tasks_to_deploy = channel
 
-    async def run(self):
+    async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
-        self._running = True
 
-        async with trio.open_nursery() as nursery:
-            self._nursery = nursery
-            self.scheduler._configure({"_nursery": nursery, "_trio_token": self._token})
-            self.scheduler.start()
-            nursery.start_soon(self._process)
-            nursery.start_soon(self._watch_for_shutdown)
+        self.scheduler._configure(
+            {"_nursery": self._nursery, "_trio_token": self._token}
+        )
+        self.scheduler.start()
+        self._nursery.start_soon(self._process)
 
     async def _process(self):
-        async for taskctx in self._taskctx_channel:
+        async for taskctx in self._tasks_to_deploy:
             await self._register_one_task(taskctx)
 
     async def _register_one_task(self, ctx: TaskContext) -> None:
@@ -123,20 +132,3 @@ class TaskManager:
             )
             _ = self.scheduler.add_job(func=task.run)
             logger.info(f"[TaskManager] registered transform task '{task_id}'")
-
-    async def _watch_for_shutdown(self):
-        try:
-            while self._running:
-                await trio.sleep(1)
-        finally:
-            logger.info("[Runner] Shutdown initiated.")
-            self._running = False
-
-    def __repr__(self) -> str:
-        s = ["sources:"]
-        for _, task in self._sources.items():
-            s.append(str(task))
-        s.append("dags:")
-        # for _, task in self._task_id_to_task.items():
-        #     s.append(str(task))
-        return "\n".join(s)
