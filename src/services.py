@@ -17,7 +17,7 @@ class Service:
     """
 
     #: Default timeout for graceful shutdown after stop()
-    shutdown_timeout = 1.0
+    shutdown_timeout: float
 
     #: Main nursery to spawn childs
     _nursery: trio.Nursery
@@ -34,13 +34,14 @@ class Service:
     #: List of chiled services
     _dependencies: list[Service]
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, shutdown_timeout: float = 1.0) -> None:
         self._started = trio.Event()
         self._stopped = trio.Event()
         self._shutdown = trio.Event()
         self._dependencies = []
 
         self.name = name
+        self.shutdown_timeout = shutdown_timeout
 
         # TODO: Not implemented yet
         self._polling_started = False
