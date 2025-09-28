@@ -1,15 +1,15 @@
 import argparse
 import json
-
-from pathlib import Path
-
 import polars as pl
 import trio
-from duckdb import DuckDBPyConnection, connect
 
-from runner import Runner
-from server import ClientManager
+from duckdb import DuckDBPyConnection, connect
+from loguru import logger
+from pathlib import Path
+
+from app import App
 from scheduler import TrioScheduler
+from server import ClientManager
 from sql.file import iter_sql_statements
 from task import TaskManager
 
@@ -29,13 +29,36 @@ async def main():
     scheduler = TrioScheduler()
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
-    runner = Runner(conn, PROPERTIES_SCHEMA, task_manager, client_manager)
+    app = App(conn, PROPERTIES_SCHEMA)
 
-    await runner.build()
+    # TODO: Not the most elegant, baby steps
+    # towards full actor model to polish
+
+    # Connect ClientManager to App
+    app.add_dependency(client_manager)
+    app.connect_client_manager(client_manager)
+
+    # Connect TaskManager to App
+    app.add_dependency(task_manager)
+    app.connect_task_manager(task_manager)
+
     async with trio.open_nursery() as nursery:
-        nursery.start_soon(runner.run)
+        nursery.start_soon(app.start, nursery)
         for sql in iter_sql_statements(sql_filepath):
-            await runner.submit(sql)
+            await app.submit(sql)
+
+        try:
+            await app.wait_until_stopped()
+        except KeyboardInterrupt:
+            logger.warning(
+                "KeyboardInterrupt received! Stopping services gracefully..."
+            )
+            # This will set `_stopped` and trigger orderly shutdown
+            await app.stop()
+
+            # Now wait for all dependencies to shut down
+            await app._shutdown.wait()
+            logger.success("All services shut down gracefully!")
 
 
 if __name__ == "__main__":

@@ -122,6 +122,7 @@ QueryContext = Union[
     CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
     SetContext,
     CommandContext,
     SelectContext,
