@@ -10,6 +10,7 @@ from context.context import (
     CreateTableContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
     EvaluableContext,
     InvalidContext,
     SelectContext,
@@ -21,6 +22,7 @@ from metadata import (
     create_sink,
     create_table,
     create_view,
+    create_view_materialized,
     get_lookup_tables,
     get_tables,
     init_metadata_store,
@@ -118,6 +120,9 @@ class Runner:
         elif isinstance(ctx, CreateViewContext):
             return create_view(self.conn, ctx)
 
+        elif isinstance(ctx, CreateMaterializedViewContext):
+            return create_view_materialized(self.conn, ctx)
+        
         elif isinstance(ctx, CreateSinkContext):
             return create_sink(self.conn, ctx)
 
