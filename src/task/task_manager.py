@@ -15,6 +15,7 @@ from context.context import (
     ContinousTaskContext,
     TransformTaskContext,
     TaskContext,
+    CreateMaterializedViewContext,
 )
 from engine.engine import (
     build_lookup_table_prehook,
@@ -104,6 +105,7 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
+                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"
@@ -132,9 +134,15 @@ class TaskManager(Service):
             task = TransformTask(task_id, self.conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
+
             is_materialized = False
+            if isinstance(ctx, CreateMaterializedViewContext):
+                is_materialized = True
+
             self._task_id_to_task[task_id] = task.register(
                 build_transform_executable(ctx, is_materialized)
             )
-            _ = self.scheduler.add_job(func=task.run)
+            _ = self.scheduler.add_job(
+                func=task.run,
+            )
             logger.info(f"[TaskManager] registered transform task '{task_id}'")

@@ -7,11 +7,13 @@ from context.context import (
     CreateTableContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
     SelectContext,
 )
 
 METADATA_TABLE_NAME = "__table_metadata"
 METADATA_VIEW_NAME = "__view_metadata"
+METADATA_VIEW_MATERIALIZED_NAME = "__view_materialized_metadata"
 METADATA_MACRO_NAME = "__macro_metadata"
 METADATA_SINK_NAME = "__sink_metadata"
 
@@ -37,9 +39,18 @@ def init_metadata_store(con: DuckDBPyConnection) -> None:
     view_metadata = f"""
     CREATE TABLE {METADATA_VIEW_NAME} (
         view_name STRING,
+        last_batch_id INTEGER
     )
     """
     con.sql(view_metadata)
+
+    view_materialized_metadata = f"""
+    CREATE TABLE {METADATA_VIEW_MATERIALIZED_NAME} (
+        view_materialized_name STRING,
+        last_batch_id INTEGER
+    )
+    """
+    con.sql(view_materialized_metadata)
 
     sink_metadata = f"""
     CREATE TABLE {METADATA_SINK_NAME} (
@@ -61,8 +72,19 @@ def insert_table_metadata(con: DuckDBPyConnection, context: CreateTableContext) 
 def insert_view_metadata(con: DuckDBPyConnection, context: CreateViewContext) -> None:
     view_name = context.name
     insert = f"""
-    INSERT INTO {METADATA_VIEW_NAME} (view_name)
-    VALUES ('{view_name}');
+    INSERT INTO {METADATA_VIEW_NAME} (view_name, last_batch_id)
+    VALUES ('{view_name}', 0);
+    """
+    con.sql(insert)
+
+
+def insert_view_materialized_metadata(
+    con: DuckDBPyConnection, context: CreateMaterializedViewContext
+) -> None:
+    view_materialized_name = context.name
+    insert = f"""
+    INSERT INTO {METADATA_VIEW_MATERIALIZED_NAME} (view_materialized_name, last_batch_id)
+    VALUES ('{view_materialized_name}', 0);
     """
     con.sql(insert)
 
@@ -144,6 +166,16 @@ def create_view(
     logger.info(f"[db] Registered view: {context.name}")
     return "CREATE VIEW"
 
+def create_view_materialized(
+    con: DuckDBPyConnection,
+    context: CreateMaterializedViewContext,
+) -> str:
+    query = context.query
+    con.execute(query)
+    insert_view_materialized_metadata(con, context)
+    logger.info(f"[db] Registered view materialized: {context.name}")
+    return "CREATE MATERIALIZED VIEW"
+
 
 def create_sink(
     con: DuckDBPyConnection,
@@ -151,7 +183,7 @@ def create_sink(
 ) -> str:
     insert_sink_metadata(con, context)
     logger.info(f"[db] Registered sink: {context.name}")
-    return "CREATE VIEW"
+    return "CREATE SINK"
 
 
 def get_batch_id_from_table_metadata(con: DuckDBPyConnection, table_name: str) -> int:
@@ -174,6 +206,42 @@ def update_batch_id_in_table_metadata(
     """
     con.execute(query)
 
+def get_batch_id_from_view_metadata(
+    con: DuckDBPyConnection, view_name: str, is_materialized: bool
+) -> int:
+    if is_materialized:
+        query = f"""
+            SELECT *
+            FROM {METADATA_VIEW_MATERIALIZED_NAME}
+            WHERE view_materialized_name = '{view_name}';
+        """
+        res = con.sql(query).fetchall()
+    else:
+        query = f"""
+            SELECT *
+            FROM {METADATA_VIEW_NAME}
+            WHERE view_name = '{view_name}';
+        """
+        res = con.sql(query).fetchall()
+    return res[0][1]
+
+
+def update_batch_id_in_view_metadata(
+    con: DuckDBPyConnection, view_name: str, batch_id: int, is_materialized: bool
+) -> None:
+    if is_materialized:
+        query = f"""
+        UPDATE {METADATA_VIEW_MATERIALIZED_NAME}
+        SET last_batch_id={batch_id}
+        WHERE view_materialized_name = '{view_name}';
+        """
+    else:
+        query = f"""
+        UPDATE {METADATA_VIEW_NAME}
+        SET last_batch_id={batch_id}
+        WHERE view_name = '{view_name}';
+        """ 
+    con.execute(query)
 
 def get_table_schema(con: DuckDBPyConnection, table_name: str) -> list[dict[str, Any]]:
     result = con.execute(f"DESCRIBE {table_name}").fetchall()

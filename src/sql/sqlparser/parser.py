@@ -17,6 +17,7 @@ from context.context import (
     CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
     InvalidContext,
     QueryContext,
     SelectContext,
@@ -250,7 +251,7 @@ def build_create_sink_context(
 
 def build_create_view_context(
     statement: exp.Create,
-) -> CreateViewContext | InvalidContext:
+) -> CreateViewContext | CreateMaterializedViewContext | InvalidContext:
     name = statement.this.name
 
     ctx = extract_select_context(statement.expression)
@@ -260,11 +261,27 @@ def build_create_view_context(
     # TODO: support multiple upstreams merged/unioned
     # TODO: add where clause
     upstreams = [ctx.table]
+    # duckdb doesn't support MATERIALIZED and load VIEW in memory
+    statement.args["kind"] = "TABLE" 
+    query = get_duckdb_sql(statement)
+
+    # sqlglot often captures MATERIALIZED/NOT MATERIALIZED as a property
+    properties = statement.args.get("properties")
+    if properties:
+        for prop in properties.expressions:
+            if isinstance(prop, exp.MaterializedProperty):
+                return CreateMaterializedViewContext(
+                    name=name,
+                    upstreams=upstreams,
+                    columns=ctx.columns,
+                    query=query,
+                )
+
     return CreateViewContext(
         name=name,
         upstreams=upstreams,
         columns=ctx.columns,
-        query=get_duckdb_sql(statement),
+        query=query,
     )
 
 
@@ -407,7 +424,6 @@ def extract_command_context(
     statement: exp.Command,
 ) -> CommandContext | InvalidContext:
     sql_string = get_duckdb_sql(statement).strip().upper()
-    logger.error(sql_string)
 
     return CommandContext(query=sql_string)
 
