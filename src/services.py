@@ -33,7 +33,7 @@ class Service:
     #: Waitable event for shutdown loop
     _shutdown: trio.Event
 
-    #: List of chiled services
+    #: List of child services
     _dependencies: list[Service]
 
     def __init__(self, name: str, shutdown_timeout: float = 1.0) -> None:
