@@ -7,8 +7,9 @@ from typing import Any, NoReturn
 from channel import Channel
 from context.context import (
     CommandContext,
-    CreateTableContext,
+    CreateSecretContext,
     CreateSinkContext,
+    CreateTableContext,
     CreateViewContext,
     EvaluableContext,
     InvalidContext,
@@ -18,6 +19,7 @@ from context.context import (
 )
 from engine.engine import duckdb_to_pl, pre_hook_select_statements
 from metadata import (
+    create_secret,
     create_sink,
     create_table,
     create_view,
@@ -167,10 +169,12 @@ class App(Service):
         # TODO: to be eventually replaced by visitor pattern ?
         if isinstance(ctx, CreateTableContext):
             return create_table(self._conn, ctx)
-        elif isinstance(ctx, CreateViewContext):
-            return create_view(self._conn, ctx)
         elif isinstance(ctx, CreateSinkContext):
             return create_sink(self._conn, ctx)
+        elif isinstance(ctx, CreateSecretContext):
+            return create_secret(self._conn, ctx)
+        elif isinstance(ctx, CreateViewContext):
+            return create_view(self._conn, ctx)
         elif isinstance(ctx, CommandContext):
             return str(duckdb_to_pl(self._conn, ctx.query))
         elif isinstance(ctx, SetContext):
