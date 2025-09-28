@@ -50,15 +50,27 @@ class Service:
         self._pollers = []
 
     async def on_start(self) -> None:
-        """Called right after service is started, before pollers run."""
+        """
+        Default method being started in start().
+        
+        To be implemented by the derived class.
+        """
         logger.success("[{}] starting.", self.name)
 
     async def on_stop(self) -> None:
-        """Called when the service is asked to stop but before shutdown is complete."""
+        """
+        Default method being started in stop().
+        
+        To be implemented by the derived class.
+        """
         logger.success("[{}] stopping.", self.name)
 
     async def on_shutdown(self) -> None:
-        """Called when the service has fully shut down."""
+        """
+        Default method after completing stop().
+        
+        To be implemented by the derived class.
+        """
         logger.success("[{}] shutdown.", self.name)
 
     async def start(self, nursery: trio.Nursery) -> None:
