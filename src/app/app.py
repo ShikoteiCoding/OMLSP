@@ -2,7 +2,7 @@ import trio
 
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
-from typing import Any
+from typing import Any, NoReturn
 
 from channel import Channel
 from context.context import (
@@ -44,7 +44,7 @@ __all__ = ["App"]
 class App(Service):
     """
     App that orchestrates client and task managers, processes SQL,
-    and dispatches tasks, built as a TrioService.
+    and dispatches tasks, built as derived Service.
     """
 
     #: Duckdb connection
@@ -74,16 +74,35 @@ class App(Service):
         self._conn = conn
         self._properties_schema = properties_schema
 
-        # Channels are created and own by App
+        # Channels are created and own by App.
+        # Could be injected later when architrecture
+        # becomes more mature.
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
         self._tasks_to_deploy = Channel[TaskContext](100)
 
-    def connect_client_manager(self, client_manager: ClientManager):
+    def connect_client_manager(self, client_manager: ClientManager) -> None:
+        """
+        Connect App and ClientManager through Channels.
+
+        Channels:
+            - sql Channel (incoming client SQL)
+            - evaled Channel (outgoing evaled SQL)
+
+        See channel.py for Channel implementation.
+        """
         client_manager.add_sql_channel(self._sql_to_eval)
         client_manager.add_response_channel(self._evaled_sql)
 
-    def connect_task_manager(self, task_manager: TaskManager):
+    def connect_task_manager(self, task_manager: TaskManager) -> None:
+        """
+        Connect App and TaskManager through one Channel.
+
+        Channel:
+            - Task Channel (incoming client SQL)
+
+        See channel.py for Channel implementation.
+        """
         task_manager.add_taskctx_channel(self._tasks_to_deploy)
 
     async def on_start(self):
@@ -103,15 +122,22 @@ class App(Service):
         """
         await self._sql_to_eval.send((self._internal_ref, sql))
 
-    async def _handle_messages(self):
+    async def _handle_messages(self) -> NoReturn:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
+
+        # Each SQL keeps reference of a client_id for dispatch
         async for client_id, sql in self._sql_to_eval:
+
+            # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
 
+            # Evaluable Context are simple statements which 
+            # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
                 result = self._eval_ctx(client_id, ctx)
 
+            # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):
                 logger.warning(
                     "[App] Invalid SQL received: {} - reason: {}",
@@ -129,10 +155,17 @@ class App(Service):
             # Dispatch TaskContext to task manager
             if isinstance(ctx, TaskContext):
                 await self._tasks_to_deploy.send(ctx)
+        
+        raise RuntimeError("SQL Handle message loop has exited.")
 
+    # TODO: Run eval_ctx in background to avoid thread blocking.
+    # This is currently a blocking operation in _handle_messages.
+    # Client terminal gets "blocked" till response is received,
+    # so it is safe to assume we can queue per client and defer
+    # results to keep ordering per client
     def _eval_ctx(self, client_id: str, ctx: EvaluableContext) -> str:
         # Evaluate and execute various SQL context types.
-        # TODO: to be eventually replaced by visitor pattern
+        # TODO: to be eventually replaced by visitor pattern ?
         if isinstance(ctx, CreateTableContext):
             return create_table(self._conn, ctx)
         elif isinstance(ctx, CreateViewContext):
