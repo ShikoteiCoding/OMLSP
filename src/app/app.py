@@ -128,11 +128,10 @@ class App(Service):
 
         # Each SQL keeps reference of a client_id for dispatch
         async for client_id, sql in self._sql_to_eval:
-
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
 
-            # Evaluable Context are simple statements which 
+            # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
                 result = self._eval_ctx(client_id, ctx)
@@ -155,7 +154,7 @@ class App(Service):
             # Dispatch TaskContext to task manager
             if isinstance(ctx, TaskContext):
                 await self._tasks_to_deploy.send(ctx)
-        
+
         raise RuntimeError("SQL Handle message loop has exited.")
 
     # TODO: Run eval_ctx in background to avoid thread blocking.

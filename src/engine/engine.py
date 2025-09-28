@@ -360,8 +360,8 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
 
 def build_sink_executable(
-        ctx: SinkTaskContext
-    ) -> CoroutineType[Any, Any, None]:
+    ctx: SinkTaskContext,
+) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], CoroutineType[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
@@ -392,32 +392,35 @@ async def kafka_sink(
 
 
 def build_transform_executable(
-        ctx: TransformTaskContext, 
-        is_materialized: bool
-    ) -> Callable[[str, DuckDBPyConnection], CoroutineType[Any, Any, pl.DataFrame]]:
+    ctx: TransformTaskContext, is_materialized: bool
+) -> Callable[
+    [str, DuckDBPyConnection, pl.DataFrame], CoroutineType[Any, Any, pl.DataFrame]
+]:
     return partial(
         transform_executable,
-        ctx.name,
-        ctx.columns,
-        is_materialized,
+        name=ctx.name,
+        columns=ctx.columns,
+        is_materialized=is_materialized,
     )
 
 
 async def transform_executable(
-    view_name: str,
-    columns: list[str],
-    is_materialized: bool,
+    task_id: str,
     conn: DuckDBPyConnection,
     df: pl.DataFrame,
+    *,
+    name: str,
+    columns: list[str],
+    is_materialized: bool,
 ) -> pl.DataFrame:
     if columns == [""]:
         columns = df.columns
     transform_df = df.select(columns)
 
-    batch_id = get_batch_id_from_view_metadata(conn, view_name, is_materialized)
+    batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
     epoch = int(time.time() * 1_000)
-    await cache(transform_df, batch_id, epoch, view_name, conn)
-    update_batch_id_in_view_metadata(conn, view_name, batch_id + 1, is_materialized)
+    await cache(transform_df, batch_id, epoch, name, conn)
+    update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
 
     return transform_df
 

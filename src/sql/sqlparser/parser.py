@@ -5,7 +5,6 @@ from duckdb.typing import DuckDBPyType
 
 import jsonschema
 from apscheduler.triggers.cron import CronTrigger
-from loguru import logger
 from sqlglot import exp, parse_one
 from sqlglot.dialects.postgres import Postgres
 from sqlglot.tokens import Tokenizer, TokenType
@@ -262,7 +261,7 @@ def build_create_view_context(
     # TODO: add where clause
     upstreams = [ctx.table]
     # duckdb doesn't support MATERIALIZED and load VIEW in memory
-    statement.args["kind"] = "TABLE" 
+    statement.args["kind"] = "TABLE"
     query = get_duckdb_sql(statement)
 
     # sqlglot often captures MATERIALIZED/NOT MATERIALIZED as a property
@@ -323,6 +322,7 @@ def extract_create_context(
     | CreateWSTableContext
     | CreateSinkContext
     | CreateViewContext
+    | CreateMaterializedViewContext
     | InvalidContext
 ):
     if str(statement.kind) == CreateKind.TABLE.value:

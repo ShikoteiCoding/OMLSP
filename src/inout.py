@@ -4,6 +4,7 @@ import polars as pl
 from loguru import logger
 from duckdb import DuckDBPyConnection
 
+
 async def cache(
     df: pl.DataFrame,
     batch_id: int,

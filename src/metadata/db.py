@@ -166,6 +166,7 @@ def create_view(
     logger.info(f"[db] Registered view: {context.name}")
     return "CREATE VIEW"
 
+
 def create_view_materialized(
     con: DuckDBPyConnection,
     context: CreateMaterializedViewContext,
@@ -206,6 +207,7 @@ def update_batch_id_in_table_metadata(
     """
     con.execute(query)
 
+
 def get_batch_id_from_view_metadata(
     con: DuckDBPyConnection, view_name: str, is_materialized: bool
 ) -> int:
@@ -240,8 +242,9 @@ def update_batch_id_in_view_metadata(
         UPDATE {METADATA_VIEW_NAME}
         SET last_batch_id={batch_id}
         WHERE view_name = '{view_name}';
-        """ 
+        """
     con.execute(query)
+
 
 def get_table_schema(con: DuckDBPyConnection, table_name: str) -> list[dict[str, Any]]:
     result = con.execute(f"DESCRIBE {table_name}").fetchall()

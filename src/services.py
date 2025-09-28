@@ -52,7 +52,7 @@ class Service:
     async def on_start(self) -> None:
         """
         Default method being started in start().
-        
+
         To be implemented by the derived class.
         """
         logger.success("[{}] starting.", self.name)
@@ -60,7 +60,7 @@ class Service:
     async def on_stop(self) -> None:
         """
         Default method being started in stop().
-        
+
         To be implemented by the derived class.
         """
         logger.success("[{}] stopping.", self.name)
@@ -68,7 +68,7 @@ class Service:
     async def on_shutdown(self) -> None:
         """
         Default method after completing stop().
-        
+
         To be implemented by the derived class.
         """
         logger.success("[{}] shutdown.", self.name)

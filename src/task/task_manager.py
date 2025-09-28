@@ -68,6 +68,10 @@ class TaskManager(Service):
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
 
+    async def on_stop(self):
+        """"""
+        self.scheduler.shutdown(False)
+
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
 
