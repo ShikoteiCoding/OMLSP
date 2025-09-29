@@ -4,6 +4,7 @@ import pyarrow as pa
 import duckdb
 import polars as pl
 import psutil, os
+from collections import defaultdict
 
 
 def get_mem_mb():
@@ -19,6 +20,7 @@ def run_benchmark(n_batches, batch_size, warmup=True):
     build_arrow, query_arrow, mem_arrow = 0.0, 0.0, 0.0
     build_polars, query_polars, mem_polars = 0.0, 0.0, 0.0
     build_polars_duck, query_polars_duck, mem_polars_duck = 0.0, 0.0, 0.0
+    build_python, query_python, mem_python = 0.0, 0.0, 0.0
 
     # transforms
     def transform_pl(df: pl.DataFrame | pl.LazyFrame):
@@ -34,6 +36,17 @@ def run_benchmark(n_batches, batch_size, warmup=True):
         return con.execute(
             f'SELECT "group", avg(value) FROM {name} GROUP BY "group"'
         ).df()
+
+
+    def transform_python(records: list[dict]):
+        sums = defaultdict(float)
+        counts = defaultdict(int)
+        for rec in records:
+            g = rec["group"]
+            v = rec["value"]
+            sums[g] += v
+            counts[g] += 1
+        return {g: sums[g] / counts[g] for g in sums}
 
     # warm-up
     if warmup:
@@ -88,6 +101,19 @@ def run_benchmark(n_batches, batch_size, warmup=True):
         query_polars_duck += time.perf_counter() - start
         mem_polars_duck += (get_mem_mb() - mem_before)
 
+        # Plain Python
+        mem_before = get_mem_mb()
+        start = time.perf_counter()
+        # Convert Polars → list of dicts (this is the "build" step)
+        py_records = pl_df.to_dicts()
+        build_python += time.perf_counter() - start
+
+        start = time.perf_counter()
+        transform_python(py_records)
+        query_python += time.perf_counter() - start
+        mem_python += (get_mem_mb() - mem_before)
+
+
     total_records = n_batches * batch_size
 
     return {
@@ -109,6 +135,11 @@ def run_benchmark(n_batches, batch_size, warmup=True):
         "query_polars_duck_ms": (query_polars_duck / n_batches) * 1000,
         "polars_duck_rps": total_records / (build_polars_duck + query_polars_duck),
         "polars_duck_mem_mb": mem_polars_duck / n_batches,
+
+        "build_python_ms": (build_python / n_batches) * 1000,
+        "query_python_ms": (query_python / n_batches) * 1000,
+        "python_rps": total_records / (build_python + query_python),
+        "python_mem_mb": mem_python / n_batches,
     }
 
 
