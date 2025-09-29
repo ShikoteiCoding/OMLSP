@@ -49,6 +49,8 @@ class CreateViewContext:
     columns: list[str]
     query: str
 
+    _out_type: Type = field(default=pl.DataFrame)
+
 
 @dataclass
 class CreateMaterializedViewContext:
@@ -57,6 +59,8 @@ class CreateMaterializedViewContext:
     columns: list[str]
     query: str
 
+    _out_type: Type = field(default=pl.DataFrame)
+
 
 @dataclass
 class CreateSinkContext:
@@ -64,6 +68,13 @@ class CreateSinkContext:
     upstreams: list[str]
     properties: dict[str, Any]
     query: str
+
+
+@dataclass
+class CreateSecretContext:
+    name: str
+    properties: dict[str, Any]
+    value: str
 
 
 # ---------- Query / Command Contexts ----------
@@ -104,18 +115,19 @@ TaskContext = Union[
 ]
 
 EvaluableContext = Union[
+    CommandContext,
     CreateHTTPLookupTableContext,
     CreateHTTPTableContext,
-    CreateWSTableContext,
+    CreateMaterializedViewContext,
+    CreateSecretContext,
     CreateSinkContext,
     CreateViewContext,
-    CreateMaterializedViewContext,
+    CreateWSTableContext,
     SetContext,
-    CommandContext,
     SelectContext,
 ]
 
-# Everything except Invalid
+# Everything except Invalid and CreateSecret
 QueryContext = Union[
     CreateHTTPLookupTableContext,
     CreateHTTPTableContext,
@@ -127,6 +139,8 @@ QueryContext = Union[
     CommandContext,
     SelectContext,
 ]
+
+NonQueryContext = Union[CreateSecretContext, InvalidContext]
 
 # Table contexts of different connector type
 CreateTableContext = Union[

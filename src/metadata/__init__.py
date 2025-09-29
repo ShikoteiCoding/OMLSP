@@ -2,6 +2,7 @@ from metadata.db import (
     create_macro_definition,
     create_sink,
     create_table,
+    create_secret,
     create_view,
     create_view_materialized,
     get_batch_id_from_table_metadata,
@@ -19,6 +20,7 @@ from metadata.db import (
 __all__ = [
     "create_macro_definition",
     "create_sink",
+    "create_secret",
     "create_table",
     "create_view",
     "create_view_materialized",
