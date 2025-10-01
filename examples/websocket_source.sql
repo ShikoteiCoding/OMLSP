@@ -6,8 +6,8 @@ CREATE TABLE binance_mini_tickers (
     open FLOAT,
     high FLOAT,
     low FLOAT,
-    base_volume BIGINT,
-    quote_volume BIGINT
+    base_volume FLOAT,
+    quote_volume FLOAT
 )
 WITH (
     connector = 'ws',
