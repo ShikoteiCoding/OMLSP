@@ -398,7 +398,7 @@ def build_sink_executable(
     return partial(
         kafka_sink,
         first_upstream=ctx.upstreams[0],
-        transform_query=ctx.query,
+        transform_query=ctx.subquery,
         pl_ctx = pl.SQLContext(),
         producer=producer,
         topic=topic,
@@ -439,7 +439,7 @@ def build_transform_executable(
         transform_executable,
         name=ctx.name,
         first_upstream=ctx.upstreams[0], #TODO add joins
-        transform_query=ctx.select_query,
+        transform_query=ctx.subquery,
         is_materialized=is_materialized,
         pl_ctx = pl.SQLContext()
     )

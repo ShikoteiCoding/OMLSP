@@ -281,6 +281,10 @@ def build_create_ws_table_context(
 def build_create_sink_context(
     statement: exp.Create, properties_schema: dict[str, Any]
 ) -> CreateSinkContext | InvalidContext:
+    # extract subquery
+    ctx = extract_select_context(statement.expression)
+    if isinstance(ctx, InvalidContext):
+        return ctx
     # extract list of exp.Property
     # declared behind sql WITH statement
     properties = extract_create_properties(statement)
@@ -305,7 +309,7 @@ def build_create_sink_context(
         name=statement.this,
         upstreams=upstreams,
         properties=properties,
-        query="SELECT 1;", #TODO add query
+        subquery=ctx.query
     )
 
 
@@ -332,14 +336,14 @@ def build_create_view_context(
                 return CreateMaterializedViewContext(
                     name=name,
                     upstreams=upstreams,
-                    select_query=ctx.query,
+                    subquery=ctx.query,
                     query=query,
                 )
 
     return CreateViewContext(
         name=name,
         upstreams=upstreams,        
-        select_query=ctx.query,
+        subquery=ctx.query,
         query=query,
     )
 

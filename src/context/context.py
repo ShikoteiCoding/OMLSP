@@ -48,7 +48,7 @@ class CreateHTTPLookupTableContext:
 class CreateViewContext:
     name: str
     upstreams: list[str]
-    select_query: str
+    subquery: str
     query: str
 
     _out_type: Type = field(default=pl.DataFrame)
@@ -58,7 +58,7 @@ class CreateViewContext:
 class CreateMaterializedViewContext:
     name: str
     upstreams: list[str]
-    select_query: str
+    subquery: str
     query: str
 
     _out_type: Type = field(default=pl.DataFrame)
@@ -69,7 +69,7 @@ class CreateSinkContext:
     name: str
     upstreams: list[str]
     properties: dict[str, Any]
-    query: str
+    subquery: str
 
 
 @dataclass
