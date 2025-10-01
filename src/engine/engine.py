@@ -196,7 +196,6 @@ async def http_source_executable(
 
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
-        # TODO: type polars with duckdb table catalog
         df = records_to_polars(records, column_types)
         await cache(df, batch_id, epoch, table_name, conn)
     else:
@@ -400,6 +399,7 @@ def build_sink_executable(
         kafka_sink,
         first_upstream=ctx.upstreams[0],
         transform_query=ctx.query,
+        pl_ctx = pl.SQLContext(),
         producer=producer,
         topic=topic,
     )
@@ -408,14 +408,14 @@ def build_sink_executable(
 async def kafka_sink(
     task_id: str,
     conn: DuckDBPyConnection,
+    df: pl.DataFrame,
     first_upstream: str,
     transform_query: str,
+    pl_ctx: pl.SQLContext,
+    *,
     producer: Producer,
     topic: str,
-    df: pl.DataFrame,
 ) -> None:
-    
-    pl_ctx = pl.SQLContext()
     pl_ctx.register(first_upstream, df)
     transform_df = pl_ctx.execute(transform_query).collect()
     records = transform_df.to_dicts()
@@ -441,6 +441,7 @@ def build_transform_executable(
         first_upstream=ctx.upstreams[0], #TODO add joins
         transform_query=ctx.select_query,
         is_materialized=is_materialized,
+        pl_ctx = pl.SQLContext()
     )
 
 
@@ -452,9 +453,8 @@ async def transform_executable(
     first_upstream: str,
     transform_query: str,
     is_materialized: bool,
+    pl_ctx: pl.SQLContext
 ) -> pl.DataFrame:
-    
-    pl_ctx = pl.SQLContext()
     pl_ctx.register(first_upstream, df)
     transform_df = pl_ctx.execute(transform_query).collect()
 

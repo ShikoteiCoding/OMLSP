@@ -111,7 +111,7 @@ class SinkTask(BaseTaskT, Generic[T]):
         receiver = self._receivers[0]
         async for df in receiver:
             logger.info(f"[SinkTask{{{self.task_id}}}] got:\n{df}")
-            # await self._executable(df=df)
+            # await self._executable(self.task_id, self._conn, df)
 
 
 class TransformTask(BaseTaskT, Generic[T]):
