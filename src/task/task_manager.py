@@ -92,7 +92,7 @@ class TaskManager(Service):
         if isinstance(ctx, SinkTaskContext):
             # TODO: add Transform task to handle subqueries
             # TODO: subscribe to many upstreams
-            task = SinkTask(task_id)
+            task = SinkTask(task_id, self.conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(build_sink_executable(ctx))
@@ -135,7 +135,7 @@ class TaskManager(Service):
             logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
 
         elif isinstance(ctx, TransformTaskContext):
-            task = TransformTask(task_id, self.conn)
+            task = TransformTask[ctx._out_type](task_id, self.conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
 

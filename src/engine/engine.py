@@ -9,8 +9,8 @@ from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
-from types import FunctionType, CoroutineType
-from typing import Any, Iterable, Callable, AsyncGenerator
+from types import FunctionType
+from typing import Any, Iterable, Callable, AsyncGenerator, Coroutine
 
 import polars as pl
 import pyarrow as pa
@@ -208,7 +208,7 @@ async def http_source_executable(
 
 def build_http_source_executable(
     ctx: CreateHTTPTableContext,
-) -> Callable[[str, DuckDBPyConnection], CoroutineType[Any, Any, pl.DataFrame]]:
+) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
     start_time = datetime.now(timezone.utc)
     properties = ctx.properties
     return partial(
@@ -259,7 +259,7 @@ def build_ws_source_executable(
 
 def build_scheduled_source_executable(
     ctx: ScheduledTaskContext,
-) -> Callable[[str, DuckDBPyConnection], CoroutineType[Any, Any, pl.DataFrame]]:
+) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
     if isinstance(ctx, CreateHTTPTableContext):
         return build_http_source_executable(ctx)
 
@@ -392,7 +392,7 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
 def build_sink_executable(
     ctx: SinkTaskContext,
-) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], CoroutineType[Any, Any, None]]:
+) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
@@ -433,7 +433,7 @@ async def kafka_sink(
 def build_transform_executable(
     ctx: TransformTaskContext, is_materialized: bool
 ) -> Callable[
-    [str, DuckDBPyConnection, pl.DataFrame], CoroutineType[Any, Any, pl.DataFrame]
+    [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
 ]:
     return partial(
         transform_executable,

@@ -129,6 +129,18 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "title": "Secret properties",
+      "type": "object",
+      "description": "Default backend for Secret properties",
+      "required": ["backend"],
+      "properties": {
+        "backend": {
+          "const": "meta",
+          "description": "Must be 'meta'"
+        }
+      }
     }
   ]
 }

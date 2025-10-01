@@ -80,65 +80,6 @@ FROM all_tickers AS ALT
 LEFT JOIN ohlc AS oh
     ON ALT.symbol = oh.symbol;
 
--- Invalid example: CTE
-WITH test AS (
-    SELECT * 
-    FROM all_tickers
-)
-SELECT * FROM test;
-
--- Invalid example: subquery
-SELECT *
-FROM (SELECT * FROM all_tickers);
-
--- Test function registered from lookup
-SELECT ohlc_func('MNDE-USDT');
-
--- Test macro wrapping the udf
-SELECT *
-FROM ohlc_macro("all_tickers", symbol);
-
--- Test subquery in macro
-SELECT
-    ohlc_func(ALT.symbol) AS struct
-FROM "all_tickers" AS ALT;
-
-SELECT struct.* FROM (
-SELECT
-    ohlc_func(ALT.symbol) AS struct
-FROM query_table("all_tickers") AS ALT);
-
-SELECT
-    ohlc_func(ALT.symbol)
-FROM query_table("all_tickers") AS ALT;
-
--- Test pre hook
-SELECT 
-    ALT.symbol, 
-    start_time, 
-    open, 
-    high, 
-    low, 
-    close, 
-    volume, 
-    amount 
-FROM all_tickers AS ALT 
-LEFT JOIN ohlc_macro("all_tickers", ALT.symbol, ALT.symbolName) AS oh 
-    ON ALT.symbol = oh.symbol;
-
-SELECT 
-    ALT.symbol, 
-    start_time, 
-    open, 
-    high, 
-    low, 
-    close, 
-    volume, 
-    amount 
-FROM all_tickers AS ALT 
-LEFT JOIN ohlc_macro("all_tickers", ALT.symbol) AS oh 
-    ON ALT.symbol = oh.symbol;
-
 SELECT ALT.symbol 
 FROM all_tickers AS ALT 
 LEFT JOIN all_tickers AS ALT2 

@@ -10,15 +10,13 @@ from loguru import logger
 from channel import Channel
 
 TaskOutput: TypeAlias = Any
-TaskId = int | str
+TaskId = str
 
 T = TypeVar("T")
 
 
 class BaseTaskT(ABC, Generic[T]):
-    _runing = False
-
-    def __init__(self, task_id: str | int, conn: DuckDBPyConnection | None = None):
+    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         self.task_id = task_id
         self._conn = conn
 
@@ -32,9 +30,7 @@ class BaseTaskT(ABC, Generic[T]):
 
 
 class BaseSourceTaskT(BaseTaskT, Generic[T]):
-    _running = False
-
-    def __init__(self, task_id: str, conn: DuckDBPyConnection | None = None):
+    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._sender = Channel[T]()
 
@@ -52,12 +48,12 @@ class ScheduledSourceTask(BaseSourceTaskT, Generic[T]):
     _sender: Channel
     _executable: Callable
 
-    def __init__(self, task_id: str, conn: DuckDBPyConnection):
+    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._sender = Channel[T](100)
 
     def register(
-        self, executable: Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, T]]
+        self, executable: Callable[[TaskId, DuckDBPyConnection], Coroutine[Any, Any, T]]
     ) -> ScheduledSourceTask[T]:
         self._executable = executable
         return self
@@ -94,8 +90,8 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
 
 
 class SinkTask(BaseTaskT, Generic[T]):
-    def __init__(self, task_id: str):
-        super().__init__(task_id)
+    def __init__(self, task_id: str, conn: DuckDBPyConnection):
+        super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
 
     def register(
@@ -121,14 +117,17 @@ class SinkTask(BaseTaskT, Generic[T]):
 class TransformTask(BaseTaskT, Generic[T]):
     _sender: Channel[T]
     _receivers: list[Channel[T]]
-    _executable: Callable
+    _executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]]
 
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
-        self._sender = Channel()
+        self._sender = Channel[T](100)
 
-    def register(self, executable: Callable) -> TransformTask[T]:
+    def register(
+        self,
+        executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]],
+    ) -> TransformTask[T]:
         self._executable = executable
         return self
 
@@ -141,7 +140,7 @@ class TransformTask(BaseTaskT, Generic[T]):
     async def run(self):
         receiver = self._receivers[0]
         async for df in receiver:
-            result = await self._executable(self.task_id, self._conn, df, )
+            result = await self._executable(self.task_id, self._conn, df)
             logger.info(f"[TransformTask{{{self.task_id}}}] got:\n{result}")
             if hasattr(self, "_sender"):
                 await self._sender.send(result)

@@ -17,8 +17,10 @@ from context.context import (
     CreateSinkContext,
     CreateViewContext,
     CreateMaterializedViewContext,
+    CreateSecretContext,
     InvalidContext,
     QueryContext,
+    NonQueryContext,
     SelectContext,
     SetContext,
 )
@@ -28,6 +30,7 @@ class CreateKind(StrEnum):
     SINK = "SINK"
     TABLE = "TABLE"
     VIEW = "VIEW"
+    SECRET = "SECRET"
 
 
 class TableConnectorKind(StrEnum):
@@ -41,12 +44,58 @@ class Omlsp(Postgres):
         KEYWORDS = {
             **Postgres.Tokenizer.KEYWORDS,
             "SINK": TokenType.SINK,
+            # Generic token type for "new" tokens
+            "SECRET": TokenType.COMMAND,
+            "WITH": TokenType.WITH,
             # TODO: ADD SOURCE HERE
         }
 
     class Parser(Postgres.Parser):
         def _parse_table_hints(self) -> list[exp.Expression] | None:
+            # Keep SINK behavior unchanged
             return None
+
+        def _parse_create(self):
+            """
+            CREATE SECRET secret_name WITH (backend = 'meta') AS 'secret_value'
+            """
+            # Detect CREATE SECRET as TokenType COMMAND
+            if self._match(TokenType.COMMAND):
+                if self._prev:
+                    # Extract SECRET
+                    kind = self._prev.text.upper()
+
+                    # Parse the secret name
+                    this = self._parse_id_var()
+
+                    # Optionally parse WITH (...)
+                    properties = self._parse_properties()
+
+                    # Require AS '...'
+                    if not self._match(TokenType.ALIAS):
+                        self.raise_error("Expected AS after CREATE SECRET ...")
+
+                    # This should get parsed as Literal
+                    secret_value = self._parse_string()
+
+                    # Handle removal of single quotes
+                    secret_value_str = str(secret_value)
+                    if secret_value_str.startswith("'") and secret_value_str.startswith(
+                        "'"
+                    ):
+                        secret_value = secret_value_str[1:-1]
+
+                    # Return a standard Create expression
+                    return self.expression(
+                        exp.Create,
+                        kind=kind,
+                        this=this,
+                        properties=properties,
+                        expression=secret_value,
+                    )
+
+            # Fallback to the default Postgres CREATE behavior
+            return super()._parse_create()
 
 
 def get_name(expression: exp.Expression) -> str:
@@ -325,6 +374,24 @@ def build_generic_create_table_context(
     return InvalidContext(reason=f"Invalid connector / properties: {properties}")
 
 
+def build_create_secret_context(
+    statement: exp.Create, properties_schema: dict
+) -> CreateSecretContext | InvalidContext:
+    properties = extract_create_properties(statement)
+
+    # validate properties against schema
+    # if not ok, return invalid context
+    nok = validate_create_properties(properties, properties_schema)
+    if nok:
+        return InvalidContext(reason=nok)
+
+    value = str(statement.expression)
+
+    return CreateSecretContext(
+        name=statement.name, properties=properties, value=str(value)
+    )
+
+
 def extract_create_context(
     statement: exp.Create, properties_schema: dict
 ) -> (
@@ -334,6 +401,7 @@ def extract_create_context(
     | CreateSinkContext
     | CreateViewContext
     | CreateMaterializedViewContext
+    | CreateSecretContext
     | InvalidContext
 ):
     if str(statement.kind) == CreateKind.TABLE.value:
@@ -344,6 +412,9 @@ def extract_create_context(
 
     elif str(statement.kind) == CreateKind.VIEW.value:
         return build_create_view_context(statement)
+
+    elif str(statement.kind) == CreateKind.SECRET.value:
+        return build_create_secret_context(statement, properties_schema)
 
     return InvalidContext(
         reason=f"Query provided is not a valid statement: {statement.kind}"
@@ -441,7 +512,7 @@ def extract_command_context(
 
 def extract_one_query_context(
     query: str, properties_schema: dict
-) -> QueryContext | InvalidContext:
+) -> QueryContext | NonQueryContext:
     parsed_statement = parse_one(query, dialect=Omlsp)
 
     if isinstance(parsed_statement, exp.Create):
