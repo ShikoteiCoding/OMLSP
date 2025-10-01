@@ -141,7 +141,7 @@ class TransformTask(BaseTaskT, Generic[T]):
     async def run(self):
         receiver = self._receivers[0]
         async for df in receiver:
-            result = await self._executable(df=df, conn=self._conn)
+            result = await self._executable(self.task_id, self._conn, df, )
             logger.info(f"[TransformTask{{{self.task_id}}}] got:\n{result}")
             if hasattr(self, "_sender"):
                 await self._sender.send(result)

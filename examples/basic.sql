@@ -21,8 +21,8 @@ CREATE TABLE binance_mini_tickers (
     open FLOAT,
     high FLOAT,
     low FLOAT,
-    base_volume BIGINT,
-    quote_volume BIGINT
+    base_volume FLOAT,
+    quote_volume FLOAT
 )
 WITH (
     'connector' = 'ws',
@@ -93,6 +93,7 @@ FROM (SELECT * FROM all_tickers);
 
 -- Test function registered from lookup
 SELECT ohlc_func('MNDE-USDT');
+
 -- Test macro wrapping the udf
 SELECT *
 FROM ohlc_macro("all_tickers", symbol);
@@ -142,6 +143,7 @@ SELECT ALT.symbol
 FROM all_tickers AS ALT 
 LEFT JOIN all_tickers AS ALT2 
     on ALT.symbol = ALT2.symbol;
+
 -- Test sink from table
 -- CREATE SINK all_tickers_sink FROM all_tickers
 -- WITH (
@@ -149,9 +151,13 @@ LEFT JOIN all_tickers AS ALT2
 --     topic = 'tickers_topic',
 --     server = 'localhost:9092',
 -- );
+
+-- Test view
 CREATE MATERIALIZED VIEW my_first_view AS
 SELECT
-    symbol
-FROM all_tickers;
+    symbol,
+    buy
+FROM all_tickers
+WHERE buy IS NOT NULL AND buy < 20;
 
 CREATE VIEW my_second_view FROM all_tickers;

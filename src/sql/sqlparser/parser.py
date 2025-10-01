@@ -67,7 +67,7 @@ def rename_column_transform(node, old_name, new_name):
     return node
 
 
-def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str]]:
+def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str], dict]:
     """Parse table schema into name and columns"""
     assert isinstance(table, (exp.Schema,)), (
         f"Expression of type {type(table)} is not accepted"
@@ -75,13 +75,16 @@ def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str]]:
     table_name = get_name(table)
     table = table.copy()
 
-    columns = [
-        str(column.name)
-        for column in table.expressions
-        if isinstance(column, exp.ColumnDef)
-    ]
+    column_types = {}
+    columns = []
+    for col in table.expressions:
+        if isinstance(col, exp.ColumnDef):
+            col_name = str(col.name)
+            col_type = col.args.get("kind")  # data type
+            column_types[col_name] = str(col_type).upper()
+            columns.append(col_name)
 
-    return table, table_name, columns
+    return table, table_name, columns, column_types
 
 
 def parse_lookup_table_schema(
@@ -105,11 +108,18 @@ def parse_lookup_table_schema(
     return table, table_name, columns, dynamic_columns
 
 
-def parse_ws_table_schema(table: exp.Schema) -> str:
+def parse_ws_table_schema(table: exp.Schema) -> tuple[str, dict]:
     # Parse web socket table schema.
     table_name = table.this.name
 
-    return table_name
+    column_types = {}
+    for col in table.expressions:
+        if isinstance(col, exp.ColumnDef):
+            col_name = str(col.name)
+            col_type = col.args.get("kind")  # data type
+            column_types[col_name] = str(col_type).upper()
+
+    return table_name, column_types
 
 
 def validate_create_properties(
@@ -153,7 +163,7 @@ def build_create_http_table_context(
     statement = statement.copy()
 
     # parse table schema and update exp.Schema
-    updated_table_statement, table_name, _ = parse_table_schema(statement.this)
+    updated_table_statement, table_name, _, column_types = parse_table_schema(statement.this)
 
     # overwrite modified table statement
     statement.set("this", updated_table_statement)
@@ -170,6 +180,7 @@ def build_create_http_table_context(
         name=table_name,
         properties=properties,
         query=clean_query,
+        column_types = column_types,
         trigger=trigger,
     )
 
@@ -205,7 +216,7 @@ def build_create_ws_table_context(
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
 
-    table_name = parse_ws_table_schema(statement.this)
+    table_name, column_types = parse_ws_table_schema(statement.this)
 
     # get query purged of omlsp-specific syntax
     clean_query = get_duckdb_sql(statement)
@@ -213,6 +224,7 @@ def build_create_ws_table_context(
     return CreateWSTableContext(
         name=table_name,
         properties=properties,
+        column_types=column_types,
         query=clean_query,
     )
 
@@ -244,7 +256,7 @@ def build_create_sink_context(
         name=statement.this,
         upstreams=upstreams,
         properties=properties,
-        query="SELECT 1;",
+        query="SELECT 1;", #TODO add query
     )
 
 
@@ -263,7 +275,6 @@ def build_create_view_context(
     # duckdb doesn't support MATERIALIZED and load VIEW in memory
     statement.args["kind"] = "TABLE"
     query = get_duckdb_sql(statement)
-
     # sqlglot often captures MATERIALIZED/NOT MATERIALIZED as a property
     properties = statement.args.get("properties")
     if properties:
@@ -272,14 +283,14 @@ def build_create_view_context(
                 return CreateMaterializedViewContext(
                     name=name,
                     upstreams=upstreams,
-                    columns=ctx.columns,
+                    select_query=ctx.query,
                     query=query,
                 )
 
     return CreateViewContext(
         name=name,
-        upstreams=upstreams,
-        columns=ctx.columns,
+        upstreams=upstreams,        
+        select_query=ctx.query,
         query=query,
     )
 

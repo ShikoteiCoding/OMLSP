@@ -14,6 +14,7 @@ class CreateHTTPTableContext:
     name: str
     properties: dict[str, Any]
     query: str
+    column_types: dict[str, DuckDBPyType]
     trigger: CronTrigger
 
     # executable of http table context
@@ -25,6 +26,7 @@ class CreateHTTPTableContext:
 class CreateWSTableContext:
     name: str
     properties: dict[str, Any]
+    column_types: dict[str, DuckDBPyType]
     query: str
 
     # executable of ws table context
@@ -46,7 +48,7 @@ class CreateHTTPLookupTableContext:
 class CreateViewContext:
     name: str
     upstreams: list[str]
-    columns: list[str]
+    select_query: str
     query: str
 
 
@@ -54,7 +56,7 @@ class CreateViewContext:
 class CreateMaterializedViewContext:
     name: str
     upstreams: list[str]
-    columns: list[str]
+    select_query: str
     query: str
 
 

@@ -10,6 +10,7 @@ from context.context import (
     CreateTableContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
     EvaluableContext,
     InvalidContext,
     SelectContext,
@@ -21,6 +22,7 @@ from metadata import (
     create_sink,
     create_table,
     create_view,
+    create_view_materialized,
     get_lookup_tables,
     get_tables,
     init_metadata_store,
@@ -169,6 +171,8 @@ class App(Service):
             return create_table(self._conn, ctx)
         elif isinstance(ctx, CreateViewContext):
             return create_view(self._conn, ctx)
+        elif isinstance(ctx, CreateMaterializedViewContext):
+            return create_view_materialized(self._conn, ctx)
         elif isinstance(ctx, CreateSinkContext):
             return create_sink(self._conn, ctx)
         elif isinstance(ctx, CommandContext):

@@ -61,6 +61,25 @@ DUCKDB_TO_PYARROW_PYTYPE = {
     "DECIMAL": pa.decimal128(18, 2),
 }
 
+DUCKDB_TO_POLARS = {
+    "VARCHAR": pl.Utf8,
+    "TEXT": pl.Utf8,
+    "TIMESTAMP": pl.Datetime,
+    "TIMESTAMP_MS": pl.Datetime("ms"),
+    "TIMESTAMP_NS": pl.Datetime("ns"),
+    "DATETIME": pl.Datetime,
+    "FLOAT": pl.Float32,
+    "DOUBLE": pl.Float64,
+    "INTEGER": pl.Int32,
+    "INT": pl.Int32,
+    "BIGINT": pl.Int64,
+    "SMALLINT": pl.Int16,
+    "TINYINT": pl.Int8,
+    "BOOLEAN": pl.Boolean,
+    "DATE": pl.Date,
+    "DECIMAL": pl.Float64,
+}
+
 
 def build_lookup_properties(
     properties: dict[str, str], context: dict[str, Any]
@@ -145,11 +164,21 @@ def build_scalar_udf(
     }
 
 
+def records_to_polars(records: list[dict], column_types: dict[str, DuckDBPyType]) -> pl.DataFrame:
+    df = pl.DataFrame(records)
+    # Cast each column to the right dtype
+    for col, duck_type in column_types.items():
+        dtype = DUCKDB_TO_POLARS.get(duck_type, pl.Utf8)
+        df = df.with_columns(pl.col(col).cast(dtype))
+    return df
+
+
 async def http_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
     table_name: str,
     start_time: datetime,
+    column_types: dict[str, DuckDBPyType],
     http_requester: FunctionType,
     *args,
     **kwargs,
@@ -168,7 +197,7 @@ async def http_source_executable(
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
         # TODO: type polars with duckdb table catalog
-        df = pl.from_records(records)
+        df = records_to_polars(records, column_types)
         await cache(df, batch_id, epoch, table_name, conn)
     else:
         df = pl.DataFrame()
@@ -186,6 +215,7 @@ def build_http_source_executable(
         http_source_executable,
         table_name=ctx.name,
         start_time=start_time,
+        column_types=ctx.column_types,
         http_requester=build_http_requester(properties, is_async=True),
     )
 
@@ -194,6 +224,7 @@ async def ws_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
     table_name: str,
+    column_types: dict[str, DuckDBPyType],
     ws_generator: Callable[[], AsyncGenerator[Any, list[dict]]],
     *args,
     **kwargs,
@@ -204,8 +235,7 @@ async def ws_source_executable(
         async for records in ws_generator():
             if len(records) > 0:
                 epoch = int(time.time() * 1_000)
-                # TODO: type polars with duckdb table catalog
-                df = pl.from_records(records)
+                df = records_to_polars(records, column_types)
                 await cache(df, batch_id, epoch, table_name, conn)
             else:
                 df = pl.DataFrame()
@@ -222,6 +252,7 @@ def build_ws_source_executable(
     return partial(
         ws_source_executable,
         table_name=table_name,
+        column_types=ctx.column_types,
         ws_generator=build_ws_generator(properties),
     )
 
@@ -367,6 +398,8 @@ def build_sink_executable(
     topic = properties["topic"]
     return partial(
         kafka_sink,
+        first_upstream=ctx.upstreams[0],
+        transform_query=ctx.query,
         producer=producer,
         topic=topic,
     )
@@ -375,11 +408,17 @@ def build_sink_executable(
 async def kafka_sink(
     task_id: str,
     conn: DuckDBPyConnection,
+    first_upstream: str,
+    transform_query: str,
     producer: Producer,
     topic: str,
     df: pl.DataFrame,
 ) -> None:
-    records = df.to_dicts()
+    
+    pl_ctx = pl.SQLContext()
+    pl_ctx.register(first_upstream, df)
+    transform_df = pl_ctx.execute(transform_query).collect()
+    records = transform_df.to_dicts()
 
     def _produce_all():
         for record in records:
@@ -399,7 +438,8 @@ def build_transform_executable(
     return partial(
         transform_executable,
         name=ctx.name,
-        columns=ctx.columns,
+        first_upstream=ctx.upstreams[0], #TODO add joins
+        transform_query=ctx.select_query,
         is_materialized=is_materialized,
     )
 
@@ -408,14 +448,15 @@ async def transform_executable(
     task_id: str,
     conn: DuckDBPyConnection,
     df: pl.DataFrame,
-    *,
     name: str,
-    columns: list[str],
+    first_upstream: str,
+    transform_query: str,
     is_materialized: bool,
 ) -> pl.DataFrame:
-    if columns == [""]:
-        columns = df.columns
-    transform_df = df.select(columns)
+    
+    pl_ctx = pl.SQLContext()
+    pl_ctx.register(first_upstream, df)
+    transform_df = pl_ctx.execute(transform_query).collect()
 
     batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
     epoch = int(time.time() * 1_000)
