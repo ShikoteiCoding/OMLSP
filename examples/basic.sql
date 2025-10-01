@@ -13,59 +13,6 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
-CREATE TABLE binance_mini_tickers (
-    event_type STRING,
-    event_time BIGINT,
-    symbol STRING,
-    close FLOAT,
-    open FLOAT,
-    high FLOAT,
-    low FLOAT,
-    base_volume FLOAT,
-    quote_volume FLOAT
-)
-WITH (
-    'connector' = 'ws',
-    'url' = 'wss://fstream.binance.com/ws/!ticker@arr',
-    'jq' = '.[:2][] | {
-        event_type: .e,
-        event_time: .E,
-        symbol: .s,
-        close: .c,
-        open: .o,
-        high: .h,
-        low: .l,
-        base_volume: .v,
-        quote_volume: .q
-    }'
-);
-
-CREATE TEMPORARY TABLE ohlc (
-    $symbol STRING,
-    start_time TIMESTAMP_S,
-    open FLOAT,
-    high FLOAT,
-    low FLOAT,
-    close FLOAT,
-    volume FLOAT,
-    amount FLOAT
-)
-WITH (
-    'connector' = 'lookup-http',
-    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1753977000&endAt=1753977300',
-    'method' = 'GET',
-    'jq' = '.data[] | {
-        start_time: (.[0] | tonumber),
-        open: (.[1] | tonumber),
-        high: (.[2] | tonumber),
-        low: (.[3] | tonumber),
-        close: (.[4] | tonumber),
-        volume: (.[5] | tonumber),
-        amount: (.[6] | tonumber)
-    }',
-    'headers.Content-Type' = 'application/json'
-);
-
 -- Actual query we want to make it work
 SELECT
     ALT.symbol,
