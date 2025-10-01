@@ -128,9 +128,9 @@ def get_secret_value_by_name(conn: DuckDBPyConnection, secret_name: str) -> str:
     FROM {METADATA_SECRET_TABLE_NAME}
     WHERE secret_name = '{secret_name}';
     """
-    res = conn.sql(query).fetchall()
+    res: list[tuple] = conn.sql(query).fetchall()
 
-    return res[0]
+    return res[0][0]
 
 
 def get_macro_definition_by_name(

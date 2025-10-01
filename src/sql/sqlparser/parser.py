@@ -60,7 +60,7 @@ class Omlsp(Postgres):
             CREATE SECRET secret_name WITH (backend = 'meta') AS 'secret_value'
             """
             # Detect CREATE SECRET as TokenType COMMAND
-            if self._match(TokenType.COMMAND):
+            if self._match(TokenType.COMMAND) and not self._match(TokenType.TABLE):
                 if self._prev:
                     # Extract SECRET
                     kind = self._prev.text.upper()

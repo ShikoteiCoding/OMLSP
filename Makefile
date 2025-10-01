@@ -10,7 +10,7 @@ sync:
 	uv sync --active
 
 run:
-	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
+	PYTHONPATH=src/ uv run --active src/main.py examples/secret.sql
 
 dev-entrypoint:
 	PYTHONPATH=src/ uv run --active src/entrypoint.py

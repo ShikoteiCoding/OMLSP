@@ -1,31 +1,63 @@
 import trio
-import jq
+import jq as jqm
 import httpx
 import json
-from trio_websocket import open_websocket_url
 
+from duckdb import DuckDBPyConnection
 from functools import partial
+from trio_websocket import open_websocket_url
 from typing import Any, Callable, Coroutine, AsyncGenerator
+
+from auth import AUTH_DISPATCHER, BaseSignerT, SecretsHandler
 
 from loguru import logger
 
 MAX_RETRIES = 5
 
 
-def parse_http_properties(params: dict[str, str]) -> dict:
-    parsed_params = {}
-    parsed_params["headers"] = {}
-    parsed_params["json"] = {}
-    for key, value in params.items():
+def parse_http_properties(
+    properties: dict[str, str],
+) -> tuple[dict[str, Any], BaseSignerT, dict[str, Any]]:
+    """
+    Parse property dict provided by context and get required http parameters.
+    """
+    # Build kwargs dict compatible with both httpx or requests
+    requests_kwargs = {}
+    requests_kwargs["headers"] = {}
+    requests_kwargs["json"] = {}
+
+    # Manually extract standard values
+    requests_kwargs["url"] = properties["url"]
+    requests_kwargs["method"] = properties["method"]
+    jq = jqm.compile(properties["jq"])
+    secrets_handler = SecretsHandler()
+    signer_class = AUTH_DISPATCHER[requests_kwargs.get("signer_class", "NoSigner")](
+        secrets_handler
+    )
+
+    # Build "dict" kwargs dynamically
+    # TODO: improve with defaultdict(dict)
+    for key, value in properties.items():
+        # Handle headers, will always be a dict
         if key.startswith("headers."):
-            parsed_params["headers"][key.split(".")[1]] = value
-        elif key == "jq":
-            parsed_params["jq"] = jq.compile(value)
+            subkey = key.split(".")[1]
+
+            # TODO: Implement more robust link between executable and SECRET.
+            if "SECRET" in value:
+                # Get secret_name from value which should respect format:
+                # SECRET secret_name
+                value = value.split(" ")[1]
+
+                secrets_handler.add(subkey, value)
+
+            requests_kwargs["headers"][subkey] = value
+
+        # Handle json, will always be a dict
         elif key.startswith("json."):
-            parsed_params["json"][key.split(".")[1]] = value
-        else:
-            parsed_params[key] = value
-    return parsed_params
+            requests_kwargs["json"][key.split(".")[1]] = value
+        # TODO: handle bytes, form and url params
+
+    return jq, signer_class, requests_kwargs
 
 
 def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
@@ -33,7 +65,7 @@ def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
 
     for key, value in params.items():
         if key == "jq":
-            parsed_params["jq"] = jq.compile(value)
+            parsed_params["jq"] = jqm.compile(value)
         else:
             parsed_params[key] = value
 
@@ -42,51 +74,46 @@ def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
 
 async def async_request(
     client: httpx.AsyncClient,
-    url: str,
-    jq: Any = None,
-    method: str = "GET",
-    headers={"Content-Type": "application/json"},
-    json={},
-    **kwarg,
+    jq: Any,
+    signer: BaseSignerT,
+    request_kwargs: dict[str, Any],
+    conn: DuckDBPyConnection,
 ) -> list[dict]:
     attempt = 0
     while attempt < MAX_RETRIES:
-        response = await client.request(method, url, headers=headers, json=json)
+        response = await client.request(**signer.sign(conn, request_kwargs))
 
-        logger.debug(f"response for {url}: {response.status_code}")
+        logger.debug(f"response for {request_kwargs}: {response.status_code}")
 
         if response.is_success:
             data = response.json()
             return parse_response(data, jq)
 
-        logger.error(f"request failed {url}: {response.status_code}")
+        logger.error(f"request failed {request_kwargs}: {response.status_code}")
 
     attempt += 1
     if attempt < MAX_RETRIES:
         delay = attempt
         await trio.sleep(delay)
 
-    logger.error(f"request to {url} failed after {MAX_RETRIES} attempts")
+    logger.error(f"request to {request_kwargs} failed after {MAX_RETRIES} attempts")
     return []
 
 
 def sync_request(
     client: httpx.Client,
-    url: str,
-    jq: Any = None,
-    method: str = "GET",
-    headers: dict = {"Content-Type": "application/json"},
-    json: dict = {},
-    **kwargs,
+    jq: Any,
+    signer: BaseSignerT,
+    request_kwargs: dict[str, Any],
+    conn: DuckDBPyConnection,
 ) -> list[dict]:
     try:
-        response = client.request(method=method, url=url, headers=headers, json=json)
-        logger.debug(f"response for {url}: {response.status_code}")
+        response = client.request(**signer.sign(conn, request_kwargs))
+        logger.debug(f"response for {request_kwargs}: {response.status_code}")
 
         if response.is_success:
             return parse_response(response.json(), jq)
 
-        # TODO: add retry on fail here
         try:
             response.raise_for_status()
         except Exception as e:
@@ -95,7 +122,6 @@ def sync_request(
     except Exception as e:
         logger.error(f"HTTP request failed: {e}")
 
-    # TODO: handle failure of sync task
     return []
 
 
@@ -104,10 +130,15 @@ def parse_response(data: dict, jq: Any = None) -> list[dict]:
     return res
 
 
-async def http_requester(properties: dict[str, Any]) -> list[dict]:
+async def async_http_requester(
+    jq,
+    base_signer: BaseSignerT,
+    request_kwargs: dict[str, Any],
+    conn: DuckDBPyConnection,
+) -> list[dict]:
     async with httpx.AsyncClient() as client:
-        logger.debug(f"running request with properties: {properties}")
-        res = await async_request(client, **properties)
+        logger.debug(f"running request with properties: {request_kwargs}")
+        res = await async_request(client, jq, base_signer, request_kwargs, conn)
         return res
 
 
@@ -118,26 +149,34 @@ async def ws_generator(properties: dict[str, Any]) -> AsyncGenerator[Any, list[d
         yield parse_response(res, properties["jq"])
 
 
-def sync_http_requester(properties: dict) -> list[dict]:
+def sync_http_requester(
+    jq,
+    base_signer: BaseSignerT,
+    request_kwargs: dict[str, Any],
+    conn: DuckDBPyConnection,
+) -> list[dict]:
     client = httpx.Client()
-    logger.debug(f"running request with properties: {properties}")
-    return sync_request(client, **properties)
+    logger.debug(f"running request with properties: {request_kwargs}")
+    return sync_request(client, jq, base_signer, request_kwargs, conn)
 
 
 def build_http_requester(
     properties: dict[str, Any], is_async: bool = True
-) -> Callable[[], Coroutine[Any, Any, list[dict]]] | Callable[[], list[dict]]:
-    http_properties = parse_http_properties(properties)
+) -> (
+    Callable[[DuckDBPyConnection], Coroutine[Any, Any, list[dict]]]
+    | Callable[[DuckDBPyConnection], list[dict]]
+):
+    jq, base_signer, request_kwargs = parse_http_properties(properties)
 
     if is_async:
 
-        def _async_inner():
-            return http_requester(http_properties)
+        def _async_inner(conn):
+            return async_http_requester(jq, base_signer, request_kwargs, conn)
 
         return _async_inner
 
-    def _sync_inner():
-        return sync_http_requester(http_properties)
+    def _sync_inner(conn):
+        return sync_http_requester(jq, base_signer, request_kwargs, conn)
 
     return _sync_inner
 
@@ -150,6 +189,9 @@ def build_ws_generator(
 
 if __name__ == "__main__":
     print("OMLSP starting")
+    from duckdb import connect
+
+    conn: DuckDBPyConnection = connect(database=":memory:")
 
     async def main():
         properties = {
