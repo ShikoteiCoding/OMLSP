@@ -391,27 +391,6 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
     return pl.DataFrame()
 
-def build_sink_executable(ctx: SinkTaskContext):
-    properties = ctx.properties
-    producer = Producer({"bootstrap.servers": properties["server"]})
-    topic = properties["topic"]
-    return partial(
-        kafka_sink,
-        producer,
-        topic,
-    )
-
-async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
-    records = df.to_dicts()
-
-    def _produce_all():
-        for record in records:
-            payload = json.dumps(record).encode("utf-8")
-            producer.produce(topic, value=payload)
-            producer.poll(0)
-        producer.flush()
-
-    await trio.to_thread.run_sync(_produce_all)
 
 def build_sink_executable(
     ctx: SinkTaskContext,
