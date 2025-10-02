@@ -164,11 +164,13 @@ def build_scalar_udf(
     }
 
 
-def records_to_polars(records: list[dict], column_types: dict[str, DuckDBPyType]) -> pl.DataFrame:
+def records_to_polars(
+    records: list[dict], column_types: dict[str, DuckDBPyType]
+) -> pl.DataFrame:
     df = pl.DataFrame(records)
     # Cast each column to the right dtype
     for col, duck_type in column_types.items():
-        dtype = DUCKDB_TO_POLARS.get(duck_type, pl.Utf8)
+        dtype = DUCKDB_TO_POLARS.get(str(duck_type), pl.Utf8)
         df = df.with_columns(pl.col(col).cast(dtype))
     return df
 
@@ -399,7 +401,7 @@ def build_sink_executable(
         kafka_sink,
         first_upstream=ctx.upstreams[0],
         transform_query=ctx.subquery,
-        pl_ctx = pl.SQLContext(),
+        pl_ctx=pl.SQLContext(),
         producer=producer,
         topic=topic,
     )
@@ -438,10 +440,10 @@ def build_transform_executable(
     return partial(
         transform_executable,
         name=ctx.name,
-        first_upstream=ctx.upstreams[0], #TODO add joins
+        first_upstream=ctx.upstreams[0],  # TODO add joins
         transform_query=ctx.subquery,
         is_materialized=is_materialized,
-        pl_ctx = pl.SQLContext()
+        pl_ctx=pl.SQLContext(),
     )
 
 
@@ -453,7 +455,7 @@ async def transform_executable(
     first_upstream: str,
     transform_query: str,
     is_materialized: bool,
-    pl_ctx: pl.SQLContext
+    pl_ctx: pl.SQLContext,
 ) -> pl.DataFrame:
     pl_ctx.register(first_upstream, df)
     transform_df = pl_ctx.execute(transform_query).collect()
