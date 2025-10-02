@@ -170,7 +170,7 @@ def records_to_polars(
     df = pl.DataFrame(records)
     # Cast each column to the right dtype
     for col, duck_type in column_types.items():
-        dtype = DUCKDB_TO_POLARS.get(duck_type, pl.Utf8)
+        dtype = DUCKDB_TO_POLARS.get(str(duck_type), pl.Utf8)
         df = df.with_columns(pl.col(col).cast(dtype))
     return df
 

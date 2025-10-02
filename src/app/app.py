@@ -1,9 +1,7 @@
+from typing import Any, NoReturn
 import trio
-
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
-from typing import Any, NoReturn
-
 from channel import Channel
 from context.context import (
     CommandContext,
