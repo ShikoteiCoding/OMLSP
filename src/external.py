@@ -48,7 +48,7 @@ async def async_request(
     headers={"Content-Type": "application/json"},
     json={},
     **kwarg,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     attempt = 0
     while attempt < MAX_RETRIES:
         response = await client.request(method, url, headers=headers, json=json)
@@ -78,7 +78,7 @@ def sync_request(
     headers: dict = {"Content-Type": "application/json"},
     json: dict = {},
     **kwargs,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     try:
         response = client.request(method=method, url=url, headers=headers, json=json)
         logger.debug(f"response for {url}: {response.status_code}")
@@ -99,26 +99,28 @@ def sync_request(
     return []
 
 
-def parse_response(data: dict, jq: Any = None) -> list[dict]:
+def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]:
     res = jq.input(data).all()
     return res
 
 
-async def http_requester(properties: dict[str, Any]) -> list[dict]:
+async def http_requester(properties: dict[str, Any]) -> list[dict[str, Any]]:
     async with httpx.AsyncClient() as client:
         logger.debug(f"running request with properties: {properties}")
         res = await async_request(client, **properties)
         return res
 
 
-async def ws_generator(properties: dict[str, Any]) -> AsyncGenerator[Any, list[dict]]:
+async def ws_generator(
+    properties: dict[str, Any],
+) -> AsyncGenerator[Any, list[dict[str, Any]]]:
     async with open_websocket_url(properties["url"]) as ws:
         message = await ws.get_message()
         res = json.loads(message)
         yield parse_response(res, properties["jq"])
 
 
-def sync_http_requester(properties: dict) -> list[dict]:
+def sync_http_requester(properties: dict) -> list[dict[str, Any]]:
     client = httpx.Client()
     logger.debug(f"running request with properties: {properties}")
     return sync_request(client, **properties)
@@ -126,7 +128,10 @@ def sync_http_requester(properties: dict) -> list[dict]:
 
 def build_http_requester(
     properties: dict[str, Any], is_async: bool = True
-) -> Callable[[], Coroutine[Any, Any, list[dict]]] | Callable[[], list[dict]]:
+) -> (
+    Callable[[], Coroutine[Any, Any, list[dict[str, Any]]]]
+    | Callable[[], list[dict[str, Any]]]
+):
     http_properties = parse_http_properties(properties)
 
     if is_async:
@@ -144,7 +149,7 @@ def build_http_requester(
 
 def build_ws_generator(
     properties: dict[str, Any],
-) -> Callable[[], AsyncGenerator[Any, list[dict]]]:
+) -> Callable[[], AsyncGenerator[Any, list[dict[str, Any]]]]:
     return partial(ws_generator, properties=parse_ws_properties(properties))
 
 
