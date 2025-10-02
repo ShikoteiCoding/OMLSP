@@ -753,6 +753,7 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "trio-websocket"
 version = "0.12.2"
 source = { registry = "https://pypi.org/simple" }
@@ -767,6 +768,8 @@ wheels = [
 ]
 
 [[package]]
+=======
+>>>>>>> main
 name = "tzdata"
 version = "2025.2"
 source = { registry = "https://pypi.org/simple" }

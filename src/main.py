@@ -10,6 +10,7 @@ from pathlib import Path
 from app import App
 from scheduler import TrioScheduler
 from server import ClientManager
+from scheduler import TrioScheduler
 from sql.file import iter_sql_statements
 from task import TaskManager
 
