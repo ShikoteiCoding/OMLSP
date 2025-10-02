@@ -116,7 +116,7 @@ def rename_column_transform(node, old_name, new_name):
     return node
 
 
-def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str], dict]:
+def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str], dict[str, DuckDBPyType]]:
     """Parse table schema into name and columns"""
     assert isinstance(table, (exp.Schema,)), (
         f"Expression of type {type(table)} is not accepted"

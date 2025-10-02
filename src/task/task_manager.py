@@ -90,7 +90,6 @@ class TaskManager(Service):
         task = None
 
         if isinstance(ctx, SinkTaskContext):
-            # TODO: add Transform task to handle subqueries
             # TODO: subscribe to many upstreams
             task = SinkTask(task_id, self.conn)
             for name in ctx.upstreams:
