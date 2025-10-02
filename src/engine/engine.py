@@ -417,7 +417,7 @@ async def kafka_sink(
     topic: str,
 ) -> None:
     pl_ctx.register(first_upstream, df)
-    transform_df = pl_ctx.execute(transform_query).collect()
+    transform_df = pl_ctx.execute(transform_query)
     records = transform_df.to_dicts()
 
     def _produce_all():
@@ -456,7 +456,7 @@ async def transform_executable(
     pl_ctx: pl.SQLContext,
 ) -> pl.DataFrame:
     pl_ctx.register(first_upstream, df)
-    transform_df = pl_ctx.execute(transform_query).collect()
+    transform_df = pl_ctx.execute(transform_query)
 
     batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
     epoch = int(time.time() * 1_000)
