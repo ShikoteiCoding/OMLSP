@@ -3,7 +3,6 @@ import polars as pl
 from dataclasses import dataclass, field
 from typing import Any, Union, Type
 from apscheduler.triggers.cron import CronTrigger
-from duckdb.typing import DuckDBPyType
 
 # --- Context definitions ---
 
@@ -14,7 +13,7 @@ class CreateHTTPTableContext:
     name: str
     properties: dict[str, Any]
     query: str
-    column_types: dict[str, DuckDBPyType]
+    column_types: dict[str, str]
     trigger: CronTrigger
 
     # executable of http table context
@@ -26,7 +25,7 @@ class CreateHTTPTableContext:
 class CreateWSTableContext:
     name: str
     properties: dict[str, Any]
-    column_types: dict[str, DuckDBPyType]
+    column_types: dict[str, str]
     query: str
 
     # executable of ws table context
@@ -40,7 +39,7 @@ class CreateHTTPLookupTableContext:
     properties: dict[str, Any]
     query: str
     dynamic_columns: list[str]
-    columns: dict[str, DuckDBPyType]
+    columns: dict[str, str]
 
 
 # ---------- View / Sink Contexts ----------

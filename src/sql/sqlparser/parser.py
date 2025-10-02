@@ -1,7 +1,6 @@
 from enum import StrEnum
 from typing import Any
 from datetime import timezone
-from duckdb.typing import DuckDBPyType
 
 import jsonschema
 from apscheduler.triggers.cron import CronTrigger
@@ -140,7 +139,7 @@ def parse_table_schema(
 
 def parse_lookup_table_schema(
     table: exp.Schema,
-) -> tuple[exp.Schema, str, dict[str, DuckDBPyType], list[str]]:
+) -> tuple[exp.Schema, str, dict[str, str], list[str]]:
     # Parse temporary table schema (lookup).
     # Extract parameters for dynamic eval
     table_name = get_name(table)
@@ -159,7 +158,7 @@ def parse_lookup_table_schema(
     return table, table_name, columns, dynamic_columns
 
 
-def parse_ws_table_schema(table: exp.Schema) -> tuple[str, dict]:
+def parse_ws_table_schema(table: exp.Schema) -> tuple[str, dict[str, str]]:
     # Parse web socket table schema.
     table_name = table.this.name
 

@@ -125,7 +125,7 @@ def sync_request(
     return []
 
 
-def parse_response(data: dict, jq: Any = None) -> list[dict]:
+def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]:
     res = jq.input(data).all()
     return res
 
@@ -142,7 +142,9 @@ async def async_http_requester(
         return res
 
 
-async def ws_generator(properties: dict[str, Any]) -> AsyncGenerator[Any, list[dict]]:
+async def ws_generator(
+    properties: dict[str, Any],
+) -> AsyncGenerator[Any, list[dict[str, Any]]]:
     async with open_websocket_url(properties["url"]) as ws:
         message = await ws.get_message()
         res = json.loads(message)
@@ -183,7 +185,7 @@ def build_http_requester(
 
 def build_ws_generator(
     properties: dict[str, Any],
-) -> Callable[[], AsyncGenerator[Any, list[dict]]]:
+) -> Callable[[], AsyncGenerator[Any, list[dict[str, Any]]]]:
     return partial(ws_generator, properties=parse_ws_properties(properties))
 
 

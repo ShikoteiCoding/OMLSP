@@ -165,12 +165,12 @@ def build_scalar_udf(
 
 
 def records_to_polars(
-    records: list[dict], column_types: dict[str, DuckDBPyType]
+    records: list[dict[str, Any]], column_types: dict[str, str]
 ) -> pl.DataFrame:
     df = pl.DataFrame(records)
     # Cast each column to the right dtype
     for col, duck_type in column_types.items():
-        dtype = DUCKDB_TO_POLARS.get(str(duck_type), pl.Utf8)
+        dtype = DUCKDB_TO_POLARS.get(duck_type, pl.Utf8)
         df = df.with_columns(pl.col(col).cast(dtype))
     return df
 
@@ -180,8 +180,8 @@ async def http_source_executable(
     conn: DuckDBPyConnection,
     table_name: str,
     start_time: datetime,
+    column_types: dict[str, str],
     http_requester: Callable,
-    column_types: dict[str, DuckDBPyType],
     *args,
     **kwargs,
 ) -> pl.DataFrame:
@@ -225,8 +225,8 @@ async def ws_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
     table_name: str,
-    column_types: dict[str, DuckDBPyType],
-    ws_generator: Callable[[], AsyncGenerator[Any, list[dict]]],
+    column_types: dict[str, str],
+    ws_generator: Callable[[], AsyncGenerator[Any, list[dict[str, Any]]]],
     *args,
     **kwargs,
 ) -> AsyncGenerator[Any, pl.DataFrame]:
@@ -288,8 +288,9 @@ def build_lookup_table_prehook(
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
+
     # TODO: handle other return than dict (for instance array http responses)
-    return_type = struct_type(columns)  # typed struct from sql statement
+    return_type = struct_type(columns)  # type: ignore
     udf_params = build_scalar_udf(properties, dynamic_columns, return_type, conn)
     # register scalar for row to row http call
     conn.create_function(**udf_params)
@@ -399,7 +400,7 @@ def build_sink_executable(
         kafka_sink,
         first_upstream=ctx.upstreams[0],
         transform_query=ctx.subquery,
-        pl_ctx=pl.SQLContext(),
+        pl_ctx=pl.SQLContext(register_globals=False, eager=True),
         producer=producer,
         topic=topic,
     )
@@ -441,7 +442,7 @@ def build_transform_executable(
         first_upstream=ctx.upstreams[0],  # TODO add joins
         transform_query=ctx.subquery,
         is_materialized=is_materialized,
-        pl_ctx=pl.SQLContext(),
+        pl_ctx=pl.SQLContext(register_globals=False, eager=True),
     )
 
 
