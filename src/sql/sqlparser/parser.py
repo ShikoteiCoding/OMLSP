@@ -212,7 +212,9 @@ def build_create_http_table_context(
     statement = statement.copy()
 
     # parse table schema and update exp.Schema
-    updated_table_statement, table_name, _, column_types = parse_table_schema(statement.this)
+    updated_table_statement, table_name, _, column_types = parse_table_schema(
+        statement.this
+    )
 
     # overwrite modified table statement
     statement.set("this", updated_table_statement)
@@ -229,7 +231,7 @@ def build_create_http_table_context(
         name=table_name,
         properties=properties,
         query=clean_query,
-        column_types = column_types,
+        column_types=column_types,
         trigger=trigger,
     )
 
@@ -309,7 +311,7 @@ def build_create_sink_context(
         name=statement.this,
         upstreams=upstreams,
         properties=properties,
-        subquery=ctx.query
+        subquery=ctx.query,
     )
 
 
@@ -342,7 +344,7 @@ def build_create_view_context(
 
     return CreateViewContext(
         name=name,
-        upstreams=upstreams,        
+        upstreams=upstreams,
         subquery=ctx.query,
         query=query,
     )
