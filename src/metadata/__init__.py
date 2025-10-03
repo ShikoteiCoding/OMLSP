@@ -2,8 +2,11 @@ from metadata.db import (
     create_macro_definition,
     create_sink,
     create_table,
+    create_secret,
     create_view,
+    create_view_materialized,
     get_batch_id_from_table_metadata,
+    get_batch_id_from_view_metadata,
     get_lookup_tables,
     get_macro_definition_by_name,
     get_tables,
@@ -11,14 +14,18 @@ from metadata.db import (
     insert_table_metadata,
     resolve_schema,
     update_batch_id_in_table_metadata,
+    update_batch_id_in_view_metadata,
 )
 
 __all__ = [
     "create_macro_definition",
     "create_sink",
+    "create_secret",
     "create_table",
     "create_view",
+    "create_view_materialized",
     "get_batch_id_from_table_metadata",
+    "get_batch_id_from_view_metadata",
     "get_lookup_tables",
     "get_macro_definition_by_name",
     "get_tables",
@@ -26,4 +33,5 @@ __all__ = [
     "insert_table_metadata",
     "resolve_schema",
     "update_batch_id_in_table_metadata",
+    "update_batch_id_in_view_metadata",
 ]

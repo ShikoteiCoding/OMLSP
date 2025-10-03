@@ -1,16 +1,16 @@
 # file cannot be named io
 import polars as pl
 
-from typing import Any
 from loguru import logger
+from duckdb import DuckDBPyConnection
 
 
-async def persist(
+async def cache(
     df: pl.DataFrame,
     batch_id: int,
     epoch: int,
     table_name: str,
-    connection: Any,
+    conn: DuckDBPyConnection,
 ) -> None:
-    connection.execute(f"INSERT INTO {table_name} SELECT * FROM df")
-    logger.info(f"[{table_name}{{{batch_id}}}] {len(df)} records inserted @ {epoch}")
+    conn.execute(f"INSERT INTO {table_name} SELECT * FROM df")
+    logger.debug(f"[{table_name}{{{batch_id}}}] {len(df)} records inserted @ {epoch}")

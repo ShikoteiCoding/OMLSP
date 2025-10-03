@@ -6,8 +6,8 @@ from datetime import timezone
 from src.sql.sqlparser.parser import extract_one_query_context
 from src.sql.file import iter_sql_statements
 from src.context.context import (
-    CreateTableContext,
-    CreateLookupTableContext,
+    CreateHTTPTableContext,
+    CreateHTTPLookupTableContext,
     SelectContext,
 )
 
@@ -56,7 +56,7 @@ WITH (
 """
 
 VALID_CREATE_RESULT = [
-    CreateTableContext(
+    CreateHTTPTableContext(
         name="example",
         properties={
             "connector": "http",
@@ -67,7 +67,7 @@ VALID_CREATE_RESULT = [
         query="CREATE TABLE example (url TEXT)",
         trigger=CronTrigger.from_crontab("*/5 * * * *", timezone=timezone.utc),
     ),
-    CreateTableContext(
+    CreateHTTPTableContext(
         name="example_2",
         properties={
             "connector": "http",
@@ -78,7 +78,7 @@ VALID_CREATE_RESULT = [
         query="CREATE TABLE example_2 (url TEXT)",
         trigger=CronTrigger.from_crontab("*/1 * * * *", timezone=timezone.utc),
     ),
-    CreateLookupTableContext(
+    CreateHTTPLookupTableContext(
         name="lookup_example",
         properties={
             "connector": "lookup-http",

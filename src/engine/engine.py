@@ -4,33 +4,40 @@ import trio
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from duckdb import DuckDBPyConnection
+from duckdb.functional import FunctionNullHandling, PythonUDFType
+from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
 from types import FunctionType
-from typing import Any, Iterable
+from typing import Any, Iterable, Callable, AsyncGenerator, Coroutine
 
 import polars as pl
 import pyarrow as pa
-from duckdb import DuckDBPyConnection, struct_type
-from duckdb.functional import FunctionNullHandling, PythonUDFType
-from duckdb.typing import VARCHAR, DuckDBPyType
+from duckdb import struct_type
 from loguru import logger
 
 from context.context import (
-    CreateLookupTableContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     SelectContext,
-    SourceTaskContext,
+    ScheduledTaskContext,
+    ContinousTaskContext,
+    TransformTaskContext,
     SinkTaskContext,
 )
-from inout import persist
+from inout import cache
 from metadata import (
     create_macro_definition,
     get_batch_id_from_table_metadata,
     get_lookup_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
+    get_batch_id_from_view_metadata,
+    update_batch_id_in_view_metadata,
 )
-from requester import build_http_requester
+from external import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
 
 
@@ -52,6 +59,25 @@ DUCKDB_TO_PYARROW_PYTYPE = {
     "BOOLEAN": pa.bool_(),
     "DATE": pa.date32(),
     "DECIMAL": pa.decimal128(18, 2),
+}
+
+DUCKDB_TO_POLARS = {
+    "VARCHAR": pl.Utf8,
+    "TEXT": pl.Utf8,
+    "TIMESTAMP": pl.Datetime,
+    "TIMESTAMP_MS": pl.Datetime("ms"),
+    "TIMESTAMP_NS": pl.Datetime("ns"),
+    "DATETIME": pl.Datetime,
+    "FLOAT": pl.Float32,
+    "DOUBLE": pl.Float64,
+    "INTEGER": pl.Int32,
+    "INT": pl.Int32,
+    "BIGINT": pl.Int64,
+    "SMALLINT": pl.Int16,
+    "TINYINT": pl.Int8,
+    "BOOLEAN": pl.Boolean,
+    "DATE": pl.Date,
+    "DECIMAL": pl.Float64,
 }
 
 
@@ -138,12 +164,24 @@ def build_scalar_udf(
     }
 
 
-async def source_executable(
-    table_name: str,
-    start_time: datetime,
-    http_requester: FunctionType,
+def records_to_polars(
+    records: list[dict[str, Any]], column_types: dict[str, str]
+) -> pl.DataFrame:
+    df = pl.DataFrame(records)
+    # Cast each column to the right dtype
+    for col, duck_type in column_types.items():
+        dtype = DUCKDB_TO_POLARS.get(duck_type, pl.Utf8)
+        df = df.with_columns(pl.col(col).cast(dtype))
+    return df
+
+
+async def http_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
+    table_name: str,
+    start_time: datetime,
+    column_types: dict[str, str],
+    http_requester: FunctionType,
     *args,
     **kwargs,
 ) -> pl.DataFrame:
@@ -160,9 +198,8 @@ async def source_executable(
 
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
-        # TODO: type polars with duckdb table catalog
-        df = pl.from_records(records)
-        await persist(df, batch_id, epoch, table_name, conn)
+        df = records_to_polars(records, column_types)
+        await cache(df, batch_id, epoch, table_name, conn)
     else:
         df = pl.DataFrame()
 
@@ -170,19 +207,79 @@ async def source_executable(
     return df
 
 
-def build_source_executable(ctx: SourceTaskContext):
+def build_http_source_executable(
+    ctx: CreateHTTPTableContext,
+) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
     start_time = datetime.now(timezone.utc)
     properties = ctx.properties
     return partial(
-        source_executable,
+        http_source_executable,
         table_name=ctx.name,
         start_time=start_time,
+        column_types=ctx.column_types,
         http_requester=build_http_requester(properties, is_async=True),
     )
 
 
+async def ws_source_executable(
+    task_id: str,
+    conn: DuckDBPyConnection,
+    table_name: str,
+    column_types: dict[str, str],
+    ws_generator: Callable[[], AsyncGenerator[Any, list[dict[str, Any]]]],
+    *args,
+    **kwargs,
+) -> AsyncGenerator[Any, pl.DataFrame]:
+    logger.info(f"[{task_id}] - starting ws executable")
+    batch_id = get_batch_id_from_table_metadata(conn, table_name)
+    while True:
+        async for records in ws_generator():
+            if len(records) > 0:
+                epoch = int(time.time() * 1_000)
+                df = records_to_polars(records, column_types)
+                await cache(df, batch_id, epoch, table_name, conn)
+            else:
+                df = pl.DataFrame()
+
+            yield df
+            update_batch_id_in_table_metadata(conn, table_name, batch_id + 1)
+
+
+def build_ws_source_executable(
+    ctx: CreateWSTableContext,
+) -> Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, pl.DataFrame]]:
+    properties = ctx.properties
+    table_name = ctx.name
+    return partial(
+        ws_source_executable,
+        table_name=table_name,
+        column_types=ctx.column_types,
+        ws_generator=build_ws_generator(properties),
+    )
+
+
+def build_scheduled_source_executable(
+    ctx: ScheduledTaskContext,
+) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
+    if isinstance(ctx, CreateHTTPTableContext):
+        return build_http_source_executable(ctx)
+
+    else:
+        raise NotImplementedError()
+
+
+def build_continuous_source_executable(
+    ctx: ContinousTaskContext,
+) -> Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, pl.DataFrame]]:
+    if isinstance(ctx, CreateWSTableContext):
+        return build_ws_source_executable(ctx)
+
+    else:
+        raise NotImplementedError()
+
+
 def build_lookup_table_prehook(
-    create_table_context: CreateLookupTableContext, connection: DuckDBPyConnection
+    create_table_context: CreateHTTPLookupTableContext, connection: DuckDBPyConnection
 ) -> str:
     properties = create_table_context.properties
     table_name = create_table_context.name
@@ -191,8 +288,9 @@ def build_lookup_table_prehook(
 
     func_name = f"{table_name}_func"
     macro_name = f"{table_name}_macro"
+
     # TODO: handle other return than dict (for instance array http responses)
-    return_type = struct_type(columns)  # typed struct from sql statement
+    return_type = struct_type(columns)  # type: ignore
     udf_params = build_scalar_udf(
         properties, dynamic_columns, return_type, name=func_name
     )
@@ -293,18 +391,37 @@ def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
 
     return pl.DataFrame()
 
-def build_sink_executable(ctx: SinkTaskContext):
+
+def build_sink_executable(
+    ctx: SinkTaskContext,
+) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
     return partial(
         kafka_sink,
-        producer,
-        topic,
+        first_upstream=ctx.upstreams[0],
+        transform_query=ctx.subquery,
+        pl_ctx=pl.SQLContext(register_globals=False, eager=True),
+        producer=producer,
+        topic=topic,
     )
 
-async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
-    records = df.to_dicts()
+
+async def kafka_sink(
+    task_id: str,
+    conn: DuckDBPyConnection,
+    df: pl.DataFrame,
+    first_upstream: str,
+    transform_query: str,
+    pl_ctx: pl.SQLContext,
+    *,
+    producer: Producer,
+    topic: str,
+) -> None:
+    pl_ctx.register(first_upstream, df)
+    transform_df = pl_ctx.execute(transform_query)
+    records = transform_df.to_dicts()
 
     def _produce_all():
         for record in records:
@@ -314,6 +431,43 @@ async def kafka_sink(producer: Producer, topic: str, df: pl.DataFrame):
         producer.flush()
 
     await trio.to_thread.run_sync(_produce_all)
+
+
+def build_transform_executable(
+    ctx: TransformTaskContext, is_materialized: bool
+) -> Callable[
+    [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
+]:
+    return partial(
+        transform_executable,
+        name=ctx.name,
+        first_upstream=ctx.upstreams[0],  # TODO add joins
+        transform_query=ctx.subquery,
+        is_materialized=is_materialized,
+        pl_ctx=pl.SQLContext(register_globals=False, eager=True),
+    )
+
+
+async def transform_executable(
+    task_id: str,
+    conn: DuckDBPyConnection,
+    df: pl.DataFrame,
+    name: str,
+    first_upstream: str,
+    transform_query: str,
+    is_materialized: bool,
+    pl_ctx: pl.SQLContext,
+) -> pl.DataFrame:
+    pl_ctx.register(first_upstream, df)
+    transform_df = pl_ctx.execute(transform_query)
+
+    batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
+    epoch = int(time.time() * 1_000)
+    await cache(transform_df, batch_id, epoch, name, conn)
+    update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
+
+    return transform_df
+
 
 if __name__ == "__main__":
     from duckdb import connect

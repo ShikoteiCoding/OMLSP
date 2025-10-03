@@ -19,6 +19,7 @@ dependencies = [
   "prompt-toolkit>=3.0",
   "trio>=0.30.0",
   "confluent-kafka>=2.11.1",
+  "trio-websocket>=0.12.2",
 ]
 
 [dependency-groups]

@@ -4,19 +4,22 @@ from datetime import timezone
 
 import jsonschema
 from apscheduler.triggers.cron import CronTrigger
-from loguru import logger
 from sqlglot import exp, parse_one
 from sqlglot.dialects.postgres import Postgres
 from sqlglot.tokens import Tokenizer, TokenType
 
 from context.context import (
     CommandContext,
-    CreateLookupTableContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateSinkContext,
-    CreateTableContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
+    CreateSecretContext,
     InvalidContext,
     QueryContext,
+    NonQueryContext,
     SelectContext,
     SetContext,
 )
@@ -26,6 +29,13 @@ class CreateKind(StrEnum):
     SINK = "SINK"
     TABLE = "TABLE"
     VIEW = "VIEW"
+    SECRET = "SECRET"
+
+
+class TableConnectorKind(StrEnum):
+    HTTP = "http"
+    LOOKUP_HTTP = "lookup-http"
+    WS = "ws"
 
 
 class Omlsp(Postgres):
@@ -33,12 +43,58 @@ class Omlsp(Postgres):
         KEYWORDS = {
             **Postgres.Tokenizer.KEYWORDS,
             "SINK": TokenType.SINK,
+            # Generic token type for "new" tokens
+            "SECRET": TokenType.COMMAND,
+            "WITH": TokenType.WITH,
             # TODO: ADD SOURCE HERE
         }
 
     class Parser(Postgres.Parser):
         def _parse_table_hints(self) -> list[exp.Expression] | None:
+            # Keep SINK behavior unchanged
             return None
+
+        def _parse_create(self):
+            """
+            CREATE SECRET secret_name WITH (backend = 'meta') AS 'secret_value'
+            """
+            # Detect CREATE SECRET as TokenType COMMAND
+            if self._match(TokenType.COMMAND):
+                if self._prev:
+                    # Extract SECRET
+                    kind = self._prev.text.upper()
+
+                    # Parse the secret name
+                    this = self._parse_id_var()
+
+                    # Optionally parse WITH (...)
+                    properties = self._parse_properties()
+
+                    # Require AS '...'
+                    if not self._match(TokenType.ALIAS):
+                        self.raise_error("Expected AS after CREATE SECRET ...")
+
+                    # This should get parsed as Literal
+                    secret_value = self._parse_string()
+
+                    # Handle removal of single quotes
+                    secret_value_str = str(secret_value)
+                    if secret_value_str.startswith("'") and secret_value_str.startswith(
+                        "'"
+                    ):
+                        secret_value = secret_value_str[1:-1]
+
+                    # Return a standard Create expression
+                    return self.expression(
+                        exp.Create,
+                        kind=kind,
+                        this=this,
+                        properties=properties,
+                        expression=secret_value,
+                    )
+
+            # Fallback to the default Postgres CREATE behavior
+            return super()._parse_create()
 
 
 def get_name(expression: exp.Expression) -> str:
@@ -59,7 +115,9 @@ def rename_column_transform(node, old_name, new_name):
     return node
 
 
-def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str]]:
+def parse_table_schema(
+    table: exp.Schema,
+) -> tuple[exp.Schema, str, list[str], dict[str, str]]:
     """Parse table schema into name and columns"""
     assert isinstance(table, (exp.Schema,)), (
         f"Expression of type {type(table)} is not accepted"
@@ -67,22 +125,23 @@ def parse_table_schema(table: exp.Schema) -> tuple[exp.Schema, str, list[str]]:
     table_name = get_name(table)
     table = table.copy()
 
-    columns = [
-        str(column.name)
-        for column in table.expressions
-        if isinstance(column, exp.ColumnDef)
-    ]
+    column_types = {}
+    columns = []
+    for col in table.expressions:
+        if isinstance(col, exp.ColumnDef):
+            col_name = str(col.name)
+            col_type = col.args.get("kind")  # data type
+            column_types[col_name] = str(col_type).upper()
+            columns.append(col_name)
 
-    return table, table_name, columns
+    return table, table_name, columns, column_types
 
 
 def parse_lookup_table_schema(
     table: exp.Schema,
 ) -> tuple[exp.Schema, str, dict[str, str], list[str]]:
-    """Parse temp table schema. Handle dynamic parameters of lookup / temp tables."""
-    assert isinstance(table, (exp.Schema,)), (
-        f"Expression of type {type(table)} is not accepted"
-    )
+    # Parse temporary table schema (lookup).
+    # Extract parameters for dynamic eval
     table_name = get_name(table)
     table = table.copy()
 
@@ -99,167 +158,270 @@ def parse_lookup_table_schema(
     return table, table_name, columns, dynamic_columns
 
 
+def parse_ws_table_schema(table: exp.Schema) -> tuple[str, dict[str, str]]:
+    # Parse web socket table schema.
+    table_name = table.this.name
+
+    column_types = {}
+    for col in table.expressions:
+        if isinstance(col, exp.ColumnDef):
+            col_name = str(col.name)
+            col_type = col.args.get("kind")  # data type
+            column_types[col_name] = str(col_type).upper()
+
+    return table_name, column_types
+
+
 def validate_create_properties(
     properties: dict[str, str], properties_schema: dict
-) -> None:
-    """JSON Schema validation of properties extracted from WITH statement"""
-    jsonschema.validate(instance=properties, schema=properties_schema)
-
-
-def parse_create_properties(
-    statement: exp.Create, properties_schema: dict
-) -> tuple[exp.Create, dict[str, str]]:
-    """Parse properties of Create statement"""
-    assert isinstance(statement, (exp.Create,)), (
-        f"Expression of type {type(statement)} is not accepted"
-    )
-    custom_properties = {}
-    table_kind = "TABLE"
-    statement = statement.copy()
-    for prop in get_properties_from_create(statement):
-        # sqlglot extract temporary statement and put it in properties
-        if isinstance(prop, exp.TemporaryProperty):
-            # TODO: find better way than overwrite table "kind"
-            table_kind = "TEMPORARY TABLE"
-            continue
-        elif isinstance(prop, exp.Property):
-            key = prop.name
-            val_exp = prop.args["value"]
-            if isinstance(val_exp, exp.Literal):
-                value = val_exp.this
-            else:  # fallback to raw SQL
-                value = val_exp.sql(dialect=None)
-        elif isinstance(prop, exp.SequenceProperties):
-            continue
-        else:
-            logger.warning(f"Unknown property: {type(prop)} - {prop}")
-        custom_properties[key] = value
-
-    statement.set("kind", table_kind)
-    validate_create_properties(custom_properties, properties_schema)
-    return statement, custom_properties
+) -> str | None:
+    # validate properties according to json schema
+    try:
+        return jsonschema.validate(instance=properties, schema=properties_schema)
+    except Exception as e:
+        return f"JSON schema validation on properties failed with error: {e}"
 
 
 def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set | exp.Command) -> str:
     statement = statement.copy()
+
+    # remove known "non duckdb" compliant sql
     if statement.args.get("properties"):
         del statement.args["properties"]
 
     return statement.sql("duckdb")
 
 
-def get_properties_from_create(statement: exp.Create) -> list[exp.Property]:
-    return [prop for prop in statement.args.get("properties", [])]
+def extract_create_properties(statement: exp.Create) -> dict[str, str]:
+    properties = {}
+    for prop in statement.args.get("properties", []):
+        # sqlglot pushes "temporary" predicate
+        # in properties, needs to ignore it
+        if not prop or str(prop) == "TEMPORARY":
+            continue
+
+        # regular properties are divided in "this" and "value"
+        properties[prop.this.this] = prop.args.get("value").this
+
+    return properties
 
 
-def build_create_table_context(
-    statement: exp.Create, properties_schema: dict[str, Any]
-) -> CreateTableContext:
-    updated_create_statement, properties = parse_create_properties(
-        statement, properties_schema
+def build_create_http_table_context(
+    statement: exp.Create, properties: dict[str, str]
+) -> CreateHTTPTableContext:
+    # avoid side effect, leverage sqlglot ast copy
+    statement = statement.copy()
+
+    # parse table schema and update exp.Schema
+    updated_table_statement, table_name, _, column_types = parse_table_schema(
+        statement.this
     )
-    updated_table_statement, table_name, _ = parse_table_schema(
-        updated_create_statement.this
-    )
-    updated_create_statement.set(
-        "this", updated_table_statement
-    )  # overwrite modified table statement
-    cron_expr = str(properties.pop("schedule"))
 
-    return CreateTableContext(
+    # overwrite modified table statement
+    statement.set("this", updated_table_statement)
+
+    # cron schedule for http
+    trigger = CronTrigger.from_crontab(
+        str(properties.pop("schedule")), timezone=timezone.utc
+    )
+
+    # get query purged of it's omlsp specific syntax
+    clean_query = get_duckdb_sql(statement)
+
+    return CreateHTTPTableContext(
         name=table_name,
         properties=properties,
-        query=get_duckdb_sql(updated_create_statement),
-        trigger=CronTrigger.from_crontab(cron_expr, timezone=timezone.utc),
+        query=clean_query,
+        column_types=column_types,
+        trigger=trigger,
     )
 
 
-def build_create_lookup_context(
-    statement: exp.Create, properties_schema: dict[str, Any]
-) -> CreateLookupTableContext:
-    updated_create_statement, properties = parse_create_properties(
-        statement, properties_schema
-    )
-    updated_table_statement, table_name, columns, dynamic_columns = (
-        parse_lookup_table_schema(updated_create_statement.this)
-    )
-    updated_create_statement.set(
-        "this", updated_table_statement
-    )  # overwrite modified table statement
+def build_create_http_lookup_lookup_context(
+    statement: exp.Create, properties: dict[str, str]
+) -> CreateHTTPLookupTableContext:
+    # avoid side effect, leverage sqlglot ast copy
+    statement = statement.copy()
 
-    return CreateLookupTableContext(
+    # get updated exp.Schema (to extract sql later)
+    # columns and dynamic columns are extracted for
+    # duckdb scalar function & macros
+    new_expr_schema, table_name, columns, dynamic_columns = parse_lookup_table_schema(
+        statement.this
+    )
+
+    # get updated exp.Create (to extract sql later)
+    statement.set("this", new_expr_schema)
+
+    return CreateHTTPLookupTableContext(
         name=table_name,
         properties=properties,
-        query=get_duckdb_sql(updated_create_statement),
+        query=get_duckdb_sql(statement),
         dynamic_columns=dynamic_columns,
         columns=columns,
+    )
+
+
+def build_create_ws_table_context(
+    statement: exp.Create, properties: dict[str, str]
+) -> CreateWSTableContext:
+    # avoid side effect, leverage sqlglot ast copy
+    statement = statement.copy()
+
+    table_name, column_types = parse_ws_table_schema(statement.this)
+
+    # get query purged of omlsp-specific syntax
+    clean_query = get_duckdb_sql(statement)
+
+    return CreateWSTableContext(
+        name=table_name,
+        properties=properties,
+        column_types=column_types,
+        query=clean_query,
     )
 
 
 def build_create_sink_context(
     statement: exp.Create, properties_schema: dict[str, Any]
 ) -> CreateSinkContext | InvalidContext:
-    updated_create_statement, properties = parse_create_properties(
-        statement, properties_schema
-    )
-    expr = updated_create_statement.expression
+    # extract subquery
+    ctx = extract_select_context(statement.expression)
+    if isinstance(ctx, InvalidContext):
+        return ctx
+    # extract list of exp.Property
+    # declared behind sql WITH statement
+    properties = extract_create_properties(statement)
+    # validate properties against schema
+    # if not ok, return invalid context
+    nok = validate_create_properties(properties, properties_schema)
+    if nok:
+        return InvalidContext(reason=nok)
+
+    # avoid side effect, leverage sqlglot ast copy
+    statement = statement.copy()
+    expr = statement.expression
 
     # TODO: support multiple upstreams merged/unioned
     ctx = extract_select_context(expr)
     if isinstance(ctx, SelectContext):
-        upstreams = [ctx.table]        
+        upstreams = [ctx.table]
     else:
-        return InvalidContext(
-        reason=f"Unsupported sink query: {expr}"
-    )
+        return InvalidContext(reason=f"Unsupported sink query: {expr}")
 
     return CreateSinkContext(
-        name=updated_create_statement.this,
+        name=statement.this,
         upstreams=upstreams,
         properties=properties,
-        query="SELECT 1;",
+        subquery=ctx.query,
     )
 
 
 def build_create_view_context(
     statement: exp.Create,
-) -> CreateViewContext | InvalidContext:
+) -> CreateViewContext | CreateMaterializedViewContext | InvalidContext:
     name = statement.this.name
 
     ctx = extract_select_context(statement.expression)
     if isinstance(ctx, InvalidContext):
         return ctx
 
-    upstreams = list(set(ctx.table) & set(ctx.joins.keys()))
+    # TODO: support multiple upstreams merged/unioned
+    # TODO: add where clause
+    upstreams = [ctx.table]
+    # duckdb doesn't support MATERIALIZED and load VIEW in memory
+    statement.args["kind"] = "TABLE"
+    query = get_duckdb_sql(statement)
+    # sqlglot often captures MATERIALIZED/NOT MATERIALIZED as a property
+    properties = statement.args.get("properties")
+    if properties:
+        for prop in properties.expressions:
+            if isinstance(prop, exp.MaterializedProperty):
+                return CreateMaterializedViewContext(
+                    name=name,
+                    upstreams=upstreams,
+                    subquery=ctx.query,
+                    query=query,
+                )
+
     return CreateViewContext(
-        name=name, upstreams=upstreams, query=get_duckdb_sql(statement)
+        name=name,
+        upstreams=upstreams,
+        subquery=ctx.query,
+        query=query,
+    )
+
+
+def build_generic_create_table_context(
+    statement: exp.Create, properties_schema: dict
+) -> (
+    CreateHTTPTableContext
+    | CreateHTTPLookupTableContext
+    | CreateWSTableContext
+    | InvalidContext
+):
+    # extract list of exp.Property
+    # declared behind sql WITH statement
+    properties = extract_create_properties(statement)
+
+    # validate properties against schema
+    # if not ok, return invalid context
+    nok = validate_create_properties(properties, properties_schema)
+    if nok:
+        return InvalidContext(reason=nok)
+
+    if properties["connector"] == TableConnectorKind.LOOKUP_HTTP.value:
+        return build_create_http_lookup_lookup_context(statement, properties)
+
+    if properties["connector"] == TableConnectorKind.HTTP.value:
+        return build_create_http_table_context(statement, properties)
+
+    if properties["connector"] == TableConnectorKind.WS.value:
+        return build_create_ws_table_context(statement, properties)
+
+    return InvalidContext(reason=f"Invalid connector / properties: {properties}")
+
+
+def build_create_secret_context(
+    statement: exp.Create, properties_schema: dict
+) -> CreateSecretContext | InvalidContext:
+    properties = extract_create_properties(statement)
+
+    # validate properties against schema
+    # if not ok, return invalid context
+    nok = validate_create_properties(properties, properties_schema)
+    if nok:
+        return InvalidContext(reason=nok)
+
+    value = str(statement.expression)
+
+    return CreateSecretContext(
+        name=statement.name, properties=properties, value=str(value)
     )
 
 
 def extract_create_context(
     statement: exp.Create, properties_schema: dict
 ) -> (
-    CreateTableContext
-    | CreateLookupTableContext
+    CreateHTTPTableContext
+    | CreateHTTPLookupTableContext
+    | CreateWSTableContext
     | CreateSinkContext
     | CreateViewContext
+    | CreateMaterializedViewContext
+    | CreateSecretContext
     | InvalidContext
 ):
     if str(statement.kind) == CreateKind.TABLE.value:
-        is_temp = isinstance(
-            get_properties_from_create(statement)[0], exp.TemporaryProperty
-        )
-
-        if not is_temp:
-            return build_create_table_context(statement, properties_schema)
-
-        return build_create_lookup_context(statement, properties_schema)
+        return build_generic_create_table_context(statement, properties_schema)
 
     elif str(statement.kind) == CreateKind.SINK.value:
         return build_create_sink_context(statement, properties_schema)
 
     elif str(statement.kind) == CreateKind.VIEW.value:
         return build_create_view_context(statement)
+
+    elif str(statement.kind) == CreateKind.SECRET.value:
+        return build_create_secret_context(statement, properties_schema)
 
     return InvalidContext(
         reason=f"Query provided is not a valid statement: {statement.kind}"
@@ -351,14 +513,13 @@ def extract_command_context(
     statement: exp.Command,
 ) -> CommandContext | InvalidContext:
     sql_string = get_duckdb_sql(statement).strip().upper()
-    logger.error(sql_string)
 
     return CommandContext(query=sql_string)
 
 
 def extract_one_query_context(
     query: str, properties_schema: dict
-) -> QueryContext | InvalidContext:
+) -> QueryContext | NonQueryContext:
     parsed_statement = parse_one(query, dialect=Omlsp)
 
     if isinstance(parsed_statement, exp.Create):

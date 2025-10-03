@@ -20,3 +20,6 @@ client:
 
 test:
 	PYTHONPATH=src/ uv run --active pytest tests/ -vv
+
+ruff:
+	make check && make format

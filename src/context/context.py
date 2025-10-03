@@ -1,18 +1,40 @@
-from dataclasses import dataclass
-from typing import Any, Union
+import polars as pl
+
+from dataclasses import dataclass, field
+from typing import Any, Union, Type
 from apscheduler.triggers.cron import CronTrigger
+
+# --- Context definitions ---
+
 
 # ---------- Table Contexts ----------
 @dataclass
-class CreateTableContext:
+class CreateHTTPTableContext:
     name: str
     properties: dict[str, Any]
     query: str
+    column_types: dict[str, str]
     trigger: CronTrigger
+
+    # executable of http table context
+    # returns a polars dataframe
+    _out_type: Type = field(default=pl.DataFrame)
 
 
 @dataclass
-class CreateLookupTableContext:
+class CreateWSTableContext:
+    name: str
+    properties: dict[str, Any]
+    column_types: dict[str, str]
+    query: str
+
+    # executable of ws table context
+    # returns a polars dataframe
+    _out_type: Type = field(default=pl.DataFrame)
+
+
+@dataclass
+class CreateHTTPLookupTableContext:
     name: str
     properties: dict[str, Any]
     query: str
@@ -25,13 +47,20 @@ class CreateLookupTableContext:
 class CreateViewContext:
     name: str
     upstreams: list[str]
+    subquery: str
     query: str
+
+    _out_type: Type = field(default=pl.DataFrame)
 
 
 @dataclass
 class CreateMaterializedViewContext:
     name: str
     upstreams: list[str]
+    subquery: str
+    query: str
+
+    _out_type: Type = field(default=pl.DataFrame)
 
 
 @dataclass
@@ -39,7 +68,14 @@ class CreateSinkContext:
     name: str
     upstreams: list[str]
     properties: dict[str, Any]
-    query: str
+    subquery: str
+
+
+@dataclass
+class CreateSecretContext:
+    name: str
+    properties: dict[str, Any]
+    value: str
 
 
 # ---------- Query / Command Contexts ----------
@@ -71,35 +107,49 @@ class InvalidContext:
 # ----------  Unions for type hints ----------
 # Context part of task flow
 TaskContext = Union[
-    CreateLookupTableContext,
-    CreateTableContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateViewContext,
     CreateMaterializedViewContext,
     CreateSinkContext,
 ]
 
 EvaluableContext = Union[
-    CreateLookupTableContext,
-    CreateTableContext,
+    CommandContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateMaterializedViewContext,
+    CreateSecretContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateWSTableContext,
     SetContext,
-    CommandContext,
     SelectContext,
 ]
 
-# Everything except Invalid
+# Everything except Invalid and CreateSecret
 QueryContext = Union[
-    CreateLookupTableContext,
-    CreateTableContext,
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
+    CreateMaterializedViewContext,
     SetContext,
     CommandContext,
     SelectContext,
 ]
 
-# Sub type of TaskContext
-SourceTaskContext = Union[CreateTableContext]
+NonQueryContext = Union[CreateSecretContext, InvalidContext]
+
+# Table contexts of different connector type
+CreateTableContext = Union[
+    CreateHTTPLookupTableContext, CreateHTTPTableContext, CreateWSTableContext
+]
+
+ScheduledTaskContext = Union[CreateHTTPTableContext]
+ContinousTaskContext = Union[CreateWSTableContext]
 
 SinkTaskContext = Union[CreateSinkContext]
+TransformTaskContext = Union[CreateMaterializedViewContext, CreateViewContext]
