@@ -16,6 +16,5 @@ WITH (
     schedule = '*/1 * * * *',
     jq = '.data.ticker[:2][] | {symbol, symbolName, buy, sell}',
     'headers.Content-Type' = 'application/json',
-    -- TODO: improve sqlglot parser to accept non quoted values
     'headers.X-API-Key' = 'SECRET kucoin_api_key' 
 );
