@@ -39,10 +39,26 @@
           "^json\\..+$": {
             "type": "string",
             "description": "Additional JSON configuration"
+          },
+          "*": {
+            "type": "string",
+            "pattern": "^SECRET\\s+[a-zA-Z0-9_]+$",
+            "description": "Accept SECRET values"
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "string",
+            "pattern": "^SECRET\\s+[a-zA-Z0-9_]+$",
+            "description": "Secret reference"
+          }
+        ]
+      }
     },
     {
       "title": "Lookup HTTP Connector",

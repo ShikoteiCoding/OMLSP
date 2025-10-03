@@ -5,7 +5,6 @@ import polars as pl
 from abc import ABC, abstractmethod
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
-from loguru import logger
 
 from channel import Channel
 
@@ -110,7 +109,7 @@ class SinkTask(BaseTaskT, Generic[T]):
         # TODO: receive many upstreams
         receiver = self._receivers[0]
         async for df in receiver:
-            logger.info(f"[SinkTask{{{self.task_id}}}] got:\n{df}")
+            pass
             # await self._executable(self.task_id, self._conn, df)
 
 
@@ -141,6 +140,5 @@ class TransformTask(BaseTaskT, Generic[T]):
         receiver = self._receivers[0]
         async for df in receiver:
             result = await self._executable(self.task_id, self._conn, df)
-            logger.info(f"[TransformTask{{{self.task_id}}}] got:\n{result}")
             if hasattr(self, "_sender"):
                 await self._sender.send(result)

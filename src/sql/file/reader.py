@@ -9,6 +9,7 @@ def iter_sql_statements(path: Path | str) -> Generator[str, None, None]:
 
     with open(path, "r", encoding="utf-8") as f:
         while line := f.readline():
+            # remove comments
             if line.startswith("--"):
                 continue
             content += line

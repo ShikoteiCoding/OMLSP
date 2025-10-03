@@ -9,8 +9,7 @@ from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
-from types import FunctionType
-from typing import Any, Iterable, Callable, AsyncGenerator, Coroutine
+from typing import Any, AsyncGenerator, Callable, Coroutine, Iterable
 
 import polars as pl
 import pyarrow as pa
@@ -61,7 +60,7 @@ DUCKDB_TO_PYARROW_PYTYPE = {
     "DECIMAL": pa.decimal128(18, 2),
 }
 
-DUCKDB_TO_POLARS = {
+DUCKDB_TO_POLARS: dict[str, Any] = {
     "VARCHAR": pl.Utf8,
     "TEXT": pl.Utf8,
     "TIMESTAMP": pl.Datetime,
@@ -100,6 +99,7 @@ def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
     return_type: DuckDBPyType,
+    conn: DuckDBPyConnection,
     **kwargs,
 ) -> dict[str, Any]:
     arity = len(dynamic_columns)
@@ -138,7 +138,7 @@ def build_scalar_udf(
             requester = build_http_requester(lookup_properties, is_async=False)
 
             try:
-                response = requester()
+                response = requester(conn)
                 if isinstance(response, dict):
                     return context | response
                 if isinstance(response, list) and len(response) >= 1:
@@ -181,7 +181,7 @@ async def http_source_executable(
     table_name: str,
     start_time: datetime,
     column_types: dict[str, str],
-    http_requester: FunctionType,
+    http_requester: Callable,
     *args,
     **kwargs,
 ) -> pl.DataFrame:
@@ -191,7 +191,7 @@ async def http_source_executable(
     batch_id = get_batch_id_from_table_metadata(conn, table_name)
     logger.info(f"[{table_name}{{{batch_id}}}] / @ {execution_time}")
 
-    records = await http_requester()
+    records = await http_requester(conn)
     logger.debug(
         f"[{table_name}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
     )
@@ -279,7 +279,7 @@ def build_continuous_source_executable(
 
 
 def build_lookup_table_prehook(
-    create_table_context: CreateHTTPLookupTableContext, connection: DuckDBPyConnection
+    create_table_context: CreateHTTPLookupTableContext, conn: DuckDBPyConnection
 ) -> str:
     properties = create_table_context.properties
     table_name = create_table_context.name
@@ -291,11 +291,9 @@ def build_lookup_table_prehook(
 
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # type: ignore
-    udf_params = build_scalar_udf(
-        properties, dynamic_columns, return_type, name=func_name
-    )
+    udf_params = build_scalar_udf(properties, dynamic_columns, return_type, conn)
     # register scalar for row to row http call
-    connection.create_function(**udf_params)
+    conn.create_function(**udf_params)
     logger.debug(f"registered function: {func_name}")
 
     # TODO: wrap SQL in function
@@ -311,7 +309,7 @@ def build_lookup_table_prehook(
     )
 
     # TODO: move to metadata func
-    connection.sql(f"""
+    conn.sql(f"""
         CREATE OR REPLACE MACRO {macro_def} AS TABLE
         SELECT
             {output_cols}
@@ -322,7 +320,7 @@ def build_lookup_table_prehook(
         ) AS {__deriv_tbl};
     """)
     logger.debug(f"registered macro: {macro_name}")
-    create_macro_definition(connection, macro_name, dynamic_columns)
+    create_macro_definition(conn, macro_name, dynamic_columns)
 
     return macro_name
 
