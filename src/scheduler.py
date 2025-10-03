@@ -107,16 +107,15 @@ class TrioScheduler(Service, BaseScheduler):
         Service.__init__(self, name="TrioScheduler")
         self._trio_token: trio.lowlevel.TrioToken | None = None
 
-
     async def start(self, paused: bool = False):
         """
         Async start: must be awaited.
         TrioService is started first, then BaseScheduler.
         """
-        if not self._nursery:
+        if not self._nursery or not self._trio_token:
             raise RuntimeError(
                 "TrioScheduler.start() requires a Trio nursery. "
-                "Call ._configure(...) first."
+                "Use scheduler._configure({'_nursery': nursery, '_trio_token': token})."
             )
 
         # Start Trio service lifecycle
