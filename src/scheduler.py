@@ -3,6 +3,7 @@ import trio
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.util import maybe_ref
+from services import Service
 
 
 from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
@@ -93,7 +94,7 @@ class TrioExecutor(BaseExecutor):
         self._nursery.start_soon(task_wrapper)
 
 
-class TrioScheduler(BaseScheduler):
+class TrioScheduler(Service, BaseScheduler):
     """
     A scheduler that runs using Trio's structured concurrency model.
     """
@@ -102,19 +103,35 @@ class TrioScheduler(BaseScheduler):
     _timer_cancel_scope: trio.CancelScope | None = None
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        BaseScheduler.__init__(self, *args, **kwargs)
+        Service.__init__(self, name="TrioScheduler")
         self._trio_token: trio.lowlevel.TrioToken | None = None
 
-    def start(self, paused: bool = False):
-        if not self._nursery or not self._trio_token:
+
+    async def start(self, paused: bool = False):
+        """
+        Async start: must be awaited.
+        TrioService is started first, then BaseScheduler.
+        """
+        if not self._nursery:
             raise RuntimeError(
-                "TrioScheduler.start() must be configured with a nursery and token. "
-                "Use scheduler._configure({'_nursery': nursery, '_trio_token': token})."
+                "TrioScheduler.start() requires a Trio nursery. "
+                "Call ._configure(...) first."
             )
-        super().start(paused)
+
+        # Start Trio service lifecycle
+        await super().start(self._nursery)
+
+        # Start APScheduler
+        super(Service, self).start(paused)  # explicitly call BaseScheduler.start
 
     async def _async_shutdown(self, wait: bool = True):
-        super().shutdown(wait)
+        # Shutdown APScheduler synchronously
+        super(Service, self).shutdown(wait)  # explicitly BaseScheduler.shutdown
+
+        # Stop Trio service lifecycle
+        await super().stop()
+
         self._stop_timer()
 
     def shutdown(self, wait: bool = True):

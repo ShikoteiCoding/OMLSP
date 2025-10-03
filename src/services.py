@@ -149,7 +149,7 @@ class Service:
     #         self._shutdown.set()
 
     @property
-    def state(self) -> str:
+    def lifecycle_state(self) -> str:
         if not self._started.is_set():
             return "init"
         if not self._stopped.is_set():
@@ -159,4 +159,4 @@ class Service:
         return "shutdown"
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}: {self.state}>"
+        return f"<{type(self).__name__}: {self.lifecycle_state}>"
