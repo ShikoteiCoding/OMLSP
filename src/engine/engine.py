@@ -189,7 +189,7 @@ async def http_source_executable(
     # using trigger.get_next_fire_time is costly (see code)
     execution_time = start_time
     batch_id = get_batch_id_from_table_metadata(conn, table_name)
-    logger.info(f"[{table_name}{{{batch_id}}}] / @ {execution_time}")
+    logger.info(f"[{table_name}{{{batch_id}}}] Starting @ {execution_time}")
 
     records = await http_requester(conn)
     logger.debug(
@@ -199,7 +199,7 @@ async def http_source_executable(
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
         df = records_to_polars(records, column_types)
-        await cache(df, batch_id, epoch, table_name, conn)
+        await cache(df, batch_id, epoch, table_name, conn, False)
     else:
         df = pl.DataFrame()
 
@@ -237,7 +237,7 @@ async def ws_source_executable(
             if len(records) > 0:
                 epoch = int(time.time() * 1_000)
                 df = records_to_polars(records, column_types)
-                await cache(df, batch_id, epoch, table_name, conn)
+                await cache(df, batch_id, epoch, table_name, conn, False)
             else:
                 df = pl.DataFrame()
 
@@ -461,7 +461,10 @@ async def transform_executable(
 
     batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
     epoch = int(time.time() * 1_000)
-    await cache(transform_df, batch_id, epoch, name, conn)
+    # invert is_materialized for truncate
+    # if is_materialized -> truncate = False -> append mode
+    # if not is_materialized -> truncate = True -> truncate mode (overwrite)
+    await cache(transform_df, batch_id, epoch, name, conn, not is_materialized)
     update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
 
     return transform_df

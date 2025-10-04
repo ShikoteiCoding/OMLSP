@@ -57,6 +57,12 @@ def parse_http_properties(
             requests_kwargs["json"][key.split(".")[1]] = value
         # TODO: handle bytes, form and url params
 
+    # Some API don't like empty json / headers fields
+    if requests_kwargs["headers"] == {}:
+        requests_kwargs.pop("headers")
+    if requests_kwargs["json"] == {}:
+        requests_kwargs.pop("json")
+
     return jq, signer_class, requests_kwargs
 
 
@@ -83,18 +89,22 @@ async def async_request(
     while attempt < MAX_RETRIES:
         response = await client.request(**signer.sign(conn, request_kwargs))
 
-        logger.debug(f"response for {request_kwargs}: {response.status_code}")
+        try:
+            if response.is_success:
+                logger.debug(f"{response.status_code}: response for {request_kwargs}.")
+                data = response.json()
+                return parse_response(data, jq)
+        except Exception:
+            pass
 
-        if response.is_success:
-            data = response.json()
-            return parse_response(data, jq)
+        logger.error(
+            f"{response.status_code}: request failed {request_kwargs} with {response.text}."
+        )
 
-        logger.error(f"request failed {request_kwargs}: {response.status_code}")
-
-    attempt += 1
-    if attempt < MAX_RETRIES:
-        delay = attempt
-        await trio.sleep(delay)
+        attempt += 1
+        if attempt < MAX_RETRIES:
+            delay = attempt
+            await trio.sleep(delay)
 
     logger.error(f"request to {request_kwargs} failed after {MAX_RETRIES} attempts")
     return []

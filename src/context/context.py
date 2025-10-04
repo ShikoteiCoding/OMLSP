@@ -42,6 +42,14 @@ class CreateHTTPLookupTableContext:
     columns: dict[str, str]
 
 
+@dataclass
+class CreateWSLookupTableContext:
+    name: str
+    properties: dict[str, Any]
+    query: str
+    dynamic_columns: list[str]
+    columns: dict[str, str]
+
 # ---------- View / Sink Contexts ----------
 @dataclass
 class CreateViewContext:
