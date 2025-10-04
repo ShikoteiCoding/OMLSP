@@ -78,7 +78,7 @@ class TaskManager(Service):
         self.scheduler._configure(
             {"_nursery": self._nursery, "_trio_token": self._token}
         )
-        await self.scheduler.start()
+        self.add_dependency(self.scheduler)
         self._nursery.start_soon(self._process)
 
     async def _process(self):

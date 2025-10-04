@@ -103,34 +103,22 @@ class TrioScheduler(Service, BaseScheduler):
     _timer_cancel_scope: trio.CancelScope | None = None
 
     def __init__(self, *args, **kwargs):
-        BaseScheduler.__init__(self, *args, **kwargs)
         Service.__init__(self, name="TrioScheduler")
+        BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token: trio.lowlevel.TrioToken | None = None
 
-    async def start(self, paused: bool = False):
-        """
-        Async start: must be awaited.
-        TrioService is started first, then BaseScheduler.
-        """
+    async def on_start(self) -> None:
         if not self._nursery or not self._trio_token:
             raise RuntimeError(
-                "TrioScheduler.start() requires a Trio nursery. "
+                "TrioScheduler requires a Trio nursery and token. "
                 "Use scheduler._configure({'_nursery': nursery, '_trio_token': token})."
             )
 
-        # Start Trio service lifecycle
-        await super().start(self._nursery)
+        BaseScheduler.start(self, paused=False)
 
-        # Start APScheduler
-        super(Service, self).start(paused)  # explicitly call BaseScheduler.start
-
-    async def _async_shutdown(self, wait: bool = True):
-        # Shutdown APScheduler synchronously
-        super(Service, self).shutdown(wait)  # explicitly BaseScheduler.shutdown
-
-        # Stop Trio service lifecycle
-        await super().stop()
-
+    async def on_stop(self) -> None:
+        # Shutdown synchronously
+        BaseScheduler.shutdown(self, wait=True)
         self._stop_timer()
 
     def shutdown(self, wait: bool = True):
@@ -152,15 +140,12 @@ class TrioScheduler(Service, BaseScheduler):
             inside_trio = False
 
         if inside_trio:
-            # Already running in Trio, schedule shutdown directly
-            self._nursery.start_soon(self._async_shutdown, wait)
+            self._nursery.start_soon(self.stop)  # Service.stop()
         else:
-            # External thread calling shutdown
+            # External thread calling Service.stop()
             if not self._trio_token:
                 raise RuntimeError("TrioScheduler has no Trio token configured")
-            trio.from_thread.run(
-                self._async_shutdown, wait, trio_token=self._trio_token
-            )
+            trio.from_thread.run(self.stop, trio_token=self._trio_token)
 
     def _configure(self, config):
         self._nursery = maybe_ref(config.pop("_nursery", None))
@@ -230,15 +215,18 @@ if __name__ == "__main__":
     async def main():
         async with trio.open_nursery() as nursery:
             token = trio.lowlevel.current_trio_token()
+            
+            # Create and configure the scheduler
             scheduler = TrioScheduler()
             scheduler._configure({"_nursery": nursery, "_trio_token": token})
 
-            scheduler.start()
+            await scheduler.start(nursery)  # Calls on_start internally
 
+            # Add a job to print "Tick" every 1 second
             scheduler.add_job(print, "interval", seconds=1, args=["Tick"])
+
+            # Let the scheduler run for 4 seconds
             await trio.sleep(4)
 
-            # Can be called from inside Trio
-            scheduler.shutdown()
-
+            await scheduler.stop()  # Calls on_stop internally
     trio.run(main)
