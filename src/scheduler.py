@@ -117,20 +117,14 @@ class TrioScheduler(Service, BaseScheduler):
         BaseScheduler.start(self, paused=False)
 
     async def on_stop(self) -> None:
-        # Shutdown synchronously
-        BaseScheduler.shutdown(self, wait=True)
         self._stop_timer()
 
-    def shutdown(self, wait: bool = True):
+    def shutdown(self):
         """
-        Sync shutdown wrapper: schedules async shutdown inside Trio.
-
-        The Service class handles the cancellation and shutdown logic automatically.
+        Minimal implementation to satisfy BaseScheduler abstract method.
+        Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
         """
-        if not self._nursery:
-            raise RuntimeError("TrioScheduler has no nursery configured")
-
-        self._nursery.start_soon(self.stop)
+        pass
 
     def _configure(self, config):
         self._nursery = maybe_ref(config.pop("_nursery", None))
