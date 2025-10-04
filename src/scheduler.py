@@ -110,7 +110,7 @@ class TrioScheduler(Service, BaseScheduler):
     async def on_start(self) -> None:
         if not self._nursery or not self._trio_token:
             raise RuntimeError(
-                "TrioScheduler requires a Trio nursery and token. "
+                "TrioScheduler.start() must be configured with a nursery and token. "
                 "Use scheduler._configure({'_nursery': nursery, '_trio_token': token})."
             )
 
