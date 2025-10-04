@@ -1,6 +1,8 @@
 import time
 import json
 import trio
+import polars as pl
+import pyarrow as pa
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -11,8 +13,6 @@ from functools import partial
 from string import Template
 from typing import Any, AsyncGenerator, Callable, Coroutine, Iterable
 
-import polars as pl
-import pyarrow as pa
 from duckdb import struct_type
 from loguru import logger
 
@@ -89,8 +89,7 @@ def build_lookup_properties(
         if key in ["method"]:  # TODO: ignore jq for now
             new_props[key] = value
             continue
-        template = Template(value)
-        new_props[key] = template.substitute(context)
+        new_props[key] = Template(value).substitute(context)
 
     return new_props
 
@@ -226,36 +225,46 @@ async def ws_source_executable(
     conn: DuckDBPyConnection,
     table_name: str,
     column_types: dict[str, str],
-    ws_generator: Callable[[], AsyncGenerator[Any, list[dict[str, Any]]]],
+    ws_generator_func: Callable[
+        [trio.Nursery], AsyncGenerator[Any, list[dict[str, Any]]]
+    ],
+    nursery: trio.Nursery,
     *args,
     **kwargs,
 ) -> AsyncGenerator[Any, pl.DataFrame]:
     logger.info(f"[{task_id}] - starting ws executable")
-    batch_id = get_batch_id_from_table_metadata(conn, table_name)
     while True:
-        async for records in ws_generator():
+        async for records in ws_generator_func(nursery):
             if len(records) > 0:
                 epoch = int(time.time() * 1_000)
                 df = records_to_polars(records, column_types)
-                await cache(df, batch_id, epoch, table_name, conn, False)
+                await cache(df, 0, epoch, table_name, conn, False)
             else:
                 df = pl.DataFrame()
 
             yield df
-            update_batch_id_in_table_metadata(conn, table_name, batch_id + 1)
 
 
 def build_ws_source_executable(
-    ctx: CreateWSTableContext,
-) -> Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, pl.DataFrame]]:
+    ctx: CreateWSTableContext, conn: DuckDBPyConnection
+) -> Callable[
+    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[Any, pl.DataFrame]
+]:
     properties = ctx.properties
     table_name = ctx.name
+    on_start_results = []
+
+    if ctx.on_start_query != "":
+        # If we go till there, we already evaled on_start_query
+        # consider passing it from App to TaskManager for some
+        # more efficiency
+        on_start_results = duckdb_to_dicts(conn, ctx.on_start_query)
 
     return partial(
         ws_source_executable,
         table_name=table_name,
         column_types=ctx.column_types,
-        ws_generator=build_ws_generator(properties),
+        ws_generator_func=build_ws_generator(properties, on_start_results),
     )
 
 
@@ -270,10 +279,12 @@ def build_scheduled_source_executable(
 
 
 def build_continuous_source_executable(
-    ctx: ContinousTaskContext,
-) -> Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, pl.DataFrame]]:
+    ctx: ContinousTaskContext, conn: DuckDBPyConnection
+) -> Callable[
+    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[Any, pl.DataFrame]
+]:
     if isinstance(ctx, CreateWSTableContext):
-        return build_ws_source_executable(ctx)
+        return build_ws_source_executable(ctx, conn)
 
     else:
         raise NotImplementedError()
@@ -378,17 +389,35 @@ def pre_hook_select_statements(
     return query
 
 
-def duckdb_to_pl(con: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
+def duckdb_to_pl(conn: DuckDBPyConnection, duckdb_sql: str) -> pl.DataFrame:
+    """
+    Execute duckdb-compatible query and return as a typed polar dataframe.
+    """
     query = duckdb_sql.strip()
-    cursor = con.execute(query)
-    rows = cursor.fetchall()
-    # TODO: get schema from metadata
+    cursor = conn.execute(query)
     if cursor.description:
-        columns = [desc[0] for desc in cursor.description]
-        df = pl.DataFrame(rows, orient="row", schema=columns)
-        return df
+        return cursor.pl()
 
     return pl.DataFrame()
+
+
+def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
+    """
+    Execute duckdb-compatible query and return as a list of tuple.
+    """
+    query = duckdb_sql.strip()
+    rel = conn.sql(query)
+
+    # rel can be None and description can be empty list
+    if rel and rel.description:
+        columns = rel.columns
+        rows = rel.fetchall()
+        list_of_dicts = []
+        for row in rows:
+            row_dict = dict(zip(columns, row))
+            list_of_dicts.append(row_dict)
+        return list_of_dicts
+    return []
 
 
 def build_sink_executable(

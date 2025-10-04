@@ -118,14 +118,16 @@ class TaskManager(Service):
         elif isinstance(ctx, ContinousTaskContext):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
-            task = ContinuousSourceTask[ctx._out_type](task_id, self.conn)
+            task = ContinuousSourceTask[ctx._out_type](
+                task_id, self.conn, self._nursery
+            )
 
             # TODO: make WS Task dynamic by registering the on_start function
             # design idea, make the continuous source executable return
             # on_start func and on_run func. on_start will have "waiters"
             # and timeout logic
             self._sources[task_id] = task.register(
-                build_continuous_source_executable(ctx)
+                build_continuous_source_executable(ctx, self.conn)
             )
             _ = self.scheduler.add_job(
                 func=task.run,

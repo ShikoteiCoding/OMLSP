@@ -5,6 +5,7 @@ import json
 
 from duckdb import DuckDBPyConnection
 from functools import partial
+from string import Template
 from trio_websocket import open_websocket_url
 from typing import Any, Callable, Coroutine, AsyncGenerator
 
@@ -119,7 +120,7 @@ def sync_request(
 ) -> list[dict]:
     try:
         response = client.request(**signer.sign(conn, request_kwargs))
-        logger.debug(f"response for {request_kwargs}: {response.status_code}")
+        logger.debug("response for {}: {}", request_kwargs, response.status_code)
 
         if response.is_success:
             return parse_response(response.json(), jq)
@@ -147,15 +148,17 @@ async def async_http_requester(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     async with httpx.AsyncClient() as client:
-        logger.debug(f"running request with properties: {request_kwargs}")
+        logger.debug("running request with properties: {}", request_kwargs)
         res = await async_request(client, jq, base_signer, request_kwargs, conn)
         return res
 
 
 async def ws_generator(
-    properties: dict[str, Any],
+    properties: dict[str, Any], nursery: trio.Nursery
 ) -> AsyncGenerator[Any, list[dict[str, Any]]]:
-    async with open_websocket_url(properties["url"]) as ws:
+    url = properties["url"]
+    logger.debug("Starting websocket generator on {}", url)
+    async with open_websocket_url(url) as ws:
         message = await ws.get_message()
         res = json.loads(message)
         yield parse_response(res, properties["jq"])
@@ -193,10 +196,81 @@ def build_http_requester(
     return _sync_inner
 
 
+def build_ws_properties(
+    properties: dict[str, Any], template: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Build websocket properties with Template substitution
+    applied against a single context (template variables).
+    """
+    new_props: dict[str, Any] = {}
+
+    for key, value in properties.items():
+        if key in ["jq"]:  # don't template compile-only keys
+            new_props[key] = value
+            continue
+
+        if isinstance(value, str):
+            new_props[key] = Template(value).safe_substitute(template)
+        else:
+            new_props[key] = value
+
+    return new_props
+
+
+async def ws_generator_aggregator(
+    list_of_properties: list[dict[str, Any]], nursery: trio.Nursery
+) -> AsyncGenerator[Any, list[dict[str, Any]]]:
+    """
+    Trio version: fan-in multiple ws_generator streams into one.
+    """
+    send_channel, receive_channel = trio.open_memory_channel(0)
+
+    async def consume(props: dict[str, Any]):
+        try:
+            async for msg in ws_generator(properties=props, nursery=nursery):
+                logger.warning(msg)
+                await send_channel.send(msg)
+        except Exception as e:
+            logger.error("consumer failed for %s: %s", props["url"], e)
+
+    for props in list_of_properties:
+        nursery.start_soon(consume, props)
+
+    async with receive_channel:
+        try:
+            async for msg in receive_channel:
+                logger.warning(msg)
+                yield msg
+        except Exception as e:
+            logger.error("producer failed for %s: %s", props["url"], e)
+        logger.warning("receive_channel closed")
+
+
 def build_ws_generator(
-    properties: dict[str, Any],
-) -> Callable[[], AsyncGenerator[Any, list[dict[str, Any]]]]:
-    return partial(ws_generator, properties=parse_ws_properties(properties))
+    properties: dict[str, Any], templates_list: list[dict[str, str]]
+) -> Callable[[trio.Nursery], AsyncGenerator[Any, list[dict[str, Any]]]]:
+    parsed_properties = parse_ws_properties(properties)
+
+    # This happens when on_start_query doesn't exist
+    # ie the WS generator has no start conditions
+    if len(templates_list) == 0:
+        list_of_properties = [parsed_properties]
+    else:
+        # For each template element create a new properties dict
+        list_of_properties = [
+            build_ws_properties(parsed_properties, template)
+            for template in templates_list
+        ]
+
+    # This happens when on_start_query result is only
+    # one key value property or when no start conditions
+    if len(list_of_properties) == 1:
+        return partial(ws_generator, properties=list_of_properties[0])
+
+    # Multiple list of properties needs one ws connection
+    # This requires fan-in mechanism through aggregator
+    return partial(ws_generator_aggregator, list_of_properties=list_of_properties)
 
 
 if __name__ == "__main__":

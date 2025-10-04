@@ -114,7 +114,7 @@
           "type": "string",
           "description": "Must be a valid jq expression"
         },
-        "on_start": {
+        "on_start_query": {
           "type": "string",
           "pattern": "^SELECT.*",
           "description": "Must be valid SELECT statement"

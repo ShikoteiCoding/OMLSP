@@ -1,4 +1,4 @@
-CREATE TABLE binance_all_symbols (
+CREATE TABLE binance_all_spot_symbols (
     symbol STRING,
     status STRING,
     baseAsset STRING,
@@ -13,15 +13,71 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
-CREATE VIEW binance_all_symbols_most_btc AS
+-- CREATE TABLE binance_mini_tickers (
+--     event_type STRING,
+--     event_time BIGINT,
+--     symbol STRING,
+--     close FLOAT,
+--     open FLOAT,
+--     high FLOAT,
+--     low FLOAT,
+--     base_volume FLOAT,
+--     quote_volume FLOAT
+-- )
+-- WITH (
+--     connector = 'ws',
+--     url = 'wss://fstream.binance.com/ws/!ticker@arr',
+--     'jq' = '.[:2][] | {
+--         event_type: .e,
+--         event_time: .E,
+--         symbol: .s,
+--         close: .c,
+--         open: .o,
+--         high: .h,
+--         low: .l,
+--         base_volume: .v,
+--         quote_volume: .q
+--     }'
+-- );
+
+
+CREATE VIEW binance_most_spot_btc_volume AS
 SELECT 
     *
-FROM binance_all_symbols
+FROM binance_all_spot_symbols
 WHERE symbol LIKE '%BTC'
 ORDER BY quoteAsset DESC
-LIMIT 1;
+LIMIT 2;
 
-CREATE TABLE binance_mini_tickers_lookup (
+-- CREATE TABLE binance_mini_tickers_test_symbol (
+--     event_type STRING,
+--     event_time BIGINT,
+--     symbol STRING,
+--     close FLOAT,
+--     open FLOAT,
+--     high FLOAT,
+--     low FLOAT,
+--     base_volume FLOAT,
+--     quote_volume FLOAT
+-- )
+-- WITH (
+--     connector = 'ws',
+--     url = 'wss://stream.binance.com/ws/bnbbtc@miniTicker',
+--     'jq' = '{
+--         event_type: .e,
+--         event_time: .E,
+--         symbol: .s,
+--         close: .c,
+--         open: .o,
+--         high: .h,
+--         low: .l,
+--         base_volume: .v,
+--         quote_volume: .q
+--     }',
+-- );
+
+
+CREATE TABLE binance_most_spot_btc_volume_mini_tickers (
     event_type STRING,
     event_time BIGINT,
     symbol STRING,
@@ -34,8 +90,8 @@ CREATE TABLE binance_mini_tickers_lookup (
 )
 WITH (
     connector = 'ws',
-    url = 'wss://fstream.binance.com/ws/$symbol!miniTicker',
-    'jq' = '.[] | {
+    url = 'wss://stream.binance.com/ws/$symbol@miniTicker',
+    'jq' = '{
         event_type: .e,
         event_time: .E,
         symbol: .s,
@@ -46,7 +102,7 @@ WITH (
         base_volume: .v,
         quote_volume: .q
     }',
-    'on_start' = 'SELECT symbol FROM binance_all_symbols_most_btc'
+    'on_start_query' = 'SELECT lower(symbol) AS symbol FROM binance_most_spot_btc_volume'
 );
 
 -- CREATE VIEW binance_all_symbols_most_btc_view AS

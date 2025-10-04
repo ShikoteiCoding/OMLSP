@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import polars as pl
+import trio
 
 from abc import ABC, abstractmethod
 from duckdb import DuckDBPyConnection
+from loguru import logger
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
 
 from channel import Channel
@@ -70,13 +72,18 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
     _sender: Channel[T]
     _executable: Callable
 
-    def __init__(self, task_id: str, conn: DuckDBPyConnection):
+    def __init__(self, task_id: str, conn: DuckDBPyConnection, nursery: trio.Nursery):
         super().__init__(task_id, conn)
         self._sender = Channel[T](100)
+        self.nursery = nursery
 
     def register(
-        self, executable: Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, T]]
+        self,
+        executable: Callable[
+            [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[Any, T]
+        ],
     ) -> ContinuousSourceTask[T]:
+        logger.error("registered something here")
         self._executable = executable
         return self
 
@@ -84,8 +91,11 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
         return self._sender
 
     async def run(self):
-        async for result in self._executable(task_id=self.task_id, conn=self._conn):
+        async for result in self._executable(
+            task_id=self.task_id, conn=self._conn, nursery=self.nursery
+        ):
             await self._sender.send(result)
+        raise Exception("somehow exited here")
 
 
 class SinkTask(BaseTaskT, Generic[T]):
