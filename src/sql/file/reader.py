@@ -10,14 +10,15 @@ def iter_sql_statements(path: Path | str) -> Generator[str, None, None]:
     with open(path, "r", encoding="utf-8") as f:
         while line := f.readline():
             # remove comments
-            if line.startswith("--"):
+            if line.lstrip().startswith("--") or line == "":
                 continue
             content += line
 
-    statements = [stmt.lstrip() for stmt in content.split(";") if stmt != ""]
-
+    statements = [stmt.lstrip() for stmt in content.split(";")]
     for statement in statements:
-        yield statement
+        # Avoid trailing EOF empty statement
+        if len(statement) > 0:
+            yield statement
 
 
 if __name__ == "__main__":

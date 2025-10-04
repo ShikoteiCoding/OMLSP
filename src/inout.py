@@ -11,6 +11,11 @@ async def cache(
     epoch: int,
     table_name: str,
     conn: DuckDBPyConnection,
+    truncate: bool = False,
 ) -> None:
-    conn.execute(f"INSERT INTO {table_name} SELECT * FROM df")
+    if not truncate:
+        conn.execute(f"INSERT INTO {table_name} SELECT * FROM df")
+    else:
+        conn.execute(f"TRUNCATE TABLE {table_name}")
+        conn.execute(f"INSERT INTO {table_name} SELECT * FROM df")
     logger.debug(f"[{table_name}{{{batch_id}}}] {len(df)} records inserted @ {epoch}")

@@ -27,6 +27,7 @@ class CreateWSTableContext:
     properties: dict[str, Any]
     column_types: dict[str, str]
     query: str
+    on_start: str
 
     # executable of ws table context
     # returns a polars dataframe
@@ -119,11 +120,11 @@ EvaluableContext = Union[
     CommandContext,
     CreateHTTPLookupTableContext,
     CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateMaterializedViewContext,
     CreateSecretContext,
     CreateSinkContext,
     CreateViewContext,
-    CreateWSTableContext,
     SetContext,
     SelectContext,
 ]
@@ -148,8 +149,8 @@ CreateTableContext = Union[
     CreateHTTPLookupTableContext, CreateHTTPTableContext, CreateWSTableContext
 ]
 
-ScheduledTaskContext = Union[CreateHTTPTableContext]
-ContinousTaskContext = Union[CreateWSTableContext]
+ScheduledTaskContext = CreateHTTPTableContext
+ContinousTaskContext = CreateWSTableContext
 
 SinkTaskContext = Union[CreateSinkContext]
 TransformTaskContext = Union[CreateMaterializedViewContext, CreateViewContext]

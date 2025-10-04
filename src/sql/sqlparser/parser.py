@@ -237,7 +237,7 @@ def build_create_http_table_context(
     )
 
 
-def build_create_http_lookup_lookup_context(
+def build_create_http_lookup_table_context(
     statement: exp.Create, properties: dict[str, str]
 ) -> CreateHTTPLookupTableContext:
     # avoid side effect, leverage sqlglot ast copy
@@ -273,11 +273,14 @@ def build_create_ws_table_context(
     # get query purged of omlsp-specific syntax
     clean_query = get_duckdb_sql(statement)
 
+    on_start = properties.pop("on_start", "")
+
     return CreateWSTableContext(
         name=table_name,
         properties=properties,
         column_types=column_types,
         query=clean_query,
+        on_start=on_start,
     )
 
 
@@ -367,18 +370,22 @@ def build_generic_create_table_context(
     # if not ok, return invalid context
     nok = validate_create_properties(properties, properties_schema)
     if nok:
-        return InvalidContext(reason=nok)
+        return InvalidContext(reason=f"Failed to validate properties: {nok}")
 
-    if properties["connector"] == TableConnectorKind.LOOKUP_HTTP.value:
-        return build_create_http_lookup_lookup_context(statement, properties)
+    connector = properties.pop("connector")
 
-    if properties["connector"] == TableConnectorKind.HTTP.value:
+    if connector == TableConnectorKind.LOOKUP_HTTP.value:
+        return build_create_http_lookup_table_context(statement, properties)
+
+    if connector == TableConnectorKind.HTTP.value:
         return build_create_http_table_context(statement, properties)
 
-    if properties["connector"] == TableConnectorKind.WS.value:
+    if connector == TableConnectorKind.WS.value:
         return build_create_ws_table_context(statement, properties)
 
-    return InvalidContext(reason=f"Invalid connector / properties: {properties}")
+    return InvalidContext(
+        reason=f"Connector from properties '{connector}' is unknown: {properties}"
+    )
 
 
 def build_create_secret_context(
