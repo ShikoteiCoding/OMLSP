@@ -68,8 +68,8 @@ class TaskManager(Service):
         self._tasks_to_deploy = channel
 
     async def on_stop(self):
-        """"""
-        self.scheduler.shutdown(False)
+        self.scheduler.stop
+        logger.success("[{}] stopping.", self.name)
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
@@ -104,7 +104,6 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
-                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"

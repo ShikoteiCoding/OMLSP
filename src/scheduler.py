@@ -106,6 +106,7 @@ class TrioScheduler(Service, BaseScheduler):
         Service.__init__(self, name="TrioScheduler")
         BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token: trio.lowlevel.TrioToken | None = None
+        self._is_shutting_down = False
 
     async def on_start(self) -> None:
         if not self._nursery or not self._trio_token:
@@ -118,19 +119,38 @@ class TrioScheduler(Service, BaseScheduler):
 
     async def on_stop(self) -> None:
         self._stop_timer()
+        BaseScheduler.shutdown(self)
+        logger.success("[{}] stopping.", self.name)
 
     def shutdown(self):
         """
         Minimal implementation to satisfy BaseScheduler abstract method.
         Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
         """
-        pass
+        self._trio_token = None #cleanup
+        self._is_shutting_down = True
 
     def _configure(self, config):
         self._nursery = maybe_ref(config.pop("_nursery", None))
         self._trio_token = maybe_ref(config.pop("_trio_token", None))
         super()._configure(config)
 
+    @staticmethod
+    def require_running(func):
+        """
+        Decorator to skip method execution when the scheduler is shutting down.
+
+        This version only supports synchronous methods because TrioScheduler’s
+        control methods are synchronous
+        """
+        def wrapper(self, *args, **kwargs):
+            if self._is_shutting_down:
+                logger.debug(f"[{self.name}] Ignoring {func.__name__} during shutdown.")
+                return
+            return func(self, *args, **kwargs)
+        return wrapper
+
+    @require_running
     def _start_timer(self, wait_seconds):
         logger.debug(f"[Scheduler] Starting timer with wait_seconds={wait_seconds}")
         self._stop_timer()
@@ -160,6 +180,7 @@ class TrioScheduler(Service, BaseScheduler):
         wait_seconds = self._process_jobs()
         self._start_timer(wait_seconds)
 
+    @require_running
     def wakeup(self):
         if not self._nursery:
             raise RuntimeError("TrioScheduler has no nursery configured")
