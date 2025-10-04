@@ -13,17 +13,18 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
-CREATE VIEW binance_all_symbols_btc AS
+CREATE VIEW binance_all_symbols_most_btc AS
 SELECT 
     *
 FROM binance_all_symbols
 WHERE symbol LIKE '%BTC'
+ORDER BY quoteAsset DESC
 LIMIT 1;
 
-CREATE TABLE binance_mini_tickers (
+CREATE TABLE binance_mini_tickers_lookup (
     event_type STRING,
     event_time BIGINT,
-    $symbol STRING,
+    symbol STRING,
     close FLOAT,
     open FLOAT,
     high FLOAT,
@@ -32,7 +33,7 @@ CREATE TABLE binance_mini_tickers (
     quote_volume FLOAT
 )
 WITH (
-    connector = 'lookup-ws',
+    connector = 'ws',
     url = 'wss://fstream.binance.com/ws/$symbol!miniTicker',
     'jq' = '.[] | {
         event_type: .e,
@@ -44,14 +45,14 @@ WITH (
         low: .l,
         base_volume: .v,
         quote_volume: .q
-    }'
+    }',
+    'on_start' = 'SELECT symbol FROM binance_all_symbols_most_btc'
 );
 
--- CREATE VIEW binance_all_symbols_btc AS
+-- CREATE VIEW binance_all_symbols_most_btc_view AS
 -- SELECT 
 --     *
--- FROM binance_all_symbols AS bas
--- LEFT JOIN binance_mini_tickers AS bmt
---     ON bas.symbol = bmt.symbol
--- WHERE symbol LIKE '%BTC%';
+-- FROM binance_all_symbols_most_btc AS basmb
+-- LEFT JOIN binance_mini_tickers_lookup AS bmtl
+--     ON basmb.symbol = bmtl.symbol;
 

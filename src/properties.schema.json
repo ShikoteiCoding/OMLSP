@@ -113,27 +113,11 @@
         "jq": {
           "type": "string",
           "description": "Must be a valid jq expression"
-        }
-      },
-      "additionalProperties": true
-    },
-    {
-      "title": "Lookup Websocket Connector",
-      "type": "object",
-      "required": ["connector", "url", "jq"],
-      "properties": {
-        "connector": {
-          "const": "lookup-ws",
-          "description": "Must be 'ws'"
         },
-        "url": {
+        "on_start": {
           "type": "string",
-          "pattern": "^wss?://.+|^\\$.*",
-          "description": "Must be a valid URL or an expression starting with $"
-        },
-        "jq": {
-          "type": "string",
-          "description": "Must be a valid jq expression"
+          "pattern": "^SELECT.*",
+          "description": "Must be valid SELECT statement"
         }
       },
       "additionalProperties": true

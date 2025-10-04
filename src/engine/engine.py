@@ -250,6 +250,7 @@ def build_ws_source_executable(
 ) -> Callable[[str, DuckDBPyConnection], AsyncGenerator[Any, pl.DataFrame]]:
     properties = ctx.properties
     table_name = ctx.name
+
     return partial(
         ws_source_executable,
         table_name=table_name,

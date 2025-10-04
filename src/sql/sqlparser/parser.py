@@ -4,7 +4,6 @@ from datetime import timezone
 
 import jsonschema
 from apscheduler.triggers.cron import CronTrigger
-from loguru import logger
 from sqlglot import exp, parse_one
 from sqlglot.dialects.postgres import Postgres
 from sqlglot.tokens import Tokenizer, TokenType
@@ -13,7 +12,6 @@ from context.context import (
     CommandContext,
     CreateHTTPLookupTableContext,
     CreateHTTPTableContext,
-    CreateWSLookupTableContext,
     CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
@@ -38,7 +36,6 @@ class TableConnectorKind(StrEnum):
     HTTP = "http"
     LOOKUP_HTTP = "lookup-http"
     WS = "ws"
-    LOOKUP_WS = "lookup-ws"
 
 
 class Omlsp(Postgres):
@@ -240,7 +237,7 @@ def build_create_http_table_context(
     )
 
 
-def build_create_http_lookup_lookup_context(
+def build_create_http_lookup_table_context(
     statement: exp.Create, properties: dict[str, str]
 ) -> CreateHTTPLookupTableContext:
     # avoid side effect, leverage sqlglot ast copy
@@ -276,28 +273,14 @@ def build_create_ws_table_context(
     # get query purged of omlsp-specific syntax
     clean_query = get_duckdb_sql(statement)
 
+    on_start = properties.pop("on_start", "")
+
     return CreateWSTableContext(
         name=table_name,
         properties=properties,
         column_types=column_types,
         query=clean_query,
-    )
-
-def build_create_ws_lookup_context(statement: exp.Create, properties: dict[str, str]) -> CreateWSLookupTableContext:
-    # avoid side effect, leverage sqlglot ast copy
-    statement = statement.copy()
-
-    table_name, column_types = parse_ws_table_schema(statement.this)
-    
-    # get query purged of omlsp-specific syntax
-    clean_query = get_duckdb_sql(statement)
-
-    return CreateWSLookupTableContext(
-        name=table_name,
-        properties=properties,
-        query=clean_query,
-        dynamic_columns=[],
-        columns={}
+        on_start=on_start,
     )
 
 
@@ -382,16 +365,17 @@ def build_generic_create_table_context(
     # extract list of exp.Property
     # declared behind sql WITH statement
     properties = extract_create_properties(statement)
-    connector = properties.pop("connector")
 
     # validate properties against schema
     # if not ok, return invalid context
     nok = validate_create_properties(properties, properties_schema)
     if nok:
-        return InvalidContext(reason=nok)
+        return InvalidContext(reason=f"Failed to validate properties: {nok}")
+
+    connector = properties.pop("connector")
 
     if connector == TableConnectorKind.LOOKUP_HTTP.value:
-        return build_create_http_lookup_lookup_context(statement, properties)
+        return build_create_http_lookup_table_context(statement, properties)
 
     if connector == TableConnectorKind.HTTP.value:
         return build_create_http_table_context(statement, properties)
@@ -399,10 +383,9 @@ def build_generic_create_table_context(
     if connector == TableConnectorKind.WS.value:
         return build_create_ws_table_context(statement, properties)
 
-    if connector == TableConnectorKind.LOOKUP_HTTP.value:
-        return build_create_ws_lookup_context(statement, properties)
-
-    return InvalidContext(reason=f"Invalid connector / properties: {properties}")
+    return InvalidContext(
+        reason=f"Connector from properties '{connector}' is unknown: {properties}"
+    )
 
 
 def build_create_secret_context(
@@ -545,8 +528,6 @@ def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> QueryContext | NonQueryContext:
     parsed_statement = parse_one(query, dialect=Omlsp)
-    logger.error(parsed_statement)
-    logger.error(type(parsed_statement))
 
     if isinstance(parsed_statement, exp.Create):
         return extract_create_context(parsed_statement, properties_schema)
