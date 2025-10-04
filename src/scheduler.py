@@ -125,27 +125,12 @@ class TrioScheduler(Service, BaseScheduler):
         """
         Sync shutdown wrapper: schedules async shutdown inside Trio.
 
-        Can be safely called:
-        - From outside Trio (other threads) using trio.from_thread.run().
-        - From inside Trio by directly scheduling the async task.
+        The Service class handles the cancellation and shutdown logic automatically.
         """
         if not self._nursery:
             raise RuntimeError("TrioScheduler has no nursery configured")
 
-        try:
-            # Detect if we're inside Trio
-            trio.lowlevel.current_task()
-            inside_trio = True
-        except RuntimeError:
-            inside_trio = False
-
-        if inside_trio:
-            self._nursery.start_soon(self.stop)  # Service.stop()
-        else:
-            # External thread calling Service.stop()
-            if not self._trio_token:
-                raise RuntimeError("TrioScheduler has no Trio token configured")
-            trio.from_thread.run(self.stop, trio_token=self._trio_token)
+        self._nursery.start_soon(self.stop)
 
     def _configure(self, config):
         self._nursery = maybe_ref(config.pop("_nursery", None))
