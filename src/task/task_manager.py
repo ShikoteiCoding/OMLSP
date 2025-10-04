@@ -63,22 +63,17 @@ class TaskManager(Service):
         super().__init__(name="TaskManager")
         self.conn = conn
         self.scheduler = scheduler
-        self._token = trio.lowlevel.current_trio_token()
 
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
 
     async def on_stop(self):
-        """"""
-        self.scheduler.shutdown(False)
+        self.scheduler.stop
+        logger.success("[{}] stopping.", self.name)
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
 
-        self.scheduler._configure(
-            {"_nursery": self._nursery, "_trio_token": self._token}
-        )
-        self.scheduler.start()
         self._nursery.start_soon(self._process)
 
     async def _process(self):
@@ -109,7 +104,6 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
-                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"

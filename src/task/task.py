@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import polars as pl
-
 from abc import ABC, abstractmethod
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
