@@ -6,6 +6,7 @@ import trio
 
 from duckdb import DuckDBPyConnection
 
+from apscheduler.schedulers.base import BaseScheduler
 from channel import Channel
 from scheduler import TrioScheduler
 from context.context import (
@@ -62,24 +63,32 @@ class TaskManager(Service):
     def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
         super().__init__(name="TaskManager")
         self.conn = conn
+
+        # TODO: scheduler shouldn't be injected in TaskManager
+        # Make them share a channel for communication
+        # and trust the Service Graph for propagation
         self.scheduler = scheduler
         self._token = trio.lowlevel.current_trio_token()
 
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
 
-    async def on_stop(self):
-        """"""
-        self.scheduler.shutdown(False)
-
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
 
-        self.scheduler._configure(
-            {"_nursery": self._nursery, "_trio_token": self._token}
-        )
-        self.scheduler.start()
         self._nursery.start_soon(self._process)
+
+    async def on_started(self):
+        # Propagate Trio context to Scheduler post start
+        for dep in self._dependencies:
+            if isinstance(dep, BaseScheduler):
+                dep._configure(
+                    {
+                        "_nursery": self._nursery,
+                        "_trio_token": self._token,
+                    }
+                )
+                logger.debug(f"[TaskManager] Configured {dep.name} with Trio context.")
 
     async def _process(self):
         async for taskctx in self._tasks_to_deploy:
@@ -109,7 +118,6 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
-                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"
