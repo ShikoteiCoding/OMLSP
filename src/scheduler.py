@@ -11,9 +11,6 @@ from apscheduler.util import iscoroutinefunction_partial
 
 from loguru import logger
 
-_CANCELLED = object()
-_FAILED = object()
-
 
 class TrioExecutor(BaseExecutor):
     """
@@ -24,6 +21,10 @@ class TrioExecutor(BaseExecutor):
 
     Plugin alias: ``trio``
     """
+
+    # constants state
+    _CANCELLED = object()
+    _FAILED = object()
 
     def __init__(self):
         super().__init__()
@@ -83,11 +84,11 @@ class TrioExecutor(BaseExecutor):
                 # no traceback, no APScheduler error log.
                 logger.debug(f"[TrioExecutor] Job {job.id} cancelled gracefully.")
                 # return a sentinel so we don't call _run_job_success below
-                return _CANCELLED
+                return self._CANCELLED
             except BaseException:
                 # report real errors to scheduler
                 self._run_job_error(job.id, *sys.exc_info()[1:])
-                return _FAILED
+                return self._FAILED
 
         async def task_wrapper():
             cancel_scope = trio.CancelScope()
@@ -101,10 +102,8 @@ class TrioExecutor(BaseExecutor):
                 self._pending_tasks.discard(cancel_scope)
 
             # interpret sentinels / success
-            if result is _CANCELLED:
+            if result in (self._CANCELLED, self._FAILED, None):
                 return  # silent exit
-            if result is _FAILED:
-                return  # error already reported via _run_job_error
             # if the job runner returned events (APScheduler expects events),
             # translate or forward them. if you don't need events, call success
             self._run_job_success(job.id, result)
@@ -137,7 +136,6 @@ class TrioScheduler(Service, BaseScheduler):
 
     async def on_stop(self) -> None:
         self._stop_timer()
-        BaseScheduler.shutdown(self)
 
         if self._nursery:
             logger.debug(f"[{self.name}] Cancelling all background tasks.")
@@ -145,13 +143,11 @@ class TrioScheduler(Service, BaseScheduler):
 
         logger.success("[{}] stopping.", self.name)
 
-    def shutdown(self):
-        """
-        Minimal implementation to satisfy BaseScheduler abstract method.
-        Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
-        """
+    async def on_shutdown(self) -> None:
         self._trio_token = None  # cleanup
         self._is_shutting_down = True
+
+        logger.success("[{}] shutdown completed.", self.name)
 
     def _configure(self, config):
         self._nursery = maybe_ref(config.pop("_nursery", None))
@@ -233,6 +229,12 @@ class TrioScheduler(Service, BaseScheduler):
 
     def _create_default_executor(self):
         return TrioExecutor()
+
+    def shutdown(self):
+        """
+        Minimal implementation to satisfy BaseScheduler abstract method.
+        Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
+        """
 
 
 if __name__ == "__main__":

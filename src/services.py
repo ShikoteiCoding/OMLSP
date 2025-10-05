@@ -57,7 +57,7 @@ class Service:
         """
         logger.success("[{}] starting.", self.name)
 
-    async def after_start(self) -> None:
+    async def on_started(self) -> None:
         """
         Hook called after on_start(), when dependencies are available.
 
@@ -86,7 +86,7 @@ class Service:
         """
         self._nursery = nursery
         await self.on_start()
-        await self.after_start()
+        await self.on_started()
         self._started.set()
 
         # start child dependencies

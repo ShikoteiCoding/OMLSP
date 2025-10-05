@@ -73,7 +73,7 @@ class TaskManager(Service):
 
         self._nursery.start_soon(self._process)
 
-    async def after_start(self):
+    async def on_started(self):
         # propagate Trio context to dependencies
         for dep in self._dependencies:
             if hasattr(dep, "_configure"):
@@ -113,6 +113,7 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
+                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"
