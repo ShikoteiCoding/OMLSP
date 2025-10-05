@@ -233,13 +233,17 @@ async def ws_source_executable(
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
     logger.info(f"[{task_id}] - starting ws executable")
-    # while True:
+
+    # 'ws_generator_func' is supposed to be never ending (while True)
+    # if an issue happens, the source task should be entirely
+    # restarted (not a feature yet)
     async for records in ws_generator_func(nursery):
         if len(records) > 0:
-            epoch = int(time.time() * 1_000)
             df = records_to_polars(records, column_types)
-            await cache(df, 0, epoch, table_name, conn, False)
+            # Do not truncate the cache, this is a Table
+            await cache(df, 0, int(time.time() * 1_000), table_name, conn, False)
         else:
+            # This should not happen, just in case
             df = pl.DataFrame()
 
         yield df
@@ -255,9 +259,8 @@ def build_ws_source_executable(
     on_start_results = []
 
     if ctx.on_start_query != "":
-        # If we go till there, we already evaled on_start_query
-        # consider passing it from App to TaskManager for some
-        # more efficiency
+        # If we come all the way here, we already evaled on_start_query
+        # consider passing it from App to TaskManager for improved design
         on_start_results = duckdb_to_dicts(conn, ctx.on_start_query)
 
     return partial(

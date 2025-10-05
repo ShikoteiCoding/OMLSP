@@ -58,7 +58,9 @@ def parse_http_properties(
             requests_kwargs["json"][key.split(".")[1]] = value
         # TODO: handle bytes, form and url params
 
-    # Some API don't like empty json / headers fields
+    # httpx consider empty headers or json as an actual headers or json
+    # that it will encode to the server. Some API do not like this and 
+    # will issue 403 malformed error code. Let's just pop them.
     if requests_kwargs["headers"] == {}:
         requests_kwargs.pop("headers")
     if requests_kwargs["json"] == {}:
