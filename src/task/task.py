@@ -13,13 +13,18 @@ TaskId = str
 
 T = TypeVar("T")
 
+
 def handle_cancellation(func):
     async def wrapper(self, *args, **kwargs):
         try:
             return await func(self, *args, **kwargs)
         except trio.Cancelled:
-            logger.debug(f"[{self.__class__.__name__}] cancelled gracefully during shutdown.")
+            logger.debug(
+                f"[{self.__class__.__name__}] cancelled gracefully during shutdown."
+            )
+
     return wrapper
+
 
 class BaseTaskT(ABC, Generic[T]):
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
@@ -113,7 +118,7 @@ class SinkTask(BaseTaskT, Generic[T]):
 
     def subscribe(self, recv: Channel):
         self._receivers.append(recv.clone())
-    
+
     @handle_cancellation
     async def run(self):
         # TODO: receive many upstreams
