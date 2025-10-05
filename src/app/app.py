@@ -15,8 +15,9 @@ from context.context import (
     SelectContext,
     SetContext,
     TaskContext,
+    OnStartContext,
 )
-from engine.engine import duckdb_to_pl, pre_hook_select_statements
+from engine.engine import duckdb_to_dicts, duckdb_to_pl, pre_hook_select_statements
 from metadata import (
     create_secret,
     create_sink,
@@ -133,6 +134,15 @@ class App(Service):
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
 
+            # Handle context with on_start eval conditions
+            if isinstance(ctx, OnStartContext) and ctx.on_start_query != "":
+                on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
+                if len(on_start_result) == 0:
+                    # Override context to bypass next
+                    ctx = InvalidContext(
+                        reason=f"Response from '{ctx.on_start_query}' is empty. Cannot proceed."
+                    )
+
             # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
@@ -188,7 +198,10 @@ class App(Service):
             tables = get_tables(self._conn)
 
             if table_name in lookup_tables:
-                return f"{table_name} is a lookup table, you cannot use it in FROM."
+                return f"'{table_name}' is a lookup table, you cannot use it in FROM."
+
+            if table_name not in tables:
+                return f"'{table_name}' doesn't exist"
 
             duckdb_sql = pre_hook_select_statements(self._conn, ctx, tables)
             return str(duckdb_to_pl(self._conn, duckdb_sql))

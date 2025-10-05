@@ -27,6 +27,15 @@ class Channel(Generic[T]):
     async def recv(self) -> T:
         return await self._recv_ch.receive()
 
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> T:
+        try:
+            return await self._recv_ch.receive()
+        except trio.EndOfChannel:
+            raise StopAsyncIteration
+
     def clone(self) -> "Channel[T]":
         send, recv = trio.open_memory_channel[T](self.size)
         self._subscribers.append(send)
@@ -40,12 +49,3 @@ class Channel(Generic[T]):
         ch._subscribers = []
         ch.size = size
         return ch
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self) -> T:
-        try:
-            return await self._recv_ch.receive()
-        except trio.EndOfChannel:
-            raise StopAsyncIteration

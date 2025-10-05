@@ -27,6 +27,7 @@ class CreateWSTableContext:
     properties: dict[str, Any]
     column_types: dict[str, str]
     query: str
+    on_start_query: str
 
     # executable of ws table context
     # returns a polars dataframe
@@ -119,14 +120,16 @@ EvaluableContext = Union[
     CommandContext,
     CreateHTTPLookupTableContext,
     CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateMaterializedViewContext,
     CreateSecretContext,
     CreateSinkContext,
     CreateViewContext,
-    CreateWSTableContext,
     SetContext,
     SelectContext,
 ]
+
+OnStartContext = Union[CreateWSTableContext]
 
 # Everything except Invalid and CreateSecret
 QueryContext = Union[

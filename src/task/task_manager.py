@@ -6,6 +6,7 @@ import trio
 
 from duckdb import DuckDBPyConnection
 
+from apscheduler.schedulers.base import BaseScheduler
 from channel import Channel
 from scheduler import TrioScheduler
 from context.context import (
@@ -62,6 +63,10 @@ class TaskManager(Service):
     def __init__(self, conn: DuckDBPyConnection, scheduler: TrioScheduler):
         super().__init__(name="TaskManager")
         self.conn = conn
+
+        # TODO: scheduler shouldn't be injected in TaskManager
+        # Make them share a channel for communication
+        # and trust the Service Graph for propagation
         self.scheduler = scheduler
         self._token = trio.lowlevel.current_trio_token()
 
@@ -74,9 +79,9 @@ class TaskManager(Service):
         self._nursery.start_soon(self._process)
 
     async def on_started(self):
-        # propagate Trio context to dependencies
+        # Propagate Trio context to Scheduler post start
         for dep in self._dependencies:
-            if hasattr(dep, "_configure"):
+            if isinstance(dep, BaseScheduler):
                 dep._configure(
                     {
                         "_nursery": self._nursery,
@@ -121,9 +126,16 @@ class TaskManager(Service):
         elif isinstance(ctx, ContinousTaskContext):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
-            task = ContinuousSourceTask[ctx._out_type](task_id, self.conn)
+            task = ContinuousSourceTask[ctx._out_type](
+                task_id, self.conn, self._nursery
+            )
+
+            # TODO: make WS Task dynamic by registering the on_start function
+            # design idea, make the continuous source executable return
+            # on_start func and on_run func. on_start will have "waiters"
+            # and timeout logic
             self._sources[task_id] = task.register(
-                build_continuous_source_executable(ctx)
+                build_continuous_source_executable(ctx, self.conn)
             )
             _ = self.scheduler.add_job(
                 func=task.run,
@@ -152,4 +164,4 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
             )
-            logger.info(f"[TaskManager] registered transform task '{task_id}'")
+            logger.success(f"[TaskManager] registered transform task '{task_id}'")
