@@ -5,7 +5,6 @@ import trio
 
 from abc import ABC, abstractmethod
 from duckdb import DuckDBPyConnection
-from loguru import logger
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
 
 from channel import Channel
@@ -83,7 +82,6 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
             [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[Any, T]
         ],
     ) -> ContinuousSourceTask[T]:
-        logger.error("registered something here")
         self._executable = executable
         return self
 

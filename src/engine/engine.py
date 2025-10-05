@@ -226,12 +226,12 @@ async def ws_source_executable(
     table_name: str,
     column_types: dict[str, str],
     ws_generator_func: Callable[
-        [trio.Nursery], AsyncGenerator[Any, list[dict[str, Any]]]
+        [trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]
     ],
     nursery: trio.Nursery,
     *args,
     **kwargs,
-) -> AsyncGenerator[Any, pl.DataFrame]:
+) -> AsyncGenerator[pl.DataFrame, None]:
     logger.info(f"[{task_id}] - starting ws executable")
     while True:
         async for records in ws_generator_func(nursery):
@@ -248,7 +248,7 @@ async def ws_source_executable(
 def build_ws_source_executable(
     ctx: CreateWSTableContext, conn: DuckDBPyConnection
 ) -> Callable[
-    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[Any, pl.DataFrame]
+    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[pl.DataFrame, None]
 ]:
     properties = ctx.properties
     table_name = ctx.name
@@ -281,7 +281,7 @@ def build_scheduled_source_executable(
 def build_continuous_source_executable(
     ctx: ContinousTaskContext, conn: DuckDBPyConnection
 ) -> Callable[
-    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[Any, pl.DataFrame]
+    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[pl.DataFrame, None]
 ]:
     if isinstance(ctx, CreateWSTableContext):
         return build_ws_source_executable(ctx, conn)
