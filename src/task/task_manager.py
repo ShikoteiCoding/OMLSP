@@ -63,18 +63,26 @@ class TaskManager(Service):
         super().__init__(name="TaskManager")
         self.conn = conn
         self.scheduler = scheduler
+        self._token = trio.lowlevel.current_trio_token()
+
 
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
-
-    async def on_stop(self):
-        self.scheduler.stop
-        logger.success("[{}] stopping.", self.name)
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
 
         self._nursery.start_soon(self._process)
+
+    async def after_start(self):
+        # propagate Trio context to dependencies
+        for dep in self._dependencies:
+            if hasattr(dep, "_configure"):
+                dep._configure({
+                    "_nursery": self._nursery,
+                    "_trio_token": self._token,
+                })
+                logger.debug(f"[TaskManager] Configured {dep.name} with Trio context.")
 
     async def _process(self):
         async for taskctx in self._tasks_to_deploy:
