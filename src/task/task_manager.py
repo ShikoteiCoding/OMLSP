@@ -68,18 +68,22 @@ class TaskManager(Service):
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
 
-    async def on_stop(self):
-        """"""
-        self.scheduler.shutdown(False)
-
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
 
-        self.scheduler._configure(
-            {"_nursery": self._nursery, "_trio_token": self._token}
-        )
-        self.scheduler.start()
         self._nursery.start_soon(self._process)
+
+    async def on_started(self):
+        # propagate Trio context to dependencies
+        for dep in self._dependencies:
+            if hasattr(dep, "_configure"):
+                dep._configure(
+                    {
+                        "_nursery": self._nursery,
+                        "_trio_token": self._token,
+                    }
+                )
+                logger.debug(f"[TaskManager] Configured {dep.name} with Trio context.")
 
     async def _process(self):
         async for taskctx in self._tasks_to_deploy:
@@ -109,7 +113,6 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
-                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"

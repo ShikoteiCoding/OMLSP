@@ -1,10 +1,10 @@
 from __future__ import annotations
-
+import trio
 import polars as pl
-
 from abc import ABC, abstractmethod
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
+from loguru import logger
 
 from channel import Channel
 
@@ -12,6 +12,18 @@ TaskOutput: TypeAlias = Any
 TaskId = str
 
 T = TypeVar("T")
+
+
+def handle_cancellation(func):
+    async def wrapper(self, *args, **kwargs):
+        try:
+            return await func(self, *args, **kwargs)
+        except trio.Cancelled:
+            logger.debug(
+                f"[{self.__class__.__name__}] cancelled gracefully during shutdown."
+            )
+
+    return wrapper
 
 
 class BaseTaskT(ABC, Generic[T]):
@@ -60,6 +72,7 @@ class ScheduledSourceTask(BaseSourceTaskT, Generic[T]):
     def get_sender(self) -> Channel:
         return self._sender
 
+    @handle_cancellation
     async def run(self):
         result = await self._executable(task_id=self.task_id, conn=self._conn)
         if hasattr(self, "_sender"):
@@ -83,6 +96,7 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
     def get_sender(self) -> Channel[T]:
         return self._sender
 
+    @handle_cancellation
     async def run(self):
         async for result in self._executable(task_id=self.task_id, conn=self._conn):
             await self._sender.send(result)
@@ -105,6 +119,7 @@ class SinkTask(BaseTaskT, Generic[T]):
     def subscribe(self, recv: Channel):
         self._receivers.append(recv.clone())
 
+    @handle_cancellation
     async def run(self):
         # TODO: receive many upstreams
         receiver = self._receivers[0]
@@ -136,6 +151,7 @@ class TransformTask(BaseTaskT, Generic[T]):
     def get_sender(self) -> Channel:
         return self._sender
 
+    @handle_cancellation
     async def run(self):
         receiver = self._receivers[0]
         async for df in receiver:

@@ -57,6 +57,13 @@ class Service:
         """
         logger.success("[{}] starting.", self.name)
 
+    async def on_started(self) -> None:
+        """
+        Hook called after on_start(), when dependencies are available.
+
+        To be implemented by the derived class.
+        """
+
     async def on_stop(self) -> None:
         """
         Default method being started in stop().
@@ -79,6 +86,7 @@ class Service:
         """
         self._nursery = nursery
         await self.on_start()
+        await self.on_started()
         self._started.set()
 
         # start child dependencies
@@ -149,7 +157,7 @@ class Service:
     #         self._shutdown.set()
 
     @property
-    def state(self) -> str:
+    def service_state(self) -> str:
         if not self._started.is_set():
             return "init"
         if not self._stopped.is_set():
@@ -159,4 +167,4 @@ class Service:
         return "shutdown"
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}: {self.state}>"
+        return f"<{type(self).__name__}: {self.service_state}>"

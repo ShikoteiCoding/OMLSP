@@ -3,6 +3,7 @@ import trio
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.util import maybe_ref
+from services import Service
 
 
 from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
@@ -93,7 +94,7 @@ class TrioExecutor(BaseExecutor):
         self._nursery.start_soon(task_wrapper)
 
 
-class TrioScheduler(BaseScheduler):
+class TrioScheduler(Service, BaseScheduler):
     """
     A scheduler that runs using Trio's structured concurrency model.
     """
@@ -102,63 +103,62 @@ class TrioScheduler(BaseScheduler):
     _timer_cancel_scope: trio.CancelScope | None = None
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        Service.__init__(self, name="TrioScheduler")
+        BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token: trio.lowlevel.TrioToken | None = None
+        self._is_shutting_down = False
 
-    def start(self, paused: bool = False):
+    async def on_start(self) -> None:
         if not self._nursery or not self._trio_token:
             raise RuntimeError(
                 "TrioScheduler.start() must be configured with a nursery and token. "
                 "Use scheduler._configure({'_nursery': nursery, '_trio_token': token})."
             )
-        super().start(paused)
 
-    async def _async_shutdown(self, wait: bool = True):
-        super().shutdown(wait)
+        BaseScheduler.start(self, paused=False)
+
+    async def on_stop(self) -> None:
         self._stop_timer()
 
-    def shutdown(self, wait: bool = True):
-        """
-        Sync shutdown wrapper: schedules async shutdown inside Trio.
+        if self._nursery:
+            logger.debug(f"[{self.name}] Cancelling all background tasks.")
+            self._nursery.cancel_scope.cancel()
 
-        Can be safely called:
-        - From outside Trio (other threads) using trio.from_thread.run().
-        - From inside Trio by directly scheduling the async task.
-        """
-        if not self._nursery:
-            raise RuntimeError("TrioScheduler has no nursery configured")
+        logger.success("[{}] stopping.", self.name)
 
-        try:
-            # Detect if we're inside Trio
-            trio.lowlevel.current_task()
-            inside_trio = True
-        except RuntimeError:
-            inside_trio = False
+    async def on_shutdown(self) -> None:
+        self._trio_token = None  # cleanup
+        self._is_shutting_down = True
 
-        if inside_trio:
-            # Already running in Trio, schedule shutdown directly
-            self._nursery.start_soon(self._async_shutdown, wait)
-        else:
-            # External thread calling shutdown
-            if not self._trio_token:
-                raise RuntimeError("TrioScheduler has no Trio token configured")
-            trio.from_thread.run(
-                self._async_shutdown, wait, trio_token=self._trio_token
-            )
+        logger.success("[{}] shutdown completed.", self.name)
 
     def _configure(self, config):
         self._nursery = maybe_ref(config.pop("_nursery", None))
         self._trio_token = maybe_ref(config.pop("_trio_token", None))
         super()._configure(config)
 
+    @staticmethod
+    def require_running(func):
+        """
+        Decorator to skip method execution when the scheduler is shutting down.
+
+        This version only supports synchronous methods because TrioScheduler’s
+        control methods are synchronous
+        """
+
+        def wrapper(self, *args, **kwargs):
+            if self._is_shutting_down:
+                logger.debug(f"[{self.name}] Ignoring {func.__name__} during shutdown.")
+                return
+            return func(self, *args, **kwargs)
+
+        return wrapper
+
+    @require_running
     def _start_timer(self, wait_seconds):
-        logger.debug(f"[Scheduler] Starting timer with wait_seconds={wait_seconds}")
         self._stop_timer()
 
-        if wait_seconds is None:
-            return
-
-        if not self._nursery:
+        if wait_seconds is None or not self._nursery:
             return
 
         async def timer_task():
@@ -180,6 +180,7 @@ class TrioScheduler(BaseScheduler):
         wait_seconds = self._process_jobs()
         self._start_timer(wait_seconds)
 
+    @require_running
     def wakeup(self):
         if not self._nursery:
             raise RuntimeError("TrioScheduler has no nursery configured")
@@ -208,21 +209,31 @@ class TrioScheduler(BaseScheduler):
     def _create_default_executor(self):
         return TrioExecutor()
 
+    def shutdown(self):
+        """
+        Minimal implementation to satisfy BaseScheduler abstract method.
+        Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
+        """
+
 
 if __name__ == "__main__":
 
     async def main():
         async with trio.open_nursery() as nursery:
             token = trio.lowlevel.current_trio_token()
+
+            # Create and configure the scheduler
             scheduler = TrioScheduler()
             scheduler._configure({"_nursery": nursery, "_trio_token": token})
 
-            scheduler.start()
+            await scheduler.start(nursery)  # Calls on_start internally
 
+            # Add a job to print "Tick" every 1 second
             scheduler.add_job(print, "interval", seconds=1, args=["Tick"])
+
+            # Let the scheduler run for 4 seconds
             await trio.sleep(4)
 
-            # Can be called from inside Trio
-            scheduler.shutdown()
+            await scheduler.stop()  # Calls on_stop internally
 
     trio.run(main)
