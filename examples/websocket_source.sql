@@ -47,7 +47,7 @@ SELECT
 FROM binance_all_spot_symbols
 WHERE symbol LIKE '%BTC'
 ORDER BY quoteAsset DESC
-LIMIT 1;
+LIMIT 5;
 
 CREATE TABLE binance_most_spot_btc_volume_mini_tickers (
     event_type STRING,
@@ -62,7 +62,7 @@ CREATE TABLE binance_most_spot_btc_volume_mini_tickers (
 )
 WITH (
     connector = 'ws',
-    url = 'wss://stream.binance.com/ws/$symbol@miniTicker',
+    url = 'wss://stream.binance.com:443/ws/$symbol@miniTicker',
     'jq' = '{
         event_type: .e,
         event_time: .E,

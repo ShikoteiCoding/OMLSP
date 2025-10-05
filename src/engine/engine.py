@@ -233,16 +233,16 @@ async def ws_source_executable(
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
     logger.info(f"[{task_id}] - starting ws executable")
-    while True:
-        async for records in ws_generator_func(nursery):
-            if len(records) > 0:
-                epoch = int(time.time() * 1_000)
-                df = records_to_polars(records, column_types)
-                await cache(df, 0, epoch, table_name, conn, False)
-            else:
-                df = pl.DataFrame()
+    # while True:
+    async for records in ws_generator_func(nursery):
+        if len(records) > 0:
+            epoch = int(time.time() * 1_000)
+            df = records_to_polars(records, column_types)
+            await cache(df, 0, epoch, table_name, conn, False)
+        else:
+            df = pl.DataFrame()
 
-            yield df
+        yield df
 
 
 def build_ws_source_executable(
@@ -501,14 +501,32 @@ async def transform_executable(
 
 
 if __name__ == "__main__":
+    import jq as jqm
     from duckdb import connect
+    from external import ws_generator
 
-    con: DuckDBPyConnection = connect(database=":memory:")
+    conn: DuckDBPyConnection = connect(database=":memory:")
 
-    example_fields = ["symbol"]
-    example_table = "all_tickers"
-    macro_name = "ohlc_macro"
-    result = con.sql(
-        f"SELECT * FROM {macro_name}({example_table}, {','.join(example_fields)})"
-    )
-    print(result.df())
+    async def main():
+        async with trio.open_nursery() as nursery:
+            properties = {
+                "url": "wss://fstream.binance.com/ws/!ticker@arr",
+                "jq": jqm.compile(""".[:2][] | {
+                    event_type: .e,
+                    event_time: .E,
+                    symbol: .s,
+                    close: .c,
+                    open: .o,
+                    high: .h,
+                    low: .l,
+                    base_volume: .v,
+                    quote_volume: .q
+                 }"""),
+            }
+
+            async for msg in ws_source_executable(
+                "0", conn, "abcd", {}, partial(ws_generator, properties), nursery
+            ):
+                logger.info(msg)
+
+    trio.run(main)

@@ -93,8 +93,7 @@ async def async_request(
         try:
             if response.is_success:
                 logger.debug(f"{response.status_code}: response for {request_kwargs}.")
-                data = response.json()
-                return parse_response(data, jq)
+                return parse_response(response.json(), jq)
         except Exception:
             pass
 
@@ -256,20 +255,32 @@ async def ws_generator_aggregator(
             yield msg
 
 
+# TODO: As an improvement allow for "pivoted" templating for multi stream
+# For instance binance can merge WS streams into single stream using this
+# /stream?streams=<streamName1>/<streamName2>/<streamName3>
+# How to enable that ? We split parsing between base_url and "generated"
+# stream name (of arbitrary lenght controlled by input)
+# We also need to pivot the on_start_query so it is a list
 def build_ws_generator(
     properties: dict[str, Any], templates_list: list[dict[str, str]]
 ) -> Callable[[trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]]:
-    # parse properties first (compile jq etc)
-    parsed_properties = parse_ws_properties(properties)
+    """
+    Build a websocket data generator, if multiple templates are provided
+    in the templates_list, then one connection is created for each substitute
+    template. The ws_generator_aggregator for now takes care of the fan-in
+    mechanism to make sure only one single output is provided.
+
+    This for now doesn't handle any backpressure (i.e no buffer, locks etc).
+    """
 
     # This happens when on_start_query doesn't exist
     # ie the WS generator has no start conditions
     if len(templates_list) == 0:
-        list_of_properties = [parsed_properties]
+        list_of_properties = [parse_ws_properties(properties)]
     else:
         # For each template element create a new properties dict
         list_of_properties = [
-            build_ws_properties(parsed_properties, template)
+            parse_ws_properties(build_ws_properties(properties, template))
             for template in templates_list
         ]
 
@@ -279,23 +290,25 @@ def build_ws_generator(
 
 
 if __name__ == "__main__":
-    print("OMLSP starting")
-    from duckdb import connect
-
-    conn: DuckDBPyConnection = connect(database=":memory:")
 
     async def main():
-        properties = {
-            "connector": "http",
-            "url": "https://httpbin.org/get",
-            "method": "GET",
-            "scan.interval": "60s",
-            "jq": ".url",
-        }
+        async with trio.open_nursery() as nursery:
+            properties = {
+                "url": "wss://stream.binance.com/ws/ethbtc@miniTicker",
+                "jq": jqm.compile("""{
+                    event_type: .e,
+                    event_time: .E,
+                    symbol: .s,
+                    close: .c,
+                    open: .o,
+                    high: .h,
+                    low: .l,
+                    base_volume: .v,
+                    quote_volume: .q
+                }"""),
+            }
 
-        _http_requester = build_http_requester(properties, is_async=True)
-
-        res = await _http_requester()  # type: ignore
-        logger.info(res)
+            async for msg in ws_generator(properties, nursery):
+                logger.info(msg)
 
     trio.run(main)
