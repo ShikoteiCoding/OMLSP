@@ -6,13 +6,14 @@ from apscheduler.util import maybe_ref
 from services import Service
 
 
-from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
+from apscheduler.executors.base import BaseExecutor
 from apscheduler.util import iscoroutinefunction_partial
 
 from loguru import logger
 
 _CANCELLED = object()
 _FAILED = object()
+
 
 class TrioExecutor(BaseExecutor):
     """
@@ -101,9 +102,9 @@ class TrioExecutor(BaseExecutor):
 
             # interpret sentinels / success
             if result is _CANCELLED:
-                return # silent exit
+                return  # silent exit
             if result is _FAILED:
-                return # error already reported via _run_job_error
+                return  # error already reported via _run_job_error
             # if the job runner returned events (APScheduler expects events),
             # translate or forward them. if you don't need events, call success
             self._run_job_success(job.id, result)
@@ -149,7 +150,7 @@ class TrioScheduler(Service, BaseScheduler):
         Minimal implementation to satisfy BaseScheduler abstract method.
         Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
         """
-        self._trio_token = None #cleanup
+        self._trio_token = None  # cleanup
         self._is_shutting_down = True
 
     def _configure(self, config):
@@ -165,11 +166,13 @@ class TrioScheduler(Service, BaseScheduler):
         This version only supports synchronous methods because TrioScheduler’s
         control methods are synchronous
         """
+
         def wrapper(self, *args, **kwargs):
             if self._is_shutting_down:
                 logger.debug(f"[{self.name}] Ignoring {func.__name__} during shutdown.")
                 return
             return func(self, *args, **kwargs)
+
         return wrapper
 
     @require_running
@@ -237,7 +240,7 @@ if __name__ == "__main__":
     async def main():
         async with trio.open_nursery() as nursery:
             token = trio.lowlevel.current_trio_token()
-            
+
             # Create and configure the scheduler
             scheduler = TrioScheduler()
             scheduler._configure({"_nursery": nursery, "_trio_token": token})
@@ -251,4 +254,5 @@ if __name__ == "__main__":
             await trio.sleep(4)
 
             await scheduler.stop()  # Calls on_stop internally
+
     trio.run(main)

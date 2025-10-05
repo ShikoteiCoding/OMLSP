@@ -65,7 +65,6 @@ class TaskManager(Service):
         self.scheduler = scheduler
         self._token = trio.lowlevel.current_trio_token()
 
-
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
 
@@ -78,10 +77,12 @@ class TaskManager(Service):
         # propagate Trio context to dependencies
         for dep in self._dependencies:
             if hasattr(dep, "_configure"):
-                dep._configure({
-                    "_nursery": self._nursery,
-                    "_trio_token": self._token,
-                })
+                dep._configure(
+                    {
+                        "_nursery": self._nursery,
+                        "_trio_token": self._token,
+                    }
+                )
                 logger.debug(f"[TaskManager] Configured {dep.name} with Trio context.")
 
     async def _process(self):

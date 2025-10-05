@@ -60,7 +60,7 @@ class Service:
     async def after_start(self) -> None:
         """
         Hook called after on_start(), when dependencies are available.
-        
+
         To be implemented by the derived class.
         """
 

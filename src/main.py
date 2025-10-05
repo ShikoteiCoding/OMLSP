@@ -44,7 +44,7 @@ async def main():
 
     task_manager.add_dependency(scheduler)
 
-    async with trio.open_nursery() as nursery:        
+    async with trio.open_nursery() as nursery:
         nursery.start_soon(app.start, nursery)
         for sql in iter_sql_statements(sql_filepath):
             await app.submit(sql)
