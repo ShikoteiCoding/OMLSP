@@ -113,7 +113,6 @@ class TaskManager(Service):
             _ = self.scheduler.add_job(
                 func=task.run,
                 trigger=ctx.trigger,
-                misfire_grace_time=20,
             )
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"

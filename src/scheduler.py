@@ -6,7 +6,7 @@ from apscheduler.util import maybe_ref
 from services import Service
 
 
-from apscheduler.executors.base import BaseExecutor
+from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
 from apscheduler.util import iscoroutinefunction_partial
 
 from loguru import logger
@@ -21,10 +21,6 @@ class TrioExecutor(BaseExecutor):
 
     Plugin alias: ``trio``
     """
-
-    # constants state
-    _CANCELLED = object()
-    _FAILED = object()
 
     def __init__(self):
         super().__init__()
@@ -65,48 +61,35 @@ class TrioExecutor(BaseExecutor):
         if not self._nursery:
             raise RuntimeError("TrioExecutor has no active nursery")
 
-        # execute job.func directly inside Trio, and handle exceptions here so
-        # APScheduler never logs trio.Cancelled as an "error"
-        async def job_runner():
-            try:
-                # if job.func is a coroutine function (possibly wrapped by partial),
-                # call it directly and await it.
-                if iscoroutinefunction_partial(job.func):
-                    retval = await job.func(*job.args, **job.kwargs)
-                else:
-                    # sync job: run in thread
-                    retval = await trio.to_thread.run_sync(
-                        job.func, *job.args, **job.kwargs
-                    )
-                return retval
-            except trio.Cancelled:
-                # quietly handle Trio cancellation here — treat as normal shutdown.
-                # no traceback, no APScheduler error log.
-                logger.debug(f"[TrioExecutor] Job {job.id} cancelled gracefully.")
-                # return a sentinel so we don't call _run_job_success below
-                return self._CANCELLED
-            except BaseException:
-                # report real errors to scheduler
-                self._run_job_error(job.id, *sys.exc_info()[1:])
-                return self._FAILED
+        # Choose coroutine or thread execution
+        if iscoroutinefunction_partial(job.func):
 
+            async def coro_runner():
+                return await run_coroutine_job(
+                    job, job._jobstore_alias, run_times, self._logger.name
+                )
+        else:
+
+            async def coro_runner():
+                return await trio.to_thread.run_sync(
+                    run_job, job, job._jobstore_alias, run_times, self._logger.name
+                )
+
+        # Launch the job inside the nursery
         async def task_wrapper():
             cancel_scope = trio.CancelScope()
             self._pending_tasks.add(cancel_scope)
             try:
                 with cancel_scope:
-                    result = await job_runner()
+                    events = await coro_runner()
+            except BaseException:
+                # Capture the exception and notify scheduler
+                self._run_job_error(job.id, *sys.exc_info()[1:])
+            else:
+                # Successful run
+                self._run_job_success(job.id, events)
             finally:
-                # if we were cancelled by nursery.cancel_scope, job_runner returned _CANCELLED
-                # or raised, but we've already converted errors above; just cleanup
                 self._pending_tasks.discard(cancel_scope)
-
-            # interpret sentinels / success
-            if result in (self._CANCELLED, self._FAILED, None):
-                return  # silent exit
-            # if the job runner returned events (APScheduler expects events),
-            # translate or forward them. if you don't need events, call success
-            self._run_job_success(job.id, result)
 
         self._nursery.start_soon(task_wrapper)
 
@@ -173,13 +156,9 @@ class TrioScheduler(Service, BaseScheduler):
 
     @require_running
     def _start_timer(self, wait_seconds):
-        logger.debug(f"[Scheduler] Starting timer with wait_seconds={wait_seconds}")
         self._stop_timer()
 
-        if wait_seconds is None:
-            return
-
-        if not self._nursery:
+        if wait_seconds is None or not self._nursery:
             return
 
         async def timer_task():
