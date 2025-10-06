@@ -99,7 +99,7 @@ def build_scalar_udf(
     dynamic_columns: list[str],
     return_type: DuckDBPyType,
     conn: DuckDBPyConnection,
-    **kwargs,
+    name: str,
 ) -> dict[str, Any]:
     arity = len(dynamic_columns)
 
@@ -153,13 +153,12 @@ def build_scalar_udf(
         return results
 
     return {
-        "name": kwargs.get("name"),
+        "name": name,
         "function": udf,
         "parameters": [VARCHAR for _ in range(arity)],
         "return_type": return_type,
         "type": PythonUDFType.ARROW,
         "null_handling": FunctionNullHandling.SPECIAL,
-        **kwargs,
     }
 
 
@@ -306,7 +305,9 @@ def build_lookup_table_prehook(
 
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # type: ignore
-    udf_params = build_scalar_udf(properties, dynamic_columns, return_type, conn)
+    udf_params = build_scalar_udf(
+        properties, dynamic_columns, return_type, conn, func_name
+    )
     # register scalar for row to row http call
     conn.create_function(**udf_params)
     logger.debug(f"registered function: {func_name}")
@@ -361,14 +362,14 @@ def build_substitute_macro_definition(
 
 
 def pre_hook_select_statements(
-    con: DuckDBPyConnection,
+    conn: DuckDBPyConnection,
     ctx: SelectContext,
     tables: list[str],
 ) -> str:
     """Substitutes select statement query with lookup references to macro references."""
     original_query = ctx.query
     join_tables = ctx.joins
-    lookup_tables = get_lookup_tables(con)
+    lookup_tables = get_lookup_tables(conn)
 
     # join query
     substitute_mapping = dict(zip(tables, tables))
@@ -380,7 +381,7 @@ def pre_hook_select_statements(
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
             substitute_mapping[join_table] = build_substitute_macro_definition(
-                con, join_table, from_table, from_table_or_alias, join_table_or_alias
+                conn, join_table, from_table, from_table_or_alias, join_table_or_alias
             )
         else:
             substitute_mapping[join_table] = join_table

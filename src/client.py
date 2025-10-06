@@ -2,12 +2,13 @@ import argparse
 import trio
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.styles.pygments import style_from_pygments_cls
+
 from pygments.styles import get_style_by_name
 
 
@@ -26,14 +27,9 @@ async def spinner_task(cancel_scope: trio.CancelScope):
 
 
 def create_prompt_session(client_id: str) -> PromptSession:
-    """Create a configured PromptSession with bindings and completer."""
+    """Create a configured PromptSession with bindings, completer, and history."""
     style = style_from_pygments_cls(get_style_by_name("monokai"))
     bindings = KeyBindings()
-
-    sql_completer = WordCompleter(
-        ["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "JOIN", "SHOW TABLES"],
-        ignore_case=True,
-    )
 
     @bindings.add("enter")
     def _(event):
@@ -48,7 +44,9 @@ def create_prompt_session(client_id: str) -> PromptSession:
         multiline=True,
         key_bindings=bindings,
         style=style,
-        completer=sql_completer,
+        # completer=sql_completer,
+        history=InMemoryHistory(),
+        enable_history_search=True,  # optional: arrow up searches partial match
     )
 
 
@@ -66,8 +64,8 @@ async def connect(host: str, port: int, client_id: str) -> None:
 
             with patch_stdout():
                 while True:
-                    # Run prompt_toolkit prompt in a separate thread
-                    query = await trio.to_thread.run_sync(session.prompt)
+                    query: str = await trio.to_thread.run_sync(session.prompt)
+                    session.history.append_string(query)
                     query = query.strip()
 
                     if query.lower() == "exit":

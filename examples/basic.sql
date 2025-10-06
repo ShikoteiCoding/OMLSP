@@ -13,6 +13,33 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
+-- 
+CREATE TEMPORARY TABLE ohlc (
+    $symbol STRING,
+    start_time TIMESTAMP_S,
+    open FLOAT,
+    high FLOAT,
+    low FLOAT,
+    close FLOAT,
+    volume FLOAT,
+    amount FLOAT
+)
+WITH (
+    'connector' = 'lookup-http',
+    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1753977000&endAt=1753977300',
+    'method' = 'GET',
+    'jq' = '.data[] | {
+        start_time: (.[0] | tonumber),
+        open: (.[1] | tonumber),
+        high: (.[2] | tonumber),
+        low: (.[3] | tonumber),
+        close: (.[4] | tonumber),
+        volume: (.[5] | tonumber),
+        amount: (.[6] | tonumber)
+    }',
+    'headers.Content-Type' = 'application/json'
+);
+
 -- Actual query we want to make it work
 SELECT
     ALT.symbol,

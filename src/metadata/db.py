@@ -33,7 +33,8 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
     table_metadata = f"""
     CREATE TABLE {METADATA_TABLE_TABLE_NAME} (
         table_name STRING,
-        last_batch_id INTEGER
+        last_batch_id INTEGER,
+        lookup BOOL
     )
     """
     conn.sql(table_metadata)
@@ -75,8 +76,8 @@ def insert_table_metadata(
 ) -> None:
     table_name = context.name
     insert = f"""
-    INSERT INTO {METADATA_TABLE_TABLE_NAME} (table_name, last_batch_id)
-    VALUES ('{table_name}', 0);
+    INSERT INTO {METADATA_TABLE_TABLE_NAME} (table_name, last_batch_id, lookup)
+    VALUES ('{table_name}', 0, {context.lookup});
     """
     conn.sql(insert)
 
@@ -163,8 +164,8 @@ def create_macro_definition(
 
 
 def get_lookup_tables(conn: DuckDBPyConnection) -> list:
-    query = """
-        SELECT table_name FROM duckdb_tables WHERE temporary IS TRUE;
+    query = f"""
+        SELECT table_name FROM {METADATA_TABLE_TABLE_NAME} WHERE lookup IS TRUE;
         """
     temp_tables = [str(table_name[0]) for table_name in conn.sql(query).fetchall()]
 
@@ -172,8 +173,8 @@ def get_lookup_tables(conn: DuckDBPyConnection) -> list:
 
 
 def get_tables(conn: DuckDBPyConnection) -> list:
-    query = """
-        SELECT table_name FROM duckdb_tables WHERE temporary IS FALSE;
+    query = f"""
+        SELECT table_name FROM {METADATA_TABLE_TABLE_NAME} WHERE lookup IS FALSE;
         """
     tables = [str(table_name[0]) for table_name in conn.sql(query).fetchall()]
 
