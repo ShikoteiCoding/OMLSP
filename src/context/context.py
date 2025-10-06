@@ -15,6 +15,7 @@ class CreateHTTPTableContext:
     query: str
     column_types: dict[str, str]
     trigger: CronTrigger
+    lookup: bool = False
 
     # executable of http table context
     # returns a polars dataframe
@@ -28,6 +29,7 @@ class CreateWSTableContext:
     column_types: dict[str, str]
     query: str
     on_start_query: str
+    lookup: bool = False
 
     # executable of ws table context
     # returns a polars dataframe
@@ -41,6 +43,7 @@ class CreateHTTPLookupTableContext:
     query: str
     dynamic_columns: list[str]
     columns: dict[str, str]
+    lookup: bool = True
 
 
 # ---------- View / Sink Contexts ----------
