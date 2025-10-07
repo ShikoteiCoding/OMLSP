@@ -47,12 +47,14 @@ class OmlspDialect(Dialect):
             return None
 
         def _parse_show_omlsp(self, this: str) -> exp.Show:
+            # Example:
+            # SHOW TABLES
+            
             return self.expression(exp.Show, this=this)
 
         def _parse_create(self):
-            """
-            CREATE SECRET secret_name WITH (backend = 'meta') AS 'secret_value'
-            """
+            # Example:
+            # CREATE SECRET secret_name WITH (backend = 'meta') AS 'secret_value'
 
             # Detect CREATE SECRET as TokenType COMMAND
             if self._match(TokenType.COMMAND) and not self._match(TokenType.TABLE):

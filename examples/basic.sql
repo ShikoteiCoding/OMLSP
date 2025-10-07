@@ -1,3 +1,4 @@
+-- Get all tickers from kucoin
 CREATE TABLE all_tickers (
     symbol STRING,
     symbolName STRING,
@@ -13,7 +14,8 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
--- 
+-- Get ohlc data provided symbols
+-- TODO: handle dynamic arguments
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
     start_time TIMESTAMP_S,
@@ -40,7 +42,8 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
--- Actual query we want to make it work
+-- Materialized view leveraging all tickers + ohlc on lookup (request)
+CREATE MATERIALIZED VIEW ohlc_all_spot_tickers AS
 SELECT
     ALT.symbol,
     start_time,
@@ -53,26 +56,3 @@ SELECT
 FROM all_tickers AS ALT
 LEFT JOIN ohlc AS oh
     ON ALT.symbol = oh.symbol;
-
-SELECT ALT.symbol 
-FROM all_tickers AS ALT 
-LEFT JOIN all_tickers AS ALT2 
-    on ALT.symbol = ALT2.symbol;
-
--- Test sink from table
--- CREATE SINK all_tickers_sink FROM all_tickers
--- WITH (
---     connector = 'kafka',
---     topic = 'tickers_topic',
---     server = 'localhost:9092',
--- );
-
--- Test view
-CREATE MATERIALIZED VIEW my_first_view AS
-SELECT
-    symbol,
-    buy
-FROM all_tickers
-WHERE buy IS NOT NULL AND buy < 20;
-
-CREATE VIEW my_second_view FROM all_tickers;
