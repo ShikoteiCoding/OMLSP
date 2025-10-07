@@ -284,11 +284,10 @@ def build_create_view_context(
     # TODO: add where clause
     upstreams = [ctx.table]
 
-    # duckdb doesn't support MATERIALIZED and load VIEW in memory
     statement.args["kind"] = "TABLE"
     query = get_duckdb_sql(statement)
 
-    # sqlglot often captures MATERIALIZED/NOT MATERIALIZED as a property
+    # sqlglot captures MATERIALIZED/NOT MATERIALIZED as a property
     properties = statement.args.get("properties")
     if properties:
         for prop in properties.expressions:
@@ -298,6 +297,7 @@ def build_create_view_context(
                     upstreams=upstreams,
                     subquery=ctx.query,
                     query=query,
+                    transform_ctx=ctx,
                 )
 
     return CreateViewContext(
@@ -305,6 +305,7 @@ def build_create_view_context(
         upstreams=upstreams,
         subquery=ctx.query,
         query=query,
+        transform_ctx=ctx,
     )
 
 
@@ -426,11 +427,11 @@ def parse_select(
         if isinstance(table.parent, exp.Join):
             join_tables[str(table.name)] = str(table.alias_or_name)
 
-            if table.name:  # filter away scalar functions / macros
-                table.set(
-                    "this",
-                    exp.to_identifier(get_table_name_placeholder(table.name), False),
-                )
+        if table.name:  # filter away scalar functions / macros
+            table.set(
+                "this",
+                exp.to_identifier(get_table_name_placeholder(table.name), False),
+            )
 
     return statement, columns, table_name, table_alias, where, join_tables
 

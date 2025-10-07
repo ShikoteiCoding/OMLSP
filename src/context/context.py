@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import polars as pl
 
 from dataclasses import dataclass, field
@@ -53,6 +55,10 @@ class CreateViewContext:
     upstreams: list[str]
     subquery: str
     query: str
+    # Transform is ultimately just a select applied
+    # on upcoming data
+    transform_ctx: SelectContext
+    materialized: bool = False
 
     _out_type: Type = field(default=pl.DataFrame)
 
@@ -63,6 +69,10 @@ class CreateMaterializedViewContext:
     upstreams: list[str]
     subquery: str
     query: str
+    # Transform is ultimately just a select applied
+    # on upcoming data
+    transform_ctx: SelectContext
+    materialized: bool = True
 
     _out_type: Type = field(default=pl.DataFrame)
 
