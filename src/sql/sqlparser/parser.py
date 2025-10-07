@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Any
 from datetime import timezone
@@ -5,8 +7,6 @@ from datetime import timezone
 import jsonschema
 from apscheduler.triggers.cron import CronTrigger
 from sqlglot import exp, parse_one
-from sqlglot.dialects.postgres import Postgres
-from sqlglot.tokens import Tokenizer, TokenType
 
 from context.context import (
     CommandContext,
@@ -22,7 +22,16 @@ from context.context import (
     NonQueryContext,
     SelectContext,
     SetContext,
+    ShowContext,
 )
+from metadata.db import (
+    METADATA_TABLE_TABLE_NAME,
+    METADATA_VIEW_TABLE_NAME,
+    METADATA_VIEW_MATERIALIZED_TABLE_NAME,
+    METADATA_SINK_TABLE_NAME,
+    METADATA_SECRET_TABLE_NAME,
+)
+from sql.dialect import OmlspDialect
 
 
 class CreateKind(StrEnum):
@@ -36,65 +45,6 @@ class TableConnectorKind(StrEnum):
     HTTP = "http"
     LOOKUP_HTTP = "lookup-http"
     WS = "ws"
-
-
-class Omlsp(Postgres):
-    class Tokenizer(Tokenizer):
-        KEYWORDS = {
-            **Postgres.Tokenizer.KEYWORDS,
-            "SINK": TokenType.SINK,
-            # Generic token type for "new" tokens
-            "SECRET": TokenType.COMMAND,
-            "WITH": TokenType.WITH,
-            # TODO: ADD SOURCE HERE
-        }
-
-    class Parser(Postgres.Parser):
-        def _parse_table_hints(self) -> list[exp.Expression] | None:
-            # Keep SINK behavior unchanged
-            return None
-
-        def _parse_create(self):
-            """
-            CREATE SECRET secret_name WITH (backend = 'meta') AS 'secret_value'
-            """
-            # Detect CREATE SECRET as TokenType COMMAND
-            if self._match(TokenType.COMMAND) and not self._match(TokenType.TABLE):
-                if self._prev:
-                    # Extract SECRET
-                    kind = self._prev.text.upper()
-
-                    # Parse the secret name
-                    this = self._parse_id_var()
-
-                    # Optionally parse WITH (...)
-                    properties = self._parse_properties()
-
-                    # Require AS '...'
-                    if not self._match(TokenType.ALIAS):
-                        self.raise_error("Expected AS after CREATE SECRET ...")
-
-                    # This should get parsed as Literal
-                    secret_value = self._parse_string()
-
-                    # Handle removal of single quotes
-                    secret_value_str = str(secret_value)
-                    if secret_value_str.startswith("'") and secret_value_str.startswith(
-                        "'"
-                    ):
-                        secret_value = secret_value_str[1:-1]
-
-                    # Return a standard Create expression
-                    return self.expression(
-                        exp.Create,
-                        kind=kind,
-                        this=this,
-                        properties=properties,
-                        expression=secret_value,
-                    )
-
-            # Fallback to the default Postgres CREATE behavior
-            return super()._parse_create()
 
 
 def get_name(expression: exp.Expression) -> str:
@@ -520,6 +470,27 @@ def extract_set_context(statement: exp.Set) -> SetContext:
     return SetContext(query=get_duckdb_sql(statement))
 
 
+def extract_show_statement(statement: exp.Show) -> ShowContext:
+    query = "SELECT * FROM "
+    sql = statement.sql(dialect=OmlspDialect)
+    if "TABLES" in sql:
+        query += METADATA_TABLE_TABLE_NAME
+
+    elif "MATERIALIZED VIEWS" in sql:
+        query += METADATA_VIEW_MATERIALIZED_TABLE_NAME
+
+    elif "VIEWS" in sql:
+        query += METADATA_VIEW_TABLE_NAME
+
+    elif "SECRETS" in sql:
+        query += METADATA_SECRET_TABLE_NAME
+
+    elif "SINKS" in sql:
+        query += METADATA_SINK_TABLE_NAME
+
+    return ShowContext(user_query=sql, query=query)
+
+
 def extract_command_context(
     statement: exp.Command,
 ) -> CommandContext | InvalidContext:
@@ -531,7 +502,7 @@ def extract_command_context(
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> QueryContext | NonQueryContext:
-    parsed_statement = parse_one(query, dialect=Omlsp)
+    parsed_statement = parse_one(query, dialect=OmlspDialect)
 
     if isinstance(parsed_statement, exp.Create):
         return extract_create_context(parsed_statement, properties_schema)
@@ -541,6 +512,9 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.Set):
         return extract_set_context(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.Show):
+        return extract_show_statement(parsed_statement)
 
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")

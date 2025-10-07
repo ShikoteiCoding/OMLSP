@@ -99,6 +99,12 @@ class SetContext:
 
 
 @dataclass
+class ShowContext:
+    user_query: str
+    query: str
+
+
+@dataclass
 class CommandContext:
     query: str
 
@@ -130,6 +136,7 @@ EvaluableContext = Union[
     CreateViewContext,
     SetContext,
     SelectContext,
+    ShowContext,
 ]
 
 OnStartContext = Union[CreateWSTableContext]
@@ -145,6 +152,7 @@ QueryContext = Union[
     SetContext,
     CommandContext,
     SelectContext,
+    ShowContext,
 ]
 
 NonQueryContext = Union[CreateSecretContext, InvalidContext]

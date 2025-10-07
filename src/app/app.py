@@ -14,6 +14,7 @@ from context.context import (
     InvalidContext,
     SelectContext,
     SetContext,
+    ShowContext,
     TaskContext,
     OnStartContext,
 )
@@ -177,40 +178,44 @@ class App(Service):
     def _eval_ctx(self, client_id: str, ctx: EvaluableContext) -> str:
         # Evaluate and execute various SQL context types.
         # TODO: to be eventually replaced by visitor pattern ?
-        if isinstance(ctx, CreateTableContext):
-            return create_table(self._conn, ctx)
-        elif isinstance(ctx, CreateViewContext):
-            return create_view(self._conn, ctx)
-        elif isinstance(ctx, CreateMaterializedViewContext):
-            return create_view_materialized(self._conn, ctx)
-        elif isinstance(ctx, CreateSinkContext):
-            return create_sink(self._conn, ctx)
-        elif isinstance(ctx, CreateSecretContext):
-            return create_secret(self._conn, ctx)
-        elif isinstance(ctx, CommandContext):
-            return str(duckdb_to_pl(self._conn, ctx.query))
-        elif isinstance(ctx, SetContext):
-            self._conn.sql(ctx.query)
-            return "SET"
-        elif isinstance(ctx, SelectContext) and client_id != self._internal_ref:
-            table_name = ctx.table
-            lookup_tables = get_lookup_tables(self._conn)
-            tables = get_tables(self._conn)
+        try:
+            if isinstance(ctx, CreateTableContext):
+                return create_table(self._conn, ctx)
+            elif isinstance(ctx, CreateViewContext):
+                return create_view(self._conn, ctx)
+            elif isinstance(ctx, CreateMaterializedViewContext):
+                return create_view_materialized(self._conn, ctx)
+            elif isinstance(ctx, CreateSinkContext):
+                return create_sink(self._conn, ctx)
+            elif isinstance(ctx, CreateSecretContext):
+                return create_secret(self._conn, ctx)
+            elif isinstance(ctx, CommandContext):
+                return str(duckdb_to_pl(self._conn, ctx.query))
+            elif isinstance(ctx, SetContext):
+                self._conn.sql(ctx.query)
+                return "SET"
+            elif isinstance(ctx, SelectContext) and client_id != self._internal_ref:
+                table_name = ctx.table
+                lookup_tables = get_lookup_tables(self._conn)
+                tables = get_tables(self._conn)
 
-            # add internal tables here for easier dev time
-            tables.append("duckdb_tables")
+                # add internal tables here for easier dev time
+                tables.append("duckdb_tables")
 
-            if table_name in lookup_tables:
-                return f"'{table_name}' is a lookup table, you cannot use it in FROM."
+                if table_name in lookup_tables:
+                    return (
+                        f"'{table_name}' is a lookup table, you cannot use it in FROM."
+                    )
 
-            if table_name not in tables:
-                return f"'{table_name}' doesn't exist"
+                if table_name not in tables:
+                    return f"'{table_name}' doesn't exist"
 
-            try:
                 duckdb_sql = pre_hook_select_statements(self._conn, ctx, tables)
                 return str(duckdb_to_pl(self._conn, duckdb_sql))
-            except Exception as e:
-                return f"fail to run sql: '{duckdb_sql}': {e}"
+            elif isinstance(ctx, ShowContext):
+                return str(duckdb_to_pl(self._conn, ctx.query))
+        except Exception as e:
+            return f"fail to run sql: '{ctx}': {e}"
 
         return ""
 
