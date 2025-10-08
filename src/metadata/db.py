@@ -163,7 +163,7 @@ def create_macro_definition(
     conn.sql(query)
 
 
-def get_lookup_tables(conn: DuckDBPyConnection) -> list:
+def get_lookup_tables(conn: DuckDBPyConnection) -> list[str]:
     query = f"""
         SELECT table_name FROM {METADATA_TABLE_TABLE_NAME} WHERE lookup IS TRUE;
         """
@@ -172,7 +172,7 @@ def get_lookup_tables(conn: DuckDBPyConnection) -> list:
     return temp_tables
 
 
-def get_tables(conn: DuckDBPyConnection) -> list:
+def get_tables(conn: DuckDBPyConnection) -> list[str]:
     query = f"""
         SELECT table_name FROM {METADATA_TABLE_TABLE_NAME} WHERE lookup IS FALSE;
         """

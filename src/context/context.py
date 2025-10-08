@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import polars as pl
 
 from dataclasses import dataclass, field
@@ -51,8 +53,12 @@ class CreateHTTPLookupTableContext:
 class CreateViewContext:
     name: str
     upstreams: list[str]
-    subquery: str
     query: str
+
+    # Transform is ultimately just a select applied
+    # on upcoming data
+    transform_ctx: SelectContext
+    materialized: bool = False
 
     _out_type: Type = field(default=pl.DataFrame)
 
@@ -61,8 +67,12 @@ class CreateViewContext:
 class CreateMaterializedViewContext:
     name: str
     upstreams: list[str]
-    subquery: str
     query: str
+
+    # Transform is ultimately just a select applied
+    # on upcoming data
+    transform_ctx: SelectContext
+    materialized: bool = True
 
     _out_type: Type = field(default=pl.DataFrame)
 

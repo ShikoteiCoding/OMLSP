@@ -18,7 +18,7 @@ WITH (
 -- TODO: handle dynamic arguments
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
-    start_time TIMESTAMP_S,
+    start_time TIMESTAMP_MS,
     open FLOAT,
     high FLOAT,
     low FLOAT,

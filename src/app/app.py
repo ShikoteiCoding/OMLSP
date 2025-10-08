@@ -18,7 +18,7 @@ from context.context import (
     TaskContext,
     OnStartContext,
 )
-from engine.engine import duckdb_to_dicts, duckdb_to_pl, pre_hook_select_statements
+from engine.engine import duckdb_to_dicts, duckdb_to_pl, substitute_sql_template
 from metadata import (
     create_secret,
     create_sink,
@@ -195,29 +195,32 @@ class App(Service):
                 self._conn.sql(ctx.query)
                 return "SET"
             elif isinstance(ctx, SelectContext) and client_id != self._internal_ref:
-                table_name = ctx.table
-                lookup_tables = get_lookup_tables(self._conn)
-                tables = get_tables(self._conn)
-
-                # add internal tables here for easier dev time
-                tables.append("duckdb_tables")
-
-                if table_name in lookup_tables:
-                    return (
-                        f"'{table_name}' is a lookup table, you cannot use it in FROM."
-                    )
-
-                if table_name not in tables:
-                    return f"'{table_name}' doesn't exist"
-
-                duckdb_sql = pre_hook_select_statements(self._conn, ctx, tables)
-                return str(duckdb_to_pl(self._conn, duckdb_sql))
+                return self._eval_select_ctx(ctx)
             elif isinstance(ctx, ShowContext):
                 return str(duckdb_to_pl(self._conn, ctx.query))
         except Exception as e:
             return f"fail to run sql: '{ctx}': {e}"
 
         return ""
+
+    def _eval_select_ctx(self, ctx):
+        table_name = ctx.table
+        lookup_tables = get_lookup_tables(self._conn)
+        duckdb_tables = get_tables(self._conn)
+
+        # add internal tables here for easier dev time
+        duckdb_tables.append("duckdb_tables")
+
+        substitute_mapping = dict(zip(duckdb_tables, duckdb_tables))
+
+        if table_name in lookup_tables:
+            return f"'{table_name}' is a lookup table, you cannot use it in FROM."
+
+        if table_name not in duckdb_tables:
+            return f"'{table_name}' doesn't exist"
+
+        duckdb_sql = substitute_sql_template(self._conn, ctx, substitute_mapping)
+        return str(duckdb_to_pl(self._conn, duckdb_sql))
 
 
 if __name__ == "__main__":
@@ -230,7 +233,6 @@ if __name__ == "__main__":
     scheduler = TrioScheduler()
     task_manager = TaskManager(conn)
     client_manager = ClientManager(conn)
-    executors = {}
     runner = App(conn, properties_schema)
 
     async def main():
