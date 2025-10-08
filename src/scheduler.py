@@ -2,8 +2,11 @@ import sys
 import trio
 
 from apscheduler.schedulers.base import BaseScheduler
+from apscheduler.triggers.base import BaseTrigger
 from apscheduler.util import maybe_ref
 from services import Service
+from channel import Channel
+from typing import Callable
 
 
 from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
@@ -107,6 +110,10 @@ class TrioScheduler(Service, BaseScheduler):
         BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token: trio.lowlevel.TrioToken | None = None
         self._is_shutting_down = False
+        self._executable_receiver = None
+
+    def add_executable_channel(self, channel: Channel[Callable | tuple[Callable, BaseTrigger]]):
+        self._executable_receiver = channel
 
     async def on_start(self) -> None:
         if not self._nursery or not self._trio_token:
@@ -116,6 +123,12 @@ class TrioScheduler(Service, BaseScheduler):
             )
 
         BaseScheduler.start(self, paused=False)
+        async for job in self._executable_receiver:
+            if isinstance(job, tuple):
+                func, trigger = job
+                _ = self.add_job(func=func, trigger=trigger)
+            else:
+                _ = self.add_job(func=job)
 
     async def on_stop(self) -> None:
         self._stop_timer()

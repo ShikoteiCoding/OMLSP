@@ -231,7 +231,7 @@ if __name__ == "__main__":
         properties_schema = json.loads(fo.read().decode("utf-8"))
     conn: DuckDBPyConnection = connect(database=":memory:")
     scheduler = TrioScheduler()
-    task_manager = TaskManager(conn, scheduler)
+    task_manager = TaskManager(conn)
     client_manager = ClientManager(conn)
     runner = App(conn, properties_schema)
 
