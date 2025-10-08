@@ -107,27 +107,27 @@ class ServiceCallbacks:
 
     async def on_first_start(self) -> None:
         """Service started for the first time in this process."""
-        ...
+        pass
 
     async def on_start(self) -> None:
         """Service is starting."""
-        ...
+        pass
 
     async def on_started(self) -> None:
         """Service has started."""
-        ...
+        pass
 
     async def on_stop(self) -> None:
         """Service is being stopped/restarted."""
-        ...
+        pass
 
     async def on_shutdown(self) -> None:
         """Service is being stopped/restarted."""
-        ...
+        pass
 
     async def on_restart(self) -> None:
         """Service is being restarted."""
-        ...
+        pass
 
 
 class Service(ServiceCallbacks):
