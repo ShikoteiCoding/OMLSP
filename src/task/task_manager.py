@@ -59,12 +59,14 @@ class TaskManager(Service):
     _tasks_to_deploy: Channel[TaskContext]
 
     #: Outgoing channel to send jobs to scheduler
-    _scheduled_executables: Channel[Callable | tuple[Callable, object]]
+    _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
 
     def __init__(self, conn: DuckDBPyConnection):
         super().__init__(name="TaskManager")
         self.conn = conn
-        self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](100)
+        self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](
+            100
+        )
 
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
