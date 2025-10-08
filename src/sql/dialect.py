@@ -49,7 +49,7 @@ class OmlspDialect(Dialect):
         def _parse_show_omlsp(self, this: str) -> exp.Show:
             # Example:
             # SHOW TABLES
-            
+
             return self.expression(exp.Show, this=this)
 
         def _parse_create(self):
