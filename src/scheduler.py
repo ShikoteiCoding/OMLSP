@@ -104,15 +104,17 @@ class TrioScheduler(Service, BaseScheduler):
 
     _nursery: trio.Nursery | None = None
     _timer_cancel_scope: trio.CancelScope | None = None
+    _executable_receiver: Channel[Callable | tuple[Callable, BaseTrigger]]
 
     def __init__(self, *args, **kwargs):
         Service.__init__(self, name="TrioScheduler")
         BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token: trio.lowlevel.TrioToken | None = None
         self._is_shutting_down = False
-        self._executable_receiver = None
 
-    def add_executable_channel(self, channel: Channel[Callable | tuple[Callable, BaseTrigger]]):
+    def add_executable_channel(
+        self, channel: Channel[Callable | tuple[Callable, BaseTrigger]]
+    ):
         self._executable_receiver = channel
 
     async def on_start(self) -> None:
