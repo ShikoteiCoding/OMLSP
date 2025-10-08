@@ -27,7 +27,7 @@ async def main():
 
     conn: DuckDBPyConnection = connect(database=":memory:")
     scheduler = TrioScheduler()
-    task_manager = TaskManager(conn, scheduler)
+    task_manager = TaskManager(conn)
     client_manager = ClientManager(conn)
     app = App(conn, PROPERTIES_SCHEMA)
 
@@ -46,6 +46,7 @@ async def main():
         token = trio.lowlevel.current_trio_token()
         scheduler._configure({"_nursery": nursery, "_trio_token": token})
         task_manager.add_dependency(scheduler)
+        task_manager.connect_scheduler(scheduler)
 
         nursery.start_soon(app.start, nursery)
         for sql in iter_sql_statements(sql_filepath):
