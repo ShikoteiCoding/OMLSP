@@ -2,6 +2,7 @@ import sys
 import trio
 
 from apscheduler.schedulers.base import BaseScheduler
+from apscheduler.triggers.base import BaseTrigger
 from apscheduler.util import maybe_ref
 from services import Service
 from channel import Channel
@@ -109,10 +110,10 @@ class TrioScheduler(Service, BaseScheduler):
         BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token: trio.lowlevel.TrioToken | None = None
         self._is_shutting_down = False
-        self._job_receiver = None
+        self._executable_receiver = None
 
-    def add_job_channel(self, channel: Channel[Callable | tuple[Callable, object]]):
-        self._job_receiver = channel
+    def add_executable_channel(self, channel: Channel[Callable | tuple[Callable, BaseTrigger]]):
+        self._executable_receiver = channel
 
     async def on_start(self) -> None:
         if not self._nursery or not self._trio_token:
@@ -122,7 +123,7 @@ class TrioScheduler(Service, BaseScheduler):
             )
 
         BaseScheduler.start(self, paused=False)
-        async for job in self._job_receiver:
+        async for job in self._executable_receiver:
             if isinstance(job, tuple):
                 func, trigger = job
                 _ = self.add_job(func=func, trigger=trigger)

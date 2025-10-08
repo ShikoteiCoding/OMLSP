@@ -3,6 +3,7 @@ Task Manager managing registration and running of Tasks.
 """
 
 from duckdb import DuckDBPyConnection
+from apscheduler.triggers.base import BaseTrigger
 
 from channel import Channel
 from scheduler import TrioScheduler
@@ -59,12 +60,12 @@ class TaskManager(Service):
     _tasks_to_deploy: Channel[TaskContext]
 
     #: Outgoing channel to send jobs to scheduler
-    _scheduled_jobs: Channel[Callable | tuple[Callable, object]]
+    _scheduled_executables: Channel[Callable | tuple[Callable, object]]
 
     def __init__(self, conn: DuckDBPyConnection):
         super().__init__(name="TaskManager")
         self.conn = conn
-        self._scheduled_jobs = Channel[Callable | tuple[Callable, object]](100)
+        self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](100)
 
     def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
@@ -74,11 +75,11 @@ class TaskManager(Service):
         Connect TaskManager and Scheduler through one Channel.
 
         Channel:
-            - Job Channel
+            - Executable Channel
 
         See channel.py for Channel implementation.
         """
-        scheduler.add_job_channel(self._scheduled_jobs)
+        scheduler.add_executable_channel(self._scheduled_executables)
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
@@ -99,7 +100,7 @@ class TaskManager(Service):
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(build_sink_executable(ctx))
-            await self._scheduled_jobs.send(task.run)
+            await self._scheduled_executables.send(task.run)
             logger.success(f"[TaskManager] registered sink task '{task_id}'")
 
         elif isinstance(ctx, ScheduledTaskContext):
@@ -109,7 +110,7 @@ class TaskManager(Service):
             self._sources[task_id] = task.register(
                 build_scheduled_source_executable(ctx)
             )
-            await self._scheduled_jobs.send((task.run, ctx.trigger))
+            await self._scheduled_executables.send((task.run, ctx.trigger))
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"
             )
@@ -128,7 +129,7 @@ class TaskManager(Service):
             self._sources[task_id] = task.register(
                 build_continuous_source_executable(ctx, self.conn)
             )
-            await self._scheduled_jobs.send((task.run))
+            await self._scheduled_executables.send((task.run))
             logger.success(
                 f"[TaskManager] registered continuous source task '{task_id}'"
             )
@@ -150,5 +151,5 @@ class TaskManager(Service):
             self._task_id_to_task[task_id] = task.register(
                 build_transform_executable(ctx, is_materialized)
             )
-            await self._scheduled_jobs.send(task.run)
+            await self._scheduled_executables.send(task.run)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")
