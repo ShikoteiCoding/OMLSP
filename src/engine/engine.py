@@ -31,6 +31,7 @@ from metadata import (
     create_macro_definition,
     get_batch_id_from_table_metadata,
     get_lookup_tables,
+    get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
     get_batch_id_from_view_metadata,
@@ -361,23 +362,27 @@ def build_substitute_macro_definition(
     return macro_definition
 
 
-def pre_hook_select_statements(
+def substitute_sql_template(
     conn: DuckDBPyConnection,
     ctx: SelectContext,
-    tables: list[str],
+    substitute_mapping: dict[str, str],
 ) -> str:
-    """Substitutes select statement query with lookup references to macro references."""
+    """
+    Substitutes select statement query with lookup references to macro references.
+
+    TODO: should it be moved somewhere better ? This function is using ctx.
+    Too much coupling.
+    """
     original_query = ctx.query
     join_tables = ctx.joins
     lookup_tables = get_lookup_tables(conn)
 
     # join query
-    substitute_mapping = dict(zip(tables, tables))
     from_table = ctx.table
     from_table_or_alias = ctx.alias
 
-    # for table in join and in lookup,
-    # build the placeholder template mapping
+    # for table in join and in lookup
+    # build the substitute mapping
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
             substitute_mapping[join_table] = build_substitute_macro_definition(
@@ -466,16 +471,27 @@ async def kafka_sink(
 
 
 def build_transform_executable(
-    ctx: TransformTaskContext, is_materialized: bool
+    ctx: TransformTaskContext, conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
 ]:
+    from_table = ctx.upstreams[0]
+    duckdb_tables = get_tables(conn)
+    substitute_mapping = {}
+
+    for duckdb_table in duckdb_tables:
+        val = duckdb_table if duckdb_table != from_table else "df"
+        substitute_mapping[duckdb_table] = val
+
+    transform_sql = substitute_sql_template(conn, ctx.transform_ctx, substitute_mapping)
+
     return partial(
         transform_executable,
         name=ctx.name,
-        first_upstream=ctx.upstreams[0],  # TODO add joins
-        transform_query=ctx.subquery,
-        is_materialized=is_materialized,
+        first_upstream=from_table,  # TODO add joins
+        transform_query=transform_sql,
+        is_materialized=ctx.materialized,
+        # force eager to enforce read over write consistency
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
     )
 
@@ -490,8 +506,18 @@ async def transform_executable(
     is_materialized: bool,
     pl_ctx: pl.SQLContext,
 ) -> pl.DataFrame:
-    pl_ctx.register(first_upstream, df)
-    transform_df = pl_ctx.execute(transform_query)
+    # TODO: migrate away from duckdb
+    # pl_ctx.register(first_upstream, df)
+    # transform_df = pl_ctx.execute(transform_query)
+
+    # This is duckdb version just to fix the lookup in views / materialized views
+    # In case we stuck to duckdb macro, i don't have a better solution than that
+    # We could explore multi stage template substitution for macros like
+    # ohlc_macro("all_tickers", ALT.symbol)
+    # but then it will require us to save the macro definition in metadata
+    # which will make it complicated for Select queries
+    transform_query = transform_query.replace(f'"{first_upstream}"', "df")
+    transform_df = conn.execute(transform_query).pl()
 
     batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
     epoch = int(time.time() * 1_000)
