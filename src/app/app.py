@@ -233,7 +233,6 @@ if __name__ == "__main__":
     scheduler = TrioScheduler()
     task_manager = TaskManager(conn, scheduler)
     client_manager = ClientManager(conn)
-    executors = {}
     runner = App(conn, properties_schema)
 
     async def main():

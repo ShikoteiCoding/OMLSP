@@ -53,8 +53,8 @@ class CreateHTTPLookupTableContext:
 class CreateViewContext:
     name: str
     upstreams: list[str]
-    subquery: str
     query: str
+
     # Transform is ultimately just a select applied
     # on upcoming data
     transform_ctx: SelectContext
@@ -67,8 +67,8 @@ class CreateViewContext:
 class CreateMaterializedViewContext:
     name: str
     upstreams: list[str]
-    subquery: str
     query: str
+
     # Transform is ultimately just a select applied
     # on upcoming data
     transform_ctx: SelectContext

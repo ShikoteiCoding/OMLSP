@@ -295,7 +295,6 @@ def build_create_view_context(
                 return CreateMaterializedViewContext(
                     name=name,
                     upstreams=upstreams,
-                    subquery=ctx.query,
                     query=query,
                     transform_ctx=ctx,
                 )
@@ -303,7 +302,6 @@ def build_create_view_context(
     return CreateViewContext(
         name=name,
         upstreams=upstreams,
-        subquery=ctx.query,
         query=query,
         transform_ctx=ctx,
     )

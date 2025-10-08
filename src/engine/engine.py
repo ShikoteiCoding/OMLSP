@@ -488,7 +488,7 @@ def build_transform_executable(
     return partial(
         transform_executable,
         name=ctx.name,
-        first_upstream=ctx.upstreams[0],  # TODO add joins
+        first_upstream=from_table,  # TODO add joins
         transform_query=transform_sql,
         is_materialized=ctx.materialized,
         # force eager to enforce read over write consistency
