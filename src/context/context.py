@@ -16,6 +16,7 @@ class CreateHTTPTableContext:
     properties: dict[str, Any]
     query: str
     column_types: dict[str, str]
+    generated_columns: dict[str, str]
     trigger: CronTrigger
     lookup: bool = False
 
@@ -149,7 +150,7 @@ EvaluableContext = Union[
     ShowContext,
 ]
 
-OnStartContext = Union[CreateWSTableContext]
+OnStartContext = CreateWSTableContext
 
 # Everything except Invalid and CreateSecret
 QueryContext = Union[

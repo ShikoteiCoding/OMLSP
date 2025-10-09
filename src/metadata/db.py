@@ -28,7 +28,7 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
         fields STRING[]
     );
     """
-    conn.sql(macro_table_to_def)
+    conn.execute(macro_table_to_def)
 
     table_metadata = f"""
     CREATE TABLE {METADATA_TABLE_TABLE_NAME} (
@@ -37,7 +37,7 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
         lookup BOOL
     )
     """
-    conn.sql(table_metadata)
+    conn.execute(table_metadata)
 
     view_metadata = f"""
     CREATE TABLE {METADATA_VIEW_TABLE_NAME} (
@@ -45,7 +45,7 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
         last_batch_id INTEGER
     )
     """
-    conn.sql(view_metadata)
+    conn.execute(view_metadata)
 
     view_materialized_metadata = f"""
     CREATE TABLE {METADATA_VIEW_MATERIALIZED_TABLE_NAME} (
@@ -53,14 +53,14 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
         last_batch_id INTEGER
     )
     """
-    conn.sql(view_materialized_metadata)
+    conn.execute(view_materialized_metadata)
 
     sink_metadata = f"""
     CREATE TABLE {METADATA_SINK_TABLE_NAME} (
         sink_name STRING,
     )
     """
-    conn.sql(sink_metadata)
+    conn.execute(sink_metadata)
 
     secret_metadata = f"""
     CREATE TABLE {METADATA_SECRET_TABLE_NAME} (
@@ -68,7 +68,7 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
         secret_value STRING
     )
     """
-    conn.sql(secret_metadata)
+    conn.execute(secret_metadata)
 
 
 def insert_table_metadata(
@@ -79,7 +79,7 @@ def insert_table_metadata(
     INSERT INTO {METADATA_TABLE_TABLE_NAME} (table_name, last_batch_id, lookup)
     VALUES ('{table_name}', 0, {context.lookup});
     """
-    conn.sql(insert)
+    conn.execute(insert)
 
 
 def insert_view_metadata(conn: DuckDBPyConnection, context: CreateViewContext) -> None:
@@ -88,7 +88,7 @@ def insert_view_metadata(conn: DuckDBPyConnection, context: CreateViewContext) -
     INSERT INTO {METADATA_VIEW_TABLE_NAME} (view_name, last_batch_id)
     VALUES ('{view_name}', 0);
     """
-    conn.sql(insert)
+    conn.execute(insert)
 
 
 def insert_view_materialized_metadata(
@@ -99,7 +99,7 @@ def insert_view_materialized_metadata(
     INSERT INTO {METADATA_VIEW_MATERIALIZED_TABLE_NAME} (view_materialized_name, last_batch_id)
     VALUES ('{view_materialized_name}', 0);
     """
-    conn.sql(insert)
+    conn.execute(insert)
 
 
 def insert_sink_metadata(conn: DuckDBPyConnection, context: CreateSinkContext) -> None:
@@ -108,7 +108,7 @@ def insert_sink_metadata(conn: DuckDBPyConnection, context: CreateSinkContext) -
     INSERT INTO {METADATA_SINK_TABLE_NAME} (sink_name)
     VALUES ('{sink_name}');
     """
-    conn.sql(insert)
+    conn.execute(insert)
 
 
 def insert_secret_metadata(
@@ -120,7 +120,7 @@ def insert_secret_metadata(
     INSERT INTO {METADATA_SECRET_TABLE_NAME} (secret_name, secret_value)
     VALUES ('{secret_name}', '{secret_value}');
     """
-    conn.sql(insert)
+    conn.execute(insert)
 
 
 def get_secret_value_by_name(conn: DuckDBPyConnection, secret_name: str) -> str:
@@ -129,7 +129,7 @@ def get_secret_value_by_name(conn: DuckDBPyConnection, secret_name: str) -> str:
     FROM {METADATA_SECRET_TABLE_NAME}
     WHERE secret_name = '{secret_name}';
     """
-    res: list[tuple] = conn.sql(query).fetchall()
+    res: list[tuple] = conn.execute(query).fetchall()
 
     return res[0][0]
 
@@ -144,7 +144,7 @@ def get_macro_definition_by_name(
     FROM {METADATA_MACRO_TABLE_NAME}
     WHERE macro_name = '{macro_name}';
     """
-    res = conn.sql(query).fetchall()
+    res = conn.execute(query).fetchall()
 
     assert len(res) > 0, (
         f"no result for macro definition {macro_name}, has it been registered ?"
@@ -160,14 +160,14 @@ def create_macro_definition(
     INSERT INTO {METADATA_MACRO_TABLE_NAME} (macro_name, fields)
     VALUES ('{macro_name}', {fields});
     """
-    conn.sql(query)
+    conn.execute(query)
 
 
 def get_lookup_tables(conn: DuckDBPyConnection) -> list[str]:
     query = f"""
         SELECT table_name FROM {METADATA_TABLE_TABLE_NAME} WHERE lookup IS TRUE;
         """
-    temp_tables = [str(table_name[0]) for table_name in conn.sql(query).fetchall()]
+    temp_tables = [str(table_name[0]) for table_name in conn.execute(query).fetchall()]
 
     return temp_tables
 
@@ -176,7 +176,7 @@ def get_tables(conn: DuckDBPyConnection) -> list[str]:
     query = f"""
         SELECT table_name FROM {METADATA_TABLE_TABLE_NAME} WHERE lookup IS FALSE;
         """
-    tables = [str(table_name[0]) for table_name in conn.sql(query).fetchall()]
+    tables = [str(table_name[0]) for table_name in conn.execute(query).fetchall()]
 
     return tables
 
@@ -238,7 +238,7 @@ def get_batch_id_from_table_metadata(conn: DuckDBPyConnection, table_name: str) 
         FROM {METADATA_TABLE_TABLE_NAME}
         WHERE table_name = '{table_name}';
     """
-    res = conn.sql(query).fetchall()
+    res = conn.execute(query).fetchall()
     return res[0][1]
 
 
@@ -262,14 +262,14 @@ def get_batch_id_from_view_metadata(
             FROM {METADATA_VIEW_MATERIALIZED_TABLE_NAME}
             WHERE view_materialized_name = '{view_name}';
         """
-        res = conn.sql(query).fetchall()
+        res = conn.execute(query).fetchall()
     else:
         query = f"""
             SELECT *
             FROM {METADATA_VIEW_TABLE_NAME}
             WHERE view_name = '{view_name}';
         """
-        res = conn.sql(query).fetchall()
+        res = conn.execute(query).fetchall()
     return res[0][1]
 
 

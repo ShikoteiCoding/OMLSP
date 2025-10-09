@@ -3,7 +3,9 @@ CREATE TABLE all_tickers (
     symbol STRING,
     symbolName STRING,
     buy FLOAT,
-    sell FLOAT
+    sell FLOAT,
+    end_interval_time STRING AS (symbol),
+    start_interval_time STRING AS (symbol)
 )
 WITH (
     connector = 'http',

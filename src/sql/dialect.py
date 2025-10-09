@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-from sqlglot import exp, parse_one, Tokenizer, Dialect, TokenType, Parser, Generator
+from sqlglot import exp, parse_one, parser, Dialect, TokenType, generator, tokens
 
 
 def _show_parser(
@@ -13,11 +13,15 @@ def _show_parser(
     return _parse
 
 
+def func_sql(self, expression: exp.Func) -> str:
+    return expression.name
+
+
 class OmlspDialect(Dialect):
-    class Tokenizer(Tokenizer):
+    class Tokenizer(tokens.Tokenizer):
         KEYWORDS = {
             # TODO: ADD SOURCE HERE
-            **Tokenizer.KEYWORDS,
+            **tokens.Tokenizer.KEYWORDS,
             "SINK": TokenType.SINK,
             "WITH": TokenType.WITH,
             "SHOW": TokenType.SHOW,
@@ -26,9 +30,13 @@ class OmlspDialect(Dialect):
             "SECRET": TokenType.COMMAND,
         }
 
-        COMMANDS = Tokenizer.COMMANDS - {TokenType.SHOW}
+        COMMANDS = tokens.Tokenizer.COMMANDS - {TokenType.SHOW}
 
-    class Parser(Parser):
+    class Parser(parser.Parser):
+        FUNCTIONS = {
+            **parser.Parser.FUNCTIONS,
+            "START_TIME": lambda args: exp.Func(this="START_TIME"),
+        }
         SHOW_PARSERS = {
             "TABLES": _show_parser("TABLES"),
             "VIEWS": _show_parser("VIEWS"),
@@ -38,7 +46,7 @@ class OmlspDialect(Dialect):
         }
 
         STATEMENT_PARSERS = {
-            **Parser.STATEMENT_PARSERS,
+            **parser.Parser.STATEMENT_PARSERS,
             TokenType.SHOW: lambda self: self._parse_show(),
         }
 
@@ -51,6 +59,16 @@ class OmlspDialect(Dialect):
             # SHOW TABLES
 
             return self.expression(exp.Show, this=this)
+
+        def _parse_generated_as_identity(
+            self,
+        ) -> (
+            exp.GeneratedAsIdentityColumnConstraint
+            | exp.ComputedColumnConstraint
+            | exp.GeneratedAsRowColumnConstraint
+        ):
+            this = super()._parse_generated_as_identity()
+            return this
 
         def _parse_create(self):
             # Example:
@@ -94,13 +112,39 @@ class OmlspDialect(Dialect):
             # Fallback to the default Postgres CREATE behavior
             return super()._parse_create()
 
-    class Generator(Generator):
+    class Generator(generator.Generator):
+        TRANSFORMS = {
+            **generator.Generator.TRANSFORMS,
+            exp.Func: lambda self, e: self.func(
+                "START_TIME"
+                # TODO: check, but we might be able to attach function
+                # here so we actually get it from SQLGlot directly
+            ),
+        }
+
         def show_sql(self, expression: exp.Show) -> str:
             return f"SHOW {expression.name}"
 
 
 if __name__ == "__main__":
-    stmt = "SHOW TABLES;"
+    stmt = """
+    CREATE TABLE all_tickers (
+        symbol STRING,
+        symbolName STRING,
+        buy FLOAT,
+        sell FLOAT,
+        end_interval_time TIMESTAMP AS (start_time()),
+        start_interval_time TIMESTAMP AS (end_time())
+    )
+    WITH (
+        connector = 'http',
+        url = 'https://api.kucoin.com/api/v1/market/allTickers',
+        method = 'GET',
+        schedule = '*/1 * * * *',
+        jq = '.data.ticker[:2][] | {symbol, symbolName, buy, sell}',
+        'headers.Content-Type' = 'application/json'
+    );
+    """
     tokens = list(OmlspDialect.Tokenizer().tokenize(stmt))
     for t in tokens:
         print(t.token_type, t.text)

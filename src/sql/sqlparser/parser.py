@@ -34,6 +34,13 @@ from metadata.db import (
 from sql.dialect import OmlspDialect
 
 
+def get_start_time():
+    pass
+
+
+GENERATED_COLUMN_DISPATCH = {"START_TIME": lambda: get_start_time}
+
+
 class CreateKind(StrEnum):
     SINK = "SINK"
     TABLE = "TABLE"
@@ -67,24 +74,64 @@ def rename_column_transform(node, old_name, new_name):
 
 def parse_table_schema(
     table: exp.Schema,
-) -> tuple[exp.Schema, str, list[str], dict[str, str]]:
+) -> tuple[exp.Schema, str, list[str], dict[str, str], dict[str, str]]:
     """Parse table schema into name and columns"""
-    assert isinstance(table, (exp.Schema,)), (
-        f"Expression of type {type(table)} is not accepted"
-    )
     table_name = get_name(table)
     table = table.copy()
 
     column_types: dict[str, str] = {}
     columns = []
+    generated_columns: dict[str, str] = {}
     for col in table.expressions:
+        # Parse Columns name + type (and optionally generated columns)
         if isinstance(col, exp.ColumnDef):
             col_name = str(col.name)
             col_type = col.args.get("kind")  # data type
             column_types[col_name] = str(col_type).upper()
-            columns.append(col_name)
 
-    return table, table_name, columns, column_types
+            # Parse Generated columns referred as
+            # "constraints" in sqlglot
+            if col.constraints:
+                # Example with function:
+                # [
+                #     ColumnConstraint(
+                #         kind=ComputedColumnConstraint(
+                #             this=Paren(
+                #                 this=Func(this=START_TIME)
+                #             )
+                #         )
+                #     )
+                # ]
+
+                # Example with column expression
+                # [
+                #   ColumnConstraint(
+                #       kind=ComputedColumnConstraint(
+                #           this=Paren(
+                #               this=Column(
+                #                       this=Identifier(this=symbol, quoted=False)
+                #               )
+                #           )
+                #       )
+                #   )
+                # ]
+
+                # We only support generated columns now as column
+                # constrants, so we are fine getting first argument
+                # `kind` refers to after dtype 'TEXT AS ...'
+                # `this` refers to after alias 'AS ...'
+                first_constraint = col.constraints[0].kind.this.this
+                if isinstance(first_constraint, exp.Func):
+                    value = GENERATED_COLUMN_DISPATCH[first_constraint.name]
+                else:
+                    # TODO: make a function directly (expr ?)
+                    value = first_constraint.sql(OmlspDialect)
+                generated_columns[col_name] = value
+
+                # Deleting constraints the shady way
+                col.set("constraints", None)
+
+    return table, table_name, columns, column_types, generated_columns
 
 
 def parse_lookup_table_schema(
@@ -163,8 +210,8 @@ def build_create_http_table_context(
     statement = statement.copy()
 
     # parse table schema and update exp.Schema
-    updated_table_statement, table_name, _, column_types = parse_table_schema(
-        statement.this
+    updated_table_statement, table_name, _, column_types, generated_columns = (
+        parse_table_schema(statement.this)
     )
 
     # overwrite modified table statement
@@ -183,6 +230,7 @@ def build_create_http_table_context(
         properties=properties,
         query=clean_query,
         column_types=column_types,
+        generated_columns=generated_columns,
         trigger=trigger,
     )
 
