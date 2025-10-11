@@ -16,7 +16,7 @@ class CreateHTTPTableContext:
     properties: dict[str, Any]
     query: str
     column_types: dict[str, str]
-    generated_columns: dict[str, str | Callable]
+    generated_columns: dict[str, Callable]
     trigger: CronTrigger
     lookup: bool = False
 

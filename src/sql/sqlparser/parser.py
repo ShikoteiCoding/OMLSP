@@ -183,14 +183,14 @@ def rename_column_transform(node, old_name, new_name):
 
 def parse_table_schema(
     table: exp.Schema,
-) -> tuple[exp.Schema, str, list[str], dict[str, str], dict[str, str | Callable]]:
+) -> tuple[exp.Schema, str, list[str], dict[str, str], dict[str, Callable]]:
     """Parse table schema expression into required metadata"""
     table_name = get_name(table)
     table = table.copy()
 
     column_types: dict[str, str] = {}
     columns = []
-    generated_columns: dict[str, str | Callable] = {}
+    generated_columns: dict[str, Callable] = {}
     for col in table.expressions:
         # Parse Columns name + type (and optionally generated columns)
         if isinstance(col, exp.ColumnDef):

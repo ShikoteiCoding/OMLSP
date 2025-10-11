@@ -172,7 +172,7 @@ def build_scalar_udf(
 def records_to_polars(
     records: list[dict[str, Any]],
     output_dtypes: dict[str, str],
-    dynamic_columns: dict[str, str | Callable[[dict[str, Any]], pl.Expr]],
+    dynamic_columns: dict[str, Callable[[dict[str, Any]], pl.Expr]],
     func_context: dict[str, Any],
 ) -> pl.DataFrame:
     df = pl.DataFrame(records)
@@ -185,17 +185,11 @@ def records_to_polars(
 
         # Generated columns are generated here
         if output_col in dynamic_columns:
-            dynamic_expr = dynamic_columns[output_col]
-            # Currentlu support very naive generated column operations
-            # Which are just "column name"
-            if isinstance(dynamic_expr, str):
-                dynamic_columns_operations.append(
-                    pl.col(dynamic_expr).cast(target_dtype).alias(output_col)
-                )
-            else:
-                dynamic_columns_operations.append(
-                    dynamic_expr(func_context).cast(target_dtype).alias(output_col)
-                )
+            dynamic_columns_operations.append(
+                dynamic_columns[output_col](func_context)
+                .cast(target_dtype)
+                .alias(output_col)
+            )
         # Static columns simply get a cast to match output df return types
         else:
             static_columns_operations.append(pl.col(output_col).cast(target_dtype))
@@ -212,14 +206,14 @@ async def http_source_executable(
     conn: DuckDBPyConnection,
     table_name: str,
     column_types: dict[str, str],
-    dynamic_columns: dict[str, str | Callable],
+    dynamic_columns: dict[str, Callable],
     http_requester: Callable,
 ) -> pl.DataFrame:
     # Create generated column context (to be applied upon at exec time)
     # Some SQL functions in generated columns might use or not use this context
     # This context is dynamic by essence i.e is created at exec time
     func_context = {
-        # Start time is a context for START_TIME() omlsp function
+        # Start time is a context for TRIGGER_TIME() and TRIGGER_TIME_EPOCH() functions
         "trigger_time": datetime.now(timezone.utc).replace(microsecond=0)
     }
 

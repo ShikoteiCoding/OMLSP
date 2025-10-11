@@ -192,7 +192,11 @@ def get_views(conn: DuckDBPyConnection) -> list[str]:
     return views
 
 
-def get_caches(conn: DuckDBPyConnection) -> list[str]:
+def get_duckdb_tables(conn: DuckDBPyConnection) -> list[str]:
+    """
+    Get all duckdb table names, this is because both backend and cache are currently
+    relying on duckdb tables. (i.e views / mviews are in fact ... tables !)
+    """
     query = """
     SELECT table_name FROM duckdb_tables;
     """
