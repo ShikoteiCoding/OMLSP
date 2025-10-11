@@ -41,7 +41,6 @@ def parse_http_properties(
     # Build "dict" kwargs dynamically
     # TODO: improve with defaultdict(dict)
     for key, value in properties.items():
-        key = str(key)
         # Handle headers, will always be a dict
         if key.startswith("headers."):
             subkey = key.split(".")[1]
