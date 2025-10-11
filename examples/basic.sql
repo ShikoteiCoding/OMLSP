@@ -14,6 +14,46 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
+CREATE TABLE paginated_tickers (
+    symbol STRING,
+    name STRING,
+    price_usd FLOAT,
+)
+WITH (
+    connector = 'http',
+    url = 'https://api.coinlore.net/api/tickers/',
+    method = 'GET',
+    'pagination.type' = 'limit_offset',
+    'pagination.limit_param' = 'limit',
+    'pagination.page_param' = 'start',
+    'pagination.limit' = '5',
+    'pagination.max' = '1000',
+    schedule = '*/1 * * * *',
+    jq = '.data[] | {symbol, name, price_usd}',
+    'headers.Content-Type' = 'application/json'
+);
+
+CREATE TABLE paginated_tickers_2 (
+    a BIGINT,
+    p FLOAT,
+    T BIGINT,
+)
+WITH (
+    connector = 'http',
+    url = 'https://api.binance.com/api/v3/aggTrades?symbol=BTCUSDT', 
+    method = 'GET',
+    'pagination.type' = 'cursor',
+    'pagination.cursor_id' = 'a',
+    'pagination.cursor_param' = 'fromId',
+    'pagination.start_cursor' = '0',
+    'pagination.limit' = '5',
+    'pagination.max' = '1000',
+    schedule = '*/1 * * * *',
+    jq = '.[] | {a, p, T}',
+    'headers.Content-Type' = 'application/json'
+);
+
+
 -- Get ohlc data provided symbols
 -- TODO: handle dynamic arguments
 CREATE TEMPORARY TABLE ohlc (
