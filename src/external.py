@@ -151,7 +151,7 @@ def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]
     return res
 
 
-def build_paginated_url(base_url, params, sep="?"):
+def build_paginated_url(base_url: str, params: dict[str, Any], sep: str="?") -> str:
     if sep in base_url:
         sep = "&"
     q = "&".join(f"{k}={v}" for k, v in params.items())
