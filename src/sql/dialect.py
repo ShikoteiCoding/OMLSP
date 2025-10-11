@@ -3,6 +3,19 @@ from __future__ import annotations
 from typing import Any, Callable
 from sqlglot import exp, parse_one, parser, Dialect, TokenType, generator, tokens
 
+from sql.functions import OMLSP_FUNCTIONS
+
+
+def generate_functions_parser() -> dict[str, Callable]:
+    """
+    Dynamically build parser.Parser from mod:`sql.function`
+    """
+    parser_functions = {}
+    for func_name in OMLSP_FUNCTIONS:
+        parser_functions[func_name] = lambda args: exp.Func(this=func_name)
+
+    return parser_functions
+
 
 def _show_parser(
     *args: Any, **kwargs: Any
@@ -11,10 +24,6 @@ def _show_parser(
         return self._parse_show_omlsp(*args, **kwargs)
 
     return _parse
-
-
-def func_sql(self, expression: exp.Func) -> str:
-    return expression.name
 
 
 class OmlspDialect(Dialect):
@@ -35,8 +44,9 @@ class OmlspDialect(Dialect):
     class Parser(parser.Parser):
         FUNCTIONS = {
             **parser.Parser.FUNCTIONS,
-            "START_TIME": lambda args: exp.Func(this="START_TIME"),
+            **generate_functions_parser(),
         }
+
         SHOW_PARSERS = {
             "TABLES": _show_parser("TABLES"),
             "VIEWS": _show_parser("VIEWS"),
@@ -115,12 +125,11 @@ class OmlspDialect(Dialect):
     class Generator(generator.Generator):
         TRANSFORMS = {
             **generator.Generator.TRANSFORMS,
-            exp.Func: lambda self, e: self.func(
-                "START_TIME"
-                # TODO: check, but we might be able to attach function
-                # here so we actually get it from SQLGlot directly
-            ),
+            exp.Func: lambda self, e: self.func_sql,
         }
+
+        def func_sql(self, expression: exp.Func) -> str:
+            return expression.name
 
         def show_sql(self, expression: exp.Show) -> str:
             return f"SHOW {expression.name}"

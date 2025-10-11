@@ -49,7 +49,7 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
 
     view_materialized_metadata = f"""
     CREATE TABLE {METADATA_VIEW_MATERIALIZED_TABLE_NAME} (
-        view_materialized_name STRING,
+        view_name STRING,
         last_batch_id INTEGER
     )
     """
@@ -94,10 +94,10 @@ def insert_view_metadata(conn: DuckDBPyConnection, context: CreateViewContext) -
 def insert_view_materialized_metadata(
     conn: DuckDBPyConnection, context: CreateMaterializedViewContext
 ) -> None:
-    view_materialized_name = context.name
+    view_name = context.name
     insert = f"""
-    INSERT INTO {METADATA_VIEW_MATERIALIZED_TABLE_NAME} (view_materialized_name, last_batch_id)
-    VALUES ('{view_materialized_name}', 0);
+    INSERT INTO {METADATA_VIEW_MATERIALIZED_TABLE_NAME} (view_name, last_batch_id)
+    VALUES ('{view_name}', 0);
     """
     conn.execute(insert)
 
@@ -176,6 +176,26 @@ def get_tables(conn: DuckDBPyConnection) -> list[str]:
     query = f"""
         SELECT table_name FROM {METADATA_TABLE_TABLE_NAME} WHERE lookup IS FALSE;
         """
+    tables = [str(table_name[0]) for table_name in conn.execute(query).fetchall()]
+
+    return tables
+
+
+def get_views(conn: DuckDBPyConnection) -> list[str]:
+    query = f"""
+    SELECT view_name FROM {METADATA_VIEW_TABLE_NAME}
+    UNION ALL
+    SELECT view_name FROM {METADATA_VIEW_MATERIALIZED_TABLE_NAME}
+    """
+    views = [str(table_name[0]) for table_name in conn.execute(query).fetchall()]
+
+    return views
+
+
+def get_caches(conn: DuckDBPyConnection) -> list[str]:
+    query = """
+    SELECT table_name FROM duckdb_tables;
+    """
     tables = [str(table_name[0]) for table_name in conn.execute(query).fetchall()]
 
     return tables
@@ -260,7 +280,7 @@ def get_batch_id_from_view_metadata(
         query = f"""
             SELECT *
             FROM {METADATA_VIEW_MATERIALIZED_TABLE_NAME}
-            WHERE view_materialized_name = '{view_name}';
+            WHERE view_name = '{view_name}';
         """
         res = conn.execute(query).fetchall()
     else:
@@ -280,7 +300,7 @@ def update_batch_id_in_view_metadata(
         query = f"""
         UPDATE {METADATA_VIEW_MATERIALIZED_TABLE_NAME}
         SET last_batch_id={batch_id}
-        WHERE view_materialized_name = '{view_name}';
+        WHERE view_name = '{view_name}';
         """
     else:
         query = f"""

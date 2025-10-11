@@ -18,8 +18,6 @@ from loguru import logger
 
 from context.context import (
     CreateHTTPLookupTableContext,
-    CreateHTTPTableContext,
-    CreateWSTableContext,
     SelectContext,
     ScheduledTaskContext,
     ContinousTaskContext,
@@ -102,13 +100,21 @@ def build_scalar_udf(
     conn: DuckDBPyConnection,
     name: str,
 ) -> dict[str, Any]:
+    # Number of parameters (input) of the scalar func
     arity = len(dynamic_columns)
+
+    # Types of parameters (input) of the scalar func
+    # they are hardcoded VARCHAR because we are dealing
+    # only with property values as string (for now ?)
+    parameters = [VARCHAR for _ in range(arity)]
 
     child_types = []
     for subtype in return_type.children:
         child_types.append(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
+
+    # Return type of the scalar func as pyarrow (internal)
     return_type_arrow = pa.struct(child_types)
 
     arg_names = [f"a{i}" for i in range(1, arity + 1)]
@@ -156,7 +162,7 @@ def build_scalar_udf(
     return {
         "name": name,
         "function": udf,
-        "parameters": [VARCHAR for _ in range(arity)],
+        "parameters": parameters,
         "return_type": return_type,
         "type": PythonUDFType.ARROW,
         "null_handling": FunctionNullHandling.SPECIAL,
@@ -164,60 +170,76 @@ def build_scalar_udf(
 
 
 def records_to_polars(
-    records: list[dict[str, Any]], column_types: dict[str, str]
+    records: list[dict[str, Any]],
+    output_dtypes: dict[str, str],
+    dynamic_columns: dict[str, str | Callable[[dict[str, Any]], pl.Expr]],
+    func_context: dict[str, Any],
 ) -> pl.DataFrame:
     df = pl.DataFrame(records)
-    # Cast each column to the right dtype
-    for col, duck_type in column_types.items():
-        dtype = DUCKDB_TO_POLARS.get(duck_type, pl.Utf8)
-        df = df.with_columns(pl.col(col).cast(dtype))
-    return df
+    static_columns_operations = []
+    dynamic_columns_operations = []
+
+    # Handle each expected output columns with dtype
+    for output_col, dtype in output_dtypes.items():
+        target_dtype = DUCKDB_TO_POLARS.get(dtype, pl.Utf8)
+
+        # Generated columns are generated here
+        if output_col in dynamic_columns:
+            dynamic_expr = dynamic_columns[output_col]
+            # Currentlu support very naive generated column operations
+            # Which are just "column name"
+            if isinstance(dynamic_expr, str):
+                dynamic_columns_operations.append(
+                    pl.col(dynamic_expr).cast(target_dtype).alias(output_col)
+                )
+            else:
+                dynamic_columns_operations.append(
+                    dynamic_expr(func_context).cast(target_dtype).alias(output_col)
+                )
+        # Static columns simply get a cast to match output df return types
+        else:
+            static_columns_operations.append(pl.col(output_col).cast(target_dtype))
+
+    # Start casting static columns
+    static_df = df.with_columns(*static_columns_operations)
+    # Apply dynamic columns
+    final_df = static_df.with_columns(*dynamic_columns_operations)
+    return final_df
 
 
 async def http_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
     table_name: str,
-    start_time: datetime,
     column_types: dict[str, str],
+    dynamic_columns: dict[str, str | Callable],
     http_requester: Callable,
-    *args,
-    **kwargs,
 ) -> pl.DataFrame:
-    # TODO: no provided api execution_time
-    # using trigger.get_next_fire_time is costly (see code)
-    execution_time = start_time
+    # Create generated column context (to be applied upon at exec time)
+    # Some SQL functions in generated columns might use or not use this context
+    # This context is dynamic by essence i.e is created at exec time
+    func_context = {
+        # Start time is a context for START_TIME() omlsp function
+        "trigger_time": datetime.now(timezone.utc).replace(microsecond=0)
+    }
+
     batch_id = get_batch_id_from_table_metadata(conn, table_name)
-    logger.info(f"[{table_name}{{{batch_id}}}] Starting @ {execution_time}")
+    logger.info(f"[{task_id}{{{batch_id}}}] Starting @ {func_context['trigger_time']}")
 
     records = await http_requester(conn)
     logger.debug(
-        f"[{table_name}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
+        f"[{task_id}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
     )
 
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
-        df = records_to_polars(records, column_types)
+        df = records_to_polars(records, column_types, dynamic_columns, func_context)
         await cache(df, batch_id, epoch, table_name, conn, False)
     else:
         df = pl.DataFrame()
 
     update_batch_id_in_table_metadata(conn, table_name, batch_id + 1)
     return df
-
-
-def build_http_source_executable(
-    ctx: CreateHTTPTableContext,
-) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
-    start_time = datetime.now(timezone.utc)
-    properties = ctx.properties
-    return partial(
-        http_source_executable,
-        table_name=ctx.name,
-        start_time=start_time,
-        column_types=ctx.column_types,
-        http_requester=build_http_requester(properties, is_async=True),
-    )
 
 
 async def ws_source_executable(
@@ -239,7 +261,7 @@ async def ws_source_executable(
     # restarted (not a feature yet)
     async for records in ws_generator_func(nursery):
         if len(records) > 0:
-            df = records_to_polars(records, column_types)
+            df = records_to_polars(records, column_types, {}, {})
             # Do not truncate the cache, this is a Table
             await cache(df, 0, int(time.time() * 1_000), table_name, conn, False)
         else:
@@ -249,8 +271,20 @@ async def ws_source_executable(
         yield df
 
 
-def build_ws_source_executable(
-    ctx: CreateWSTableContext, conn: DuckDBPyConnection
+def build_scheduled_source_executable(
+    ctx: ScheduledTaskContext,
+) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
+    return partial(
+        http_source_executable,
+        table_name=ctx.name,
+        column_types=ctx.column_types,
+        dynamic_columns=ctx.generated_columns,
+        http_requester=build_http_requester(ctx.properties, is_async=True),
+    )
+
+
+def build_continuous_source_executable(
+    ctx: ContinousTaskContext, conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[pl.DataFrame, None]
 ]:
@@ -269,28 +303,6 @@ def build_ws_source_executable(
         column_types=ctx.column_types,
         ws_generator_func=build_ws_generator(properties, on_start_results),
     )
-
-
-def build_scheduled_source_executable(
-    ctx: ScheduledTaskContext,
-) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
-    if isinstance(ctx, CreateHTTPTableContext):
-        return build_http_source_executable(ctx)
-
-    else:
-        raise NotImplementedError()
-
-
-def build_continuous_source_executable(
-    ctx: ContinousTaskContext, conn: DuckDBPyConnection
-) -> Callable[
-    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[pl.DataFrame, None]
-]:
-    if isinstance(ctx, CreateWSTableContext):
-        return build_ws_source_executable(ctx, conn)
-
-    else:
-        raise NotImplementedError()
 
 
 def build_lookup_table_prehook(
@@ -317,16 +329,18 @@ def build_lookup_table_prehook(
     # register macro (to be injected in place of sql)
     __inner_tbl = "__inner_tbl"
     __deriv_tbl = "__deriv_tbl"
-    func_def = (
-        f"{func_name}({','.join([f'{__inner_tbl}.{col}' for col in dynamic_columns])})"
-    )
-    macro_def = f"{macro_name}(table_name, {','.join(dynamic_columns)})"
+
+    # This inner macro function is used to substitute create properties
+    # They are fine to be all casted to VARCHAR by default as we should
+    # not need other types (all properties are string values)
+    func_def = f"{func_name}({', '.join([f'CAST({__inner_tbl}.{col} AS VARCHAR)' for col in dynamic_columns])})"
+    macro_def = f"{macro_name}(table_name, {', '.join(dynamic_columns)})"
     output_cols = ", ".join(
         [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
     )
 
     # TODO: move to metadata func
-    conn.sql(f"""
+    create_macro_sql = f"""
         CREATE OR REPLACE MACRO {macro_def} AS TABLE
         SELECT
             {output_cols}
@@ -335,8 +349,9 @@ def build_lookup_table_prehook(
                 {func_def} AS struct
             FROM query_table(table_name) AS {__inner_tbl}
         ) AS {__deriv_tbl};
-    """)
-    logger.debug(f"registered macro: {macro_name}")
+    """
+    conn.sql(create_macro_sql)
+    logger.debug(f"registered macro: {macro_name} with definition: {create_macro_sql}")
     create_macro_definition(conn, macro_name, dynamic_columns)
 
     return macro_name
