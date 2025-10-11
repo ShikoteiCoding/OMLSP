@@ -125,12 +125,12 @@ class TrioScheduler(Service, BaseScheduler):
             )
 
         BaseScheduler.start(self, paused=False)
-        async for job in self._executable_receiver:
-            if isinstance(job, tuple):
-                func, trigger = job
+        async for executable in self._executable_receiver:
+            if isinstance(executable, tuple):
+                func, trigger = executable
                 _ = self.add_job(func=func, trigger=trigger)
             else:
-                _ = self.add_job(func=job)
+                _ = self.add_job(func=executable)
 
     async def on_stop(self) -> None:
         self._stop_timer()

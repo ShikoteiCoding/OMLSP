@@ -150,8 +150,7 @@ async def async_http_requester(
 ) -> list[dict]:
     async with httpx.AsyncClient() as client:
         logger.debug("running request with properties: {}", request_kwargs)
-        res = await async_request(client, jq, base_signer, request_kwargs, conn)
-        return res
+        return await async_request(client, jq, base_signer, request_kwargs, conn)
 
 
 def sync_http_requester(

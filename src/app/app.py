@@ -26,7 +26,7 @@ from metadata import (
     create_view,
     create_view_materialized,
     get_lookup_tables,
-    get_tables,
+    get_duckdb_tables,
     init_metadata_store,
 )
 from server import ClientManager
@@ -206,7 +206,7 @@ class App(Service):
     def _eval_select_ctx(self, ctx):
         table_name = ctx.table
         lookup_tables = get_lookup_tables(self._conn)
-        duckdb_tables = get_tables(self._conn)
+        duckdb_tables = get_duckdb_tables(self._conn)
 
         # add internal tables here for easier dev time
         duckdb_tables.append("duckdb_tables")

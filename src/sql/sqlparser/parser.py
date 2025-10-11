@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Any
-from datetime import timezone
-
 import jsonschema
+import polars as pl
+
 from apscheduler.triggers.cron import CronTrigger
+from datetime import timezone
+from enum import StrEnum
 from sqlglot import exp, parse_one
+from typing import Any, Callable
 
 from context.context import (
     CommandContext,
@@ -32,6 +33,121 @@ from metadata.db import (
     METADATA_SECRET_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect
+from sql.functions import get_trigger_time, get_trigger_time_epoch
+
+GENERATED_COLUMN_DISPATCH: dict[str, Callable[[dict[str, Any]], pl.Expr]] = {
+    "TRIGGER_TIME": get_trigger_time,
+    "TRIGGER_TIME_EPOCH": get_trigger_time_epoch,
+}
+
+
+def build_generated_column_func(
+    expr: exp.Expression,
+) -> Callable[[dict[str, Any]], pl.Expr]:
+    """
+    Pre-compile column constraint kind.
+    This recursively build nested lambda function.
+
+    Example with pure function expr:
+    Paren(
+        this=Func(this=START_TIME)
+    )
+
+    Example with pure column expression:
+    this=Paren(
+        this=Column(
+                this=Identifier(this=symbol, quoted=False)
+        )
+    )
+
+    Example with composed expression:
+    Paren(
+      this=Sub(
+        this=Func(this=TRIGGER_TIME),
+        expression=Interval(
+          this=Literal(this='5', is_string=True),
+          unit=Var(this=MINUTES)
+        )
+      )
+    )
+    """
+
+    # Recursively build a closure tree that *calls context only when needed*
+    def _compile(node: exp.Expression) -> Callable[[dict[str, Any]], pl.Expr]:
+        if isinstance(node, exp.Column):
+            return lambda ctx: pl.col(node.name)
+
+        elif isinstance(node, exp.Literal):
+            val = node.this
+            if node.is_string:
+                return lambda ctx, v=str(val): pl.lit(v)
+            elif str(val).isdigit():
+                return lambda ctx, v=int(val): pl.lit(v)
+            return lambda ctx, v=val: pl.lit(v)
+
+        elif isinstance(node, exp.Func):
+            func_name = node.name.upper()
+            if func_name not in GENERATED_COLUMN_DISPATCH:
+                raise NotImplementedError(f"Unknown function {func_name}")
+            func = GENERATED_COLUMN_DISPATCH[func_name]
+            return lambda ctx, f=func: f(ctx)
+
+        elif isinstance(node, exp.Add):
+            left = _compile(node.this)
+            right = _compile(node.expression)
+            return lambda ctx: left(ctx) + right(ctx)
+
+        elif isinstance(node, exp.Sub):
+            left = _compile(node.this)
+            right = _compile(node.expression)
+            return lambda ctx: left(ctx) - right(ctx)
+
+        elif isinstance(node, exp.Mul):
+            left = _compile(node.this)
+            right = _compile(node.expression)
+            return lambda ctx: left(ctx) * right(ctx)
+
+        elif isinstance(node, exp.Div):
+            left = _compile(node.this)
+            right = _compile(node.expression)
+            return lambda ctx: left(ctx) / right(ctx)
+
+        elif isinstance(node, exp.Interval):
+            # Example: INTERVAL '5' MINUTE
+            # node.this.this → literal value, node.args["unit"] → unit token
+            amount_node = node.this
+            amount = (
+                int(amount_node.this) if isinstance(amount_node, exp.Literal) else 0
+            )
+            unit_expr = node.args.get("unit")
+            unit_name = unit_expr.name if unit_expr else "seconds"
+
+            # Normalize to seconds
+            seconds = amount * {
+                "SECOND": 1,
+                "SECONDS": 1,
+                "MINUTE": 60,
+                "MINUTES": 60,
+                "HOUR": 3600,
+                "HOURS": 3600,
+                "DAY": 86400,
+                "DAYS": 86400,
+            }.get(unit_name.upper(), 1)
+
+            return lambda ctx, s=seconds: pl.duration(seconds=s)
+
+        elif isinstance(node, exp.Paren):
+            inner = _compile(node.this)
+            return lambda ctx: inner(ctx)
+
+        else:
+            raise NotImplementedError(f"Unsupported: {type(node)}")
+
+    # compile once:
+    compiled = _compile(expr)
+
+    # return callable for runtime use
+    return compiled
 
 
 class CreateKind(StrEnum):
@@ -67,24 +183,33 @@ def rename_column_transform(node, old_name, new_name):
 
 def parse_table_schema(
     table: exp.Schema,
-) -> tuple[exp.Schema, str, list[str], dict[str, str]]:
-    """Parse table schema into name and columns"""
-    assert isinstance(table, (exp.Schema,)), (
-        f"Expression of type {type(table)} is not accepted"
-    )
+) -> tuple[exp.Schema, str, list[str], dict[str, str], dict[str, Callable]]:
+    """Parse table schema expression into required metadata"""
     table_name = get_name(table)
     table = table.copy()
 
     column_types: dict[str, str] = {}
     columns = []
+    generated_columns: dict[str, Callable] = {}
     for col in table.expressions:
+        # Parse Columns name + type (and optionally generated columns)
         if isinstance(col, exp.ColumnDef):
             col_name = str(col.name)
             col_type = col.args.get("kind")  # data type
             column_types[col_name] = str(col_type).upper()
-            columns.append(col_name)
 
-    return table, table_name, columns, column_types
+            # Parse Generated columns referred as
+            # "constraints" in sqlglot
+            if col.constraints:
+                # A ColumnDef can have multiple constraints, we only support the
+                # first one for now, then we extract it's "this" expression
+                value = build_generated_column_func(col.constraints[0].kind.this)
+                generated_columns[col_name] = value
+
+                # Deleting constraints for duckdb SQL conversion
+                col.set("constraints", None)
+
+    return table, table_name, columns, column_types, generated_columns
 
 
 def parse_lookup_table_schema(
@@ -163,8 +288,8 @@ def build_create_http_table_context(
     statement = statement.copy()
 
     # parse table schema and update exp.Schema
-    updated_table_statement, table_name, _, column_types = parse_table_schema(
-        statement.this
+    updated_table_statement, table_name, _, column_types, generated_columns = (
+        parse_table_schema(statement.this)
     )
 
     # overwrite modified table statement
@@ -183,6 +308,7 @@ def build_create_http_table_context(
         properties=properties,
         query=clean_query,
         column_types=column_types,
+        generated_columns=generated_columns,
         trigger=trigger,
     )
 

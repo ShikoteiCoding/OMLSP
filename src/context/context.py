@@ -3,7 +3,7 @@ from __future__ import annotations
 import polars as pl
 
 from dataclasses import dataclass, field
-from typing import Any, Union, Type
+from typing import Any, Callable, Type, Union
 from apscheduler.triggers.cron import CronTrigger
 
 # --- Context definitions ---
@@ -16,6 +16,7 @@ class CreateHTTPTableContext:
     properties: dict[str, Any]
     query: str
     column_types: dict[str, str]
+    generated_columns: dict[str, Callable]
     trigger: CronTrigger
     lookup: bool = False
 
@@ -149,7 +150,7 @@ EvaluableContext = Union[
     ShowContext,
 ]
 
-OnStartContext = Union[CreateWSTableContext]
+OnStartContext = CreateWSTableContext
 
 # Everything except Invalid and CreateSecret
 QueryContext = Union[
