@@ -40,6 +40,10 @@
             "type": "string",
             "description": "Additional JSON configuration"
           },
+          "^pagination\\..+$": {
+          "type": "string",
+          "description": "Additional pagination configuration"
+          },
           "*": {
             "type": "string",
             "pattern": "^SECRET\\s+[a-zA-Z0-9_]+$",
@@ -92,6 +96,10 @@
         "^json\\..+$": {
           "type": "string",
           "description": "Additional JSON configuration"
+        },
+        "^pagination\\..+$": {
+          "type": "string",
+          "description": "Additional pagination configuration"
         }
       },
       "additionalProperties": true
