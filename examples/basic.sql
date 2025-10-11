@@ -14,7 +14,7 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
-CREATE TABLE paginated_tickers (
+CREATE TABLE coinlore_market_tickers (
     symbol STRING,
     name STRING,
     price_usd FLOAT,
@@ -26,7 +26,7 @@ WITH (
     'pagination.type' = 'limit_offset',
     'pagination.limit_param' = 'limit',
     'pagination.page_param' = 'start',
-    'pagination.start' = '0',
+    'pagination.page_start' = '0',
     'pagination.limit' = '100',
     'pagination.max' = '1000',
     schedule = '*/1 * * * *',
@@ -34,7 +34,7 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
-CREATE TABLE paginated_tickers_2 (
+CREATE TABLE binance_agg_trades (
     a BIGINT,
     p FLOAT,
     T BIGINT,
