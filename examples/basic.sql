@@ -45,7 +45,6 @@ WITH (
     'pagination.type' = 'cursor',
     'pagination.cursor_id' = 'a',
     'pagination.cursor_param' = 'fromId',
-    'pagination.start_cursor' = '0',
     'pagination.limit' = '5',
     'pagination.max' = '1000',
     schedule = '*/1 * * * *',

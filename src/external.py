@@ -179,23 +179,23 @@ async def fetch_paginated_data(
 
     # State
     page = 0
-    cursor = meta_kwargs.get("pagination_start_cursor")
+    cursor = meta_kwargs.get("pagination_start_cursor", 0)
 
-    param = "?"
-    if param in request_kwargs["url"]:
-        param = "&"
+    sep_param = "?"
+    if sep_param in request_kwargs["url"]:
+        sep_param = "&"
 
     total = 0
     while True:
         # --- Build URL based on type ---
         if pagination_type == "limit_offset":
-            paginated_url = f"{request_kwargs['url']}{param}{page_param}={page}&{limit_param}={limit}"
+            paginated_url = f"{request_kwargs['url']}{sep_param}{page_param}={page}&{limit_param}={limit}"
 
         elif pagination_type == "cursor":
             if cursor:
-                paginated_url = f"{request_kwargs['url']}{param}{limit_param}={limit}&{cursor_param}={cursor}"
+                paginated_url = f"{request_kwargs['url']}{sep_param}{limit_param}={limit}&{cursor_param}={cursor}"
             else:
-                paginated_url = f"{request_kwargs['url']}{param}{limit_param}={limit}"
+                paginated_url = f"{request_kwargs['url']}{sep_param}{limit_param}={limit}"
 
         else:
             # No pagination: single request only
@@ -242,7 +242,7 @@ async def fetch_paginated_data(
 
 async def async_http_requester(
     jq,
-    base_signer,
+    base_signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     meta_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
@@ -256,7 +256,7 @@ async def async_http_requester(
 
 def sync_http_requester(
     jq,
-    base_signer,
+    base_signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     meta_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
