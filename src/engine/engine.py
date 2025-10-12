@@ -63,7 +63,7 @@ DUCKDB_TO_POLARS: dict[str, Any] = {
     "VARCHAR": pl.Utf8,
     "TEXT": pl.Utf8,
     # match duckdb, default is microseconds
-    "TIMESTAMP": pl.Datetime("us"), 
+    "TIMESTAMP": pl.Datetime("us"),
     "TIMESTAMP_MS": pl.Datetime("ms"),
     "TIMESTAMP_US": pl.Datetime("us"),
     "TIMESTAMP_NS": pl.Datetime("ns"),
