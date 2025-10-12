@@ -10,7 +10,6 @@ WITH (
     'pagination.type' = 'limit_offset',
     'pagination.limit_param' = 'limit',
     'pagination.page_param' = 'start',
-    'pagination.page_start' = '0',
     'pagination.limit' = '100',
     'pagination.max' = '1000',
     schedule = '*/1 * * * *',

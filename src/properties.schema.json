@@ -44,11 +44,6 @@
           "type": "string",
           "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
         },
-        "pagination.page_start": {
-          "type": "string",
-          "pattern": "^[0-9]+$",
-          "description": "Starting page number (for limit_offset). Must be numeric string."
-        },
         "pagination.limit": {
           "type": "string",
           "pattern": "^[1-9][0-9]*$",
@@ -139,11 +134,6 @@
         "pagination.page_param": {
           "type": "string",
           "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
-        },
-        "pagination.page_start": {
-          "type": "string",
-          "pattern": "^[0-9]+$",
-          "description": "Starting page number (for limit_offset). Must be numeric string."
         },
         "pagination.limit": {
           "type": "string",

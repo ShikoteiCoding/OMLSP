@@ -233,7 +233,8 @@ async def fetch_limit_offset_pagination(
     limit = int(meta_kwargs.get("limit", 100))
     limit_param = meta_kwargs.get("limit_param", "limit")
     page_param = meta_kwargs.get("page_param", "page")
-    page = int(meta_kwargs.get("pagination_page_start", 0))
+    page = 0
+    retried = False
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
 
     results, total = [], 0
@@ -247,6 +248,10 @@ async def fetch_limit_offset_pagination(
         batch = parse_response(response.json(), jq)
 
         if not batch:
+            if page == 0 and not retried:
+                page = 1
+                retried = True
+                continue
             break
 
         results.extend(batch)
@@ -371,8 +376,9 @@ def fetch_limit_offset_pagination_sync(
     limit = int(meta_kwargs.get("limit", 100))
     limit_param = meta_kwargs.get("limit_param", "limit")
     page_param = meta_kwargs.get("page_param", "page")
-    page = int(meta_kwargs.get("pagination_page_start", 0))
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
+    page = 0
+    retried = False
 
     results, total = [], 0
 
@@ -385,6 +391,10 @@ def fetch_limit_offset_pagination_sync(
         batch = parse_response(response.json(), jq)
 
         if not batch:
+            if page == 0 and not retried:
+                page = 1
+                retried = True
+                continue
             break
 
         results.extend(batch)
