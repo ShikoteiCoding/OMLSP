@@ -62,8 +62,10 @@ DUCKDB_TO_PYARROW_PYTYPE = {
 DUCKDB_TO_POLARS: dict[str, Any] = {
     "VARCHAR": pl.Utf8,
     "TEXT": pl.Utf8,
-    "TIMESTAMP": pl.Datetime,
+    # match duckdb, default is microseconds
+    "TIMESTAMP": pl.Datetime("us"), 
     "TIMESTAMP_MS": pl.Datetime("ms"),
+    "TIMESTAMP_US": pl.Datetime("us"),
     "TIMESTAMP_NS": pl.Datetime("ns"),
     "DATETIME": pl.Datetime,
     "FLOAT": pl.Float32,
