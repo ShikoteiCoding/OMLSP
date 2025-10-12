@@ -296,11 +296,13 @@ async def http_source_executable(
     }
 
     batch_id = get_batch_id_from_table_metadata(conn, table_name)
-    logger.info("[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"])
+    logger.info(
+        "[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"]
+    )
 
     records = await http_requester(conn)
     logger.debug(
-        "[{}{{{}}}] - http number of responses: {} - batch {}", 
+        "[{}{{{}}}] - http number of responses: {} - batch {}",
         task_id,
         batch_id,
         len(records),
@@ -430,7 +432,9 @@ def build_lookup_table_prehook(
         ) AS {__deriv_tbl};
     """
     conn.execute(create_macro_sql)
-    logger.debug("registered macro: {} with definition: {}", macro_name, create_macro_sql)
+    logger.debug(
+        "registered macro: {} with definition: {}", macro_name, create_macro_sql
+    )
     create_macro_definition(conn, macro_name, dynamic_columns)
 
     return macro_name
@@ -509,7 +513,7 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
     Execute duckdb-compatible query and return as a list of tuple.
     """
     query = duckdb_sql.strip()
-    rel = conn.execute(query)
+    rel = conn.sql(query)
 
     # rel can be None and description can be empty list
     if rel and rel.description:
