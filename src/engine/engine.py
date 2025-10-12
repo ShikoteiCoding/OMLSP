@@ -208,7 +208,7 @@ def build_scalar_udf(
                 if isinstance(response, list) and len(response) >= 1:
                     default_response |= response[-1]
             except Exception as e:
-                logger.exception(f"HTTP request failed: {e}")
+                logger.exception("HTTP request failed: {}", e)
 
             coerced_response = _coerce_result_dict(default_response, field_types)
             return coerced_response
@@ -296,11 +296,15 @@ async def http_source_executable(
     }
 
     batch_id = get_batch_id_from_table_metadata(conn, table_name)
-    logger.info(f"[{task_id}{{{batch_id}}}] Starting @ {func_context['trigger_time']}")
+    logger.info("[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"])
 
     records = await http_requester(conn)
     logger.debug(
-        f"[{task_id}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
+        "[{}{{{}}}] - http number of responses: {} - batch {}", 
+        task_id,
+        batch_id,
+        len(records),
+        batch_id,
     )
 
     if len(records) > 0:
@@ -326,7 +330,7 @@ async def ws_source_executable(
     *args,
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
-    logger.info(f"[{task_id}] - starting ws executable")
+    logger.info("[{}] - starting ws executable", task_id)
 
     # 'ws_generator_func' is supposed to be never ending (while True)
     # if an issue happens, the source task should be entirely
@@ -395,7 +399,7 @@ def build_lookup_table_prehook(
     )
     # register scalar for row to row http call
     conn.create_function(**udf_params)
-    logger.debug(f"registered function: {func_name}")
+    logger.debug("registered function: {}", func_name)
 
     # TODO: wrap SQL in function
     # register macro (to be injected in place of sql)
@@ -413,7 +417,6 @@ def build_lookup_table_prehook(
             for col_name, duckdb_dtype in columns.items()
         ]
     )
-    logger.warning(columns)
 
     # TODO: move to metadata func
     create_macro_sql = f"""
@@ -427,7 +430,7 @@ def build_lookup_table_prehook(
         ) AS {__deriv_tbl};
     """
     conn.execute(create_macro_sql)
-    logger.debug(f"registered macro: {macro_name} with definition: {create_macro_sql}")
+    logger.debug("registered macro: {} with definition: {}", macro_name, create_macro_sql)
     create_macro_definition(conn, macro_name, dynamic_columns)
 
     return macro_name
@@ -485,7 +488,7 @@ def substitute_sql_template(
     # Substritute lookup table placeholder with template
     query = Template(original_query).substitute(substitute_mapping)
 
-    logger.debug(f"New overwritten select statement: {query}")
+    logger.debug("New overwritten select statement: {}", query)
     return query
 
 
@@ -602,10 +605,12 @@ async def transform_executable(
     # transform_df = pl_ctx.execute(transform_query)
     logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
 
-    # explicitely register incoming df as first upstream
+    # explicitely mock df registration of incoming df
     # in case of lookup, this should also work when the
     # registed df is called inside / through a macro !
-    conn.register(first_upstream, df)
+    # don't use conn.register() as duckdb only support
+    # global registration and would make it not thread-safe anymore
+    transform_query = transform_query.replace(f'"{first_upstream}"', "df")
     transform_df = conn.execute(transform_query).pl()
 
     batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
