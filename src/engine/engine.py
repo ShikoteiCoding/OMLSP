@@ -194,11 +194,15 @@ def records_to_polars(
         else:
             static_columns_operations.append(pl.col(output_col).cast(target_dtype))
 
-    # Start casting static columns
-    static_df = df.with_columns(*static_columns_operations)
-    # Apply dynamic columns
-    final_df = static_df.with_columns(*dynamic_columns_operations)
-    return final_df
+    return df.with_columns(
+        # Start casting static columns
+        *static_columns_operations
+    ).with_columns(
+        # Apply dynamic columns in different step
+        # polars.exceptions.InvalidOperationError: sub operation not supported
+        # Issue: https://github.com/pola-rs/polars/issues/9062
+        *dynamic_columns_operations
+    )
 
 
 async def http_source_executable(
