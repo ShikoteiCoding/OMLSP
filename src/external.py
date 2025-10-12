@@ -60,25 +60,9 @@ def parse_http_properties(
         # TODO: handle bytes, form and url params
 
         elif key.startswith("pagination."):
+            # Extract subkey after 'pagination.'
             subkey = key.split(".", 1)[1]
-            if subkey == "type":
-                meta_kwargs["pagination_type"] = value
-            elif subkey == "limit":
-                meta_kwargs["pagination_limit"] = int(value)
-            elif subkey == "limit_param":
-                meta_kwargs["pagination_limit_param"] = value
-            elif subkey == "page_param":
-                meta_kwargs["pagination_page_param"] = value
-            elif subkey == "cursor_param":
-                meta_kwargs["pagination_cursor_param"] = value
-            elif subkey == "cursor_id":
-                meta_kwargs["pagination_cursor_id"] = value
-            elif subkey == "next_header":
-                meta_kwargs["pagination_next_header"] = value
-            elif subkey == "page_start":
-                meta_kwargs["pagination_page_start"] = value
-            elif subkey == "max":
-                meta_kwargs["max"] = value
+            meta_kwargs[subkey] = value
 
     # httpx consider empty headers or json as an actual headers or json
     # that it will encode to the server. Some API do not like this and
@@ -212,16 +196,16 @@ async def async_fetch_paginated_data(
     list[dict]
         Flattened list of parsed records across all pages.
     """
-    pagination_type = meta_kwargs.get("pagination_type")
+    pagination_type = meta_kwargs.get("type")
     results = []
 
     # pagination params
-    limit = meta_kwargs.get("pagination_limit", 100)
-    limit_param = meta_kwargs.get("pagination_limit_param", "limit")
-    page_param = meta_kwargs.get("pagination_page_param", "page")
-    cursor_param = meta_kwargs.get("pagination_cursor_param", "cursor")
-    cursor_id = meta_kwargs.get("pagination_cursor_id", "id")
-    next_cursor_header = meta_kwargs.get("pagination_next_header")
+    limit = meta_kwargs.get("limit", 100)
+    limit_param = meta_kwargs.get("limit_param", "limit")
+    page_param = meta_kwargs.get("page_param", "page")
+    cursor_param = meta_kwargs.get("cursor_param", "cursor")
+    cursor_id = meta_kwargs.get("cursor_id", "id")
+    next_cursor_header = meta_kwargs.get("next_header")
 
     # State
     # server decides what the “next” position is
@@ -289,16 +273,16 @@ def _sync_fetch_paginated_data(
     meta_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
 ) -> list[dict]:
-    pagination_type = meta_kwargs.get("pagination_type")
+    pagination_type = meta_kwargs.get("type")
     results = []
 
     # pagination params
-    limit = meta_kwargs.get("pagination_limit", 100)
-    limit_param = meta_kwargs.get("pagination_limit_param", "limit")
-    page_param = meta_kwargs.get("pagination_page_param", "page")
-    cursor_param = meta_kwargs.get("pagination_cursor_param", "cursor")
-    cursor_id = meta_kwargs.get("pagination_cursor_id", "id")
-    next_cursor_header = meta_kwargs.get("pagination_next_header")
+    limit = meta_kwargs.get("limit", 100)
+    limit_param = meta_kwargs.get("limit_param", "limit")
+    page_param = meta_kwargs.get("page_param", "page")
+    cursor_param = meta_kwargs.get("cursor_param", "cursor")
+    cursor_id = meta_kwargs.get("cursor_id", "id")
+    next_cursor_header = meta_kwargs.get("next_header")
 
     # State
     # server decides what the “next” position is
