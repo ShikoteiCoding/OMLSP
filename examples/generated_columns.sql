@@ -27,11 +27,8 @@ WITH (
 -- Get ohlc data provided symbols
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
-    -- TODO: fix to same type as upstream table
-    $start_at STRING,
-    $end_at STRING,
-    -- TODO: fix TIMESTAMP_S, it should be integer from url response
-    -- Consider doing aumatic timestamp convertion (aka coercion)
+    $start_at BIGINT,
+    $end_at BIGINT,
     start_time TIMESTAMP,
     open FLOAT,
     high FLOAT,
@@ -59,7 +56,9 @@ WITH (
 CREATE VIEW ohlc_all_spot_tickers AS
 SELECT
     ALT.symbol,
-    start_time,
+    oh.start_at,
+    oh.end_at,
+    oh.start_time,
     open,
     high,
     low,
