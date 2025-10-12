@@ -8,12 +8,18 @@ CREATE TABLE all_tickers (
     symbol_copy STRING AS (symbol),
     -- Defining spread from buy and sell
     spread FLOAT AS (sell - buy),
-    -- Defining trigger time as timestamp default is us
-    trigger_time TIMESTAMP AS (TRIGGER_TIME()),
+    -- Defining trigger time in ms
+    trigger_time_ms TIMESTAMP_MS AS (TRIGGER_TIME()),
+    -- Defining trigger time in us (default)
+    trigger_time_us_default TIMESTAMP AS (TRIGGER_TIME()),
+    -- Defining trigger time in us
+    trigger_time_us TIMESTAMP_US AS (TRIGGER_TIME()),
+    -- Defining trigger time in ns
+    trigger_time_ns TIMESTAMP_NS AS (TRIGGER_TIME()),
     -- Defining start_at and end_at for ohlc lookup
-    -- TRIGGER_TIME_EPOCH returns epoch as us
-    start_at BIGINT AS (TRIGGER_TIME_EPOCH() / 1000000 - (5 * 60)),
-    end_at BIGINT AS (TRIGGER_TIME_EPOCH() / 1000000)
+    -- TRIGGER_TIME_EPOCH returns epoch as ms (default)
+    start_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000 - (5 * 60)),
+    end_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000)
 )
 WITH (
     connector = 'http',
