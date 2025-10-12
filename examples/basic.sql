@@ -53,6 +53,27 @@ WITH (
     'headers.Content-Type' = 'application/json'
 );
 
+CREATE TABLE coinbase_trades (
+    trade_id BIGINT,
+    side STRING,
+    size FLOAT,
+    price FLOAT,
+    time TIMESTAMP
+)
+WITH (
+    connector = 'http',
+    url = 'https://api.exchange.coinbase.com/products/BTC-USD/trades',
+    method = 'GET',
+    'pagination.type' = 'header',
+    'pagination.limit_param' = 'limit',
+    'pagination.limit' = '40',
+    'pagination.cursor_param' = 'after',
+    'pagination.next_header' = 'cb-after',
+    'pagination.max' = '100',
+    schedule = '*/1 * * * *',
+    jq = '.[] | {trade_id, side, size, price, time}',
+    'headers.Accept' = 'application/json'
+);
 
 -- Get ohlc data provided symbols
 -- TODO: handle dynamic arguments

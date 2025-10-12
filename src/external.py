@@ -74,6 +74,8 @@ def parse_http_properties(
                 meta_kwargs["pagination_cursor_param"] = value
             elif subkey == "cursor_id":
                 meta_kwargs["pagination_cursor_id"] = value
+            elif subkey == "next_header":
+                meta_kwargs["pagination_next_header"] = value
             elif subkey == "page_start":
                 meta_kwargs["pagination_page_start"] = value
             elif subkey == "max":
@@ -92,11 +94,10 @@ def parse_http_properties(
 
 async def async_request(
     client: httpx.AsyncClient,
-    jq: Any,
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
-) -> list[dict]:
+) -> Any:
     attempt = 0
     while attempt < MAX_RETRIES:
         response = await client.request(**signer.sign(conn, request_kwargs))
@@ -104,7 +105,7 @@ async def async_request(
         try:
             if response.is_success:
                 logger.debug(f"{response.status_code}: response for {request_kwargs}.")
-                return parse_response(response.json(), jq)
+                return response
         except Exception:
             pass
 
@@ -118,22 +119,21 @@ async def async_request(
             await trio.sleep(delay)
 
     logger.error(f"request to {request_kwargs} failed after {MAX_RETRIES} attempts")
-    return []
+    return None
 
 
 def sync_request(
     client: httpx.Client,
-    jq: Any,
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
-) -> list[dict]:
+) -> Any:
     try:
         response = client.request(**signer.sign(conn, request_kwargs))
         logger.debug("response for {}: {}", request_kwargs, response.status_code)
 
         if response.is_success:
-            return parse_response(response.json(), jq)
+            return response
 
         try:
             response.raise_for_status()
@@ -143,7 +143,7 @@ def sync_request(
     except Exception as e:
         logger.error(f"HTTP request failed: {e}")
 
-    return []
+    return None
 
 
 def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]:
@@ -151,7 +151,7 @@ def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]
     return res
 
 
-def build_paginated_url(base_url: str, params: dict[str, Any], sep: str="?") -> str:
+def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -> str:
     if sep in base_url:
         sep = "&"
     q = "&".join(f"{k}={v}" for k, v in params.items())
@@ -171,9 +171,8 @@ async def fetch_paginated_data(
     Unified pagination handler supporting:
     - limit_offset (page-based)
     - cursor (cursor-based)
-
-    #TODO need to implement
     - header (next cursor via headers)
+    #TODO need to implement
     - body_link (next URL inside JSON)
     Works with async or sync request functions
     """
@@ -186,9 +185,7 @@ async def fetch_paginated_data(
     page_param = meta_kwargs.get("pagination_page_param", "page")
     cursor_param = meta_kwargs.get("pagination_cursor_param", "cursor")
     cursor_id = meta_kwargs.get("pagination_cursor_id", "id")
-
-    # for later
-    # next_cursor_header = meta_kwargs.get("pagination_next_header")
+    next_cursor_header = meta_kwargs.get("pagination_next_header")
     # next_link_jq = meta_kwargs.get("pagination_next_link_jq")
 
     # State
@@ -203,15 +200,15 @@ async def fetch_paginated_data(
         params = {limit_param: limit}
         if pagination_type == "limit_offset":
             params[page_param] = page
-        elif pagination_type == "cursor" and cursor:
+        elif pagination_type in ("header", "cursor", "body_link") and cursor:
             params[cursor_param] = cursor
-        elif pagination_type in ("header", "body_link"):
-            pass  # handled after first response
         elif pagination_type not in ("limit_offset", "cursor", "header", "body_link"):
             # No pagination → single request
             if inspect.iscoroutinefunction(request_func):
-                return await request_func(client, jq, base_signer, request_kwargs, conn)
-            return request_func(client, jq, base_signer, request_kwargs, conn)
+                response = await request_func(client, base_signer, request_kwargs, conn)
+                return parse_response(response.json(), jq)
+            response = request_func(client, base_signer, request_kwargs, conn)
+            return parse_response(response.json(), jq)
 
         paginated_url = build_paginated_url(request_kwargs["url"], params)
 
@@ -220,13 +217,14 @@ async def fetch_paginated_data(
         paginated_kwargs["url"] = paginated_url
 
         if inspect.iscoroutinefunction(request_func):
-            batch = await request_func(client, jq, base_signer, paginated_kwargs, conn)
+            response = await request_func(client, base_signer, paginated_kwargs, conn)
         else:
             # Run sync call safely in Trio’s thread context
-            batch = await trio.to_thread.run_sync(
-                lambda: request_func(client, jq, base_signer, paginated_kwargs, conn)
+            response = await trio.to_thread.run_sync(
+                lambda: request_func(client, base_signer, paginated_kwargs, conn)
             )
 
+        batch = parse_response(response.json(), jq)
         # --- Exit condition ---
         if not batch:
             break
@@ -248,14 +246,12 @@ async def fetch_paginated_data(
             cursor = last_item.get(cursor_id)
             if not cursor:
                 break
-
-        # for later
-        # elif pagination_type == "header":
-        #     next_cursor_header = meta_kwargs.get("pagination_next_header")
-        #     if next_cursor_header:
-        #         cursor = response.headers.get(next_cursor_header)
-        #     if not cursor:
-        #         break
+        elif pagination_type == "header":
+            next_cursor_header = meta_kwargs.get("pagination_next_header")
+            if next_cursor_header:
+                cursor = response.headers.get(next_cursor_header)
+            if not cursor:
+                break
 
         # elif pagination_type == "body_link":
         #     next_link_jq = meta_kwargs.get("pagination_next_link_jq")
