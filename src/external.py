@@ -2,7 +2,6 @@ import trio
 import jq as jqm
 import httpx
 import json
-import inspect
 
 from duckdb import DuckDBPyConnection
 from functools import partial
@@ -158,8 +157,7 @@ def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -
     return f"{base_url}{sep}{q}"
 
 
-async def fetch_paginated_data(
-    request_func: Callable[..., Any],
+async def async_fetch_paginated_data(
     client: httpx.AsyncClient,
     jq: Any,
     base_signer,
@@ -169,9 +167,7 @@ async def fetch_paginated_data(
 ) -> list[dict]:
     """
     Unified asynchronous pagination handler
-
     Supports multiple pagination strategies used by APIs
-    Handles both async and sync request functions seamlessly
 
     Pagination Types
     ----------------
@@ -197,7 +193,7 @@ async def fetch_paginated_data(
        - Required meta_kwargs:
             pagination_type = "header"
             pagination_next_header = # name of response header e.g, "cb-after"
-            pagination_cursor_param = # query param for next call e.g, ""after"
+            pagination_cursor_param = # query param for next call e.g, "after"
        - Example: Coinbase API: "cb-after" header → ?after=xxx
 
     4. body_link (next URL inside JSON)
@@ -243,10 +239,7 @@ async def fetch_paginated_data(
             params[cursor_param] = cursor
         elif pagination_type not in ("limit_offset", "cursor", "header", "body_link"):
             # No pagination → single request
-            if inspect.iscoroutinefunction(request_func):
-                response = await request_func(client, base_signer, request_kwargs, conn)
-                return parse_response(response.json(), jq)
-            response = request_func(client, base_signer, request_kwargs, conn)
+            response = await async_request(client, base_signer, request_kwargs, conn)
             return parse_response(response.json(), jq)
 
         paginated_url = build_paginated_url(request_kwargs["url"], params)
@@ -255,15 +248,86 @@ async def fetch_paginated_data(
         paginated_kwargs = request_kwargs.copy()
         paginated_kwargs["url"] = paginated_url
 
-        if inspect.iscoroutinefunction(request_func):
-            response = await request_func(client, base_signer, paginated_kwargs, conn)
-        else:
-            # Run sync call safely in Trio’s thread context
-            response = await trio.to_thread.run_sync(
-                lambda: request_func(client, base_signer, paginated_kwargs, conn)
-            )
-
+        response = await async_request(client, base_signer, paginated_kwargs, conn)
         batch = parse_response(response.json(), jq)
+
+        # --- Exit condition ---
+        if not batch:
+            break
+
+        results.extend(batch)
+
+        if len(batch) < limit:
+            break
+
+        total += len(batch)
+        if "max" in meta_kwargs and total >= int(meta_kwargs["max"]):
+            break
+
+        # --- Update pagination state ---
+        if pagination_type == "limit_offset":
+            page += 1
+        elif pagination_type == "cursor":
+            last_item = batch[-1]
+            cursor = last_item.get(cursor_id)
+            if not cursor:
+                break
+        elif pagination_type == "header":
+            next_cursor_header = meta_kwargs.get("pagination_next_header")
+            if next_cursor_header:
+                cursor = response.headers.get(next_cursor_header)
+            if not cursor:
+                break
+    return results
+
+
+def _sync_fetch_paginated_data(
+    client: httpx.AsyncClient,
+    jq: Any,
+    base_signer,
+    request_kwargs: dict[str, Any],
+    meta_kwargs: dict[str, Any],
+    conn: DuckDBPyConnection,
+) -> list[dict]:
+    pagination_type = meta_kwargs.get("pagination_type")
+    results = []
+
+    # pagination params
+    limit = meta_kwargs.get("pagination_limit", 100)
+    limit_param = meta_kwargs.get("pagination_limit_param", "limit")
+    page_param = meta_kwargs.get("pagination_page_param", "page")
+    cursor_param = meta_kwargs.get("pagination_cursor_param", "cursor")
+    cursor_id = meta_kwargs.get("pagination_cursor_id", "id")
+    next_cursor_header = meta_kwargs.get("pagination_next_header")
+
+    # State
+    # server decides what the “next” position is
+    cursor = None
+    # predictable, user decides
+    page = int(meta_kwargs.get("pagination_page_start", 0))
+
+    total = 0
+    while True:
+        # --- Build URL ---
+        params = {limit_param: limit}
+        if pagination_type == "limit_offset":
+            params[page_param] = page
+        elif pagination_type in ("header", "cursor", "body_link") and cursor:
+            params[cursor_param] = cursor
+        elif pagination_type not in ("limit_offset", "cursor", "header", "body_link"):
+            # No pagination → single request
+            response = sync_request(client, base_signer, request_kwargs, conn)
+            return parse_response(response.json(), jq)
+
+        paginated_url = build_paginated_url(request_kwargs["url"], params)
+
+        # --- Execute request ---
+        paginated_kwargs = request_kwargs.copy()
+        paginated_kwargs["url"] = paginated_url
+
+        response = sync_request(client, base_signer, paginated_kwargs, conn)
+        batch = parse_response(response.json(), jq)
+
         # --- Exit condition ---
         if not batch:
             break
@@ -303,8 +367,8 @@ async def async_http_requester(
 ) -> list[dict]:
     async with httpx.AsyncClient() as client:
         logger.debug(f"running request with properties: {request_kwargs}")
-        return await fetch_paginated_data(
-            async_request, client, jq, base_signer, request_kwargs, meta_kwargs, conn
+        return await async_fetch_paginated_data(
+            client, jq, base_signer, request_kwargs, meta_kwargs, conn
         )
 
 
@@ -317,15 +381,8 @@ def sync_http_requester(
 ) -> list[dict]:
     client = httpx.Client()
     logger.debug(f"running request with properties: {request_kwargs}")
-    return trio.run(
-        fetch_paginated_data,
-        sync_request,
-        client,
-        jq,
-        base_signer,
-        request_kwargs,
-        meta_kwargs,
-        conn,
+    return _sync_fetch_paginated_data(
+        client, jq, base_signer, request_kwargs, meta_kwargs, conn
     )
 
 

@@ -31,6 +31,50 @@
           "type": "string",
           "description": "Must be a valid jq expression"
         },
+        "pagination.type": {
+          "type": "string",
+          "enum": ["limit_offset", "cursor", "header", "body_link"],
+          "description": "Pagination strategy type."
+        },
+        "pagination.limit_param": {
+          "type": "string",
+          "description": "Query parameter for per-page limit (e.g. 'limit')."
+        },
+        "pagination.page_param": {
+          "type": "string",
+          "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
+        },
+        "pagination.page_start": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Starting page number (for limit_offset). Must be numeric string."
+        },
+        "pagination.limit": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "description": "Items per page (numeric string). Must be a positive integer."
+        },
+        "pagination.max": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "description": "Maximum number of total records to fetch (numeric string)."
+        },
+        "pagination.cursor_param": {
+          "type": "string",
+          "description": "Query parameter for cursor-based pagination (e.g. 'cursor', 'fromId', 'after')."
+        },
+        "pagination.cursor_id": {
+          "type": "string",
+          "description": "JSON key used to extract cursor from last record (e.g. 'id', 'a')."
+        },
+        "pagination.next_header": {
+          "type": "string",
+          "description": "Header name containing next cursor (for header pagination)."
+        },
+        "pagination.body_link_path": {
+          "type": "string",
+          "description": "JSON path or jq selector to extract 'next' URL (for body_link pagination)."
+        },
         "patternProperties": {
           "^headers\\..+$": {
             "type": "string",
@@ -39,10 +83,6 @@
           "^json\\..+$": {
             "type": "string",
             "description": "Additional JSON configuration"
-          },
-          "^pagination\\..+$": {
-          "type": "string",
-          "description": "Additional pagination configuration"
           },
           "*": {
             "type": "string",
@@ -86,6 +126,50 @@
         "jq": {
           "type": "string",
           "description": "Must be a valid jq expression"
+        },
+        "pagination.type": {
+          "type": "string",
+          "enum": ["limit_offset", "cursor", "header", "body_link"],
+          "description": "Pagination strategy type."
+        },
+        "pagination.limit_param": {
+          "type": "string",
+          "description": "Query parameter for per-page limit (e.g. 'limit')."
+        },
+        "pagination.page_param": {
+          "type": "string",
+          "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
+        },
+        "pagination.page_start": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Starting page number (for limit_offset). Must be numeric string."
+        },
+        "pagination.limit": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "description": "Items per page (numeric string). Must be a positive integer."
+        },
+        "pagination.max": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "description": "Maximum number of total records to fetch (numeric string)."
+        },
+        "pagination.cursor_param": {
+          "type": "string",
+          "description": "Query parameter for cursor-based pagination (e.g. 'cursor', 'fromId', 'after')."
+        },
+        "pagination.cursor_id": {
+          "type": "string",
+          "description": "JSON key used to extract cursor from last record (e.g. 'id', 'a')."
+        },
+        "pagination.next_header": {
+          "type": "string",
+          "description": "Header name containing next cursor (for header pagination)."
+        },
+        "pagination.body_link_path": {
+          "type": "string",
+          "description": "JSON path or jq selector to extract 'next' URL (for body_link pagination)."
         }
       },
       "patternProperties": {
@@ -96,10 +180,6 @@
         "^json\\..+$": {
           "type": "string",
           "description": "Additional JSON configuration"
-        },
-        "^pagination\\..+$": {
-          "type": "string",
-          "description": "Additional pagination configuration"
         }
       },
       "additionalProperties": true
