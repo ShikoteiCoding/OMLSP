@@ -97,7 +97,7 @@ async def async_request(
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
-) -> Any:
+) -> httpx.Response:
     attempt = 0
     while attempt < MAX_RETRIES:
         response = await client.request(**signer.sign(conn, request_kwargs))
@@ -127,7 +127,7 @@ def sync_request(
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
-) -> Any:
+) -> httpx.Response:
     try:
         response = client.request(**signer.sign(conn, request_kwargs))
         logger.debug("response for {}: {}", request_kwargs, response.status_code)
@@ -161,20 +161,60 @@ def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -
 async def fetch_paginated_data(
     request_func: Callable[..., Any],
     client: httpx.AsyncClient,
-    jq,
+    jq: Any,
     base_signer,
     request_kwargs: dict[str, Any],
     meta_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """
-    Unified pagination handler supporting:
-    - limit_offset (page-based)
-    - cursor (cursor-based)
-    - header (next cursor via headers)
-    #TODO need to implement
-    - body_link (next URL inside JSON)
-    Works with async or sync request functions
+    Unified asynchronous pagination handler
+
+    Supports multiple pagination strategies used by APIs
+    Handles both async and sync request functions seamlessly
+
+    Pagination Types
+    ----------------
+    1. limit_offset (page-based)
+       - The API uses numeric offsets or pages (e.g., ?page=1, ?limit=100)
+       - Required meta_kwargs:
+            pagination_type = "limit_offset"
+            pagination_page_param = e.g, "page" or "start"
+            pagination_limit_param = e.g, "limit"
+            pagination_page_start = 0
+       - Example: https://api.coinlore.net/api/tickers?start=0&limit=100
+
+    2. cursor (ID-based or token-based)
+       - The API provides a cursor (like an "id" or "nextToken") in response
+       - Required meta_kwargs:
+            pagination_type = "cursor"
+            pagination_cursor_param = # request query param name e.g, "fromId"
+            pagination_cursor_id = # JSON key from last item e.g, "a"
+       - Example: https://api.binance.com/api/v3/aggTrades?fromId=12345
+
+    3. header (next-cursor via response headers)
+       - The API includes the next cursor in a response header
+       - Required meta_kwargs:
+            pagination_type = "header"
+            pagination_next_header = # name of response header e.g, "cb-after"
+            pagination_cursor_param = # query param for next call e.g, ""after"
+       - Example: Coinbase API: "cb-after" header → ?after=xxx
+
+    4. body_link (next URL inside JSON)
+       - The response JSON includes a direct “next” URL to call.
+       - TODO: implement this
+
+    Optional Controls
+    -----------------
+    pagination_limit : int
+        Maximum number of items per request (default 100)
+    pagination_max : int
+        Stop after fetching this many total items (safety limit)
+
+    Returns
+    -------
+    list[dict]
+        Flattened list of parsed records across all pages.
     """
     pagination_type = meta_kwargs.get("pagination_type")
     results = []
@@ -186,7 +226,6 @@ async def fetch_paginated_data(
     cursor_param = meta_kwargs.get("pagination_cursor_param", "cursor")
     cursor_id = meta_kwargs.get("pagination_cursor_id", "id")
     next_cursor_header = meta_kwargs.get("pagination_next_header")
-    # next_link_jq = meta_kwargs.get("pagination_next_link_jq")
 
     # State
     # server decides what the “next” position is
@@ -252,14 +291,6 @@ async def fetch_paginated_data(
                 cursor = response.headers.get(next_cursor_header)
             if not cursor:
                 break
-
-        # elif pagination_type == "body_link":
-        #     next_link_jq = meta_kwargs.get("pagination_next_link_jq")
-        #     next_url = jq(next_link_jq, batch)
-        #     if not next_url:
-        #         break
-        #     request_kwargs["url"] = next_url
-
     return results
 
 
