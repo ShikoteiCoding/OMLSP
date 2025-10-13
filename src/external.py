@@ -20,6 +20,7 @@ MAX_RETRIES = 5
 # HTTP Request Helpers
 # ============================================================
 
+
 def parse_http_properties(
     properties: dict[str, str],
 ) -> tuple[dict[str, Any], BaseSignerT, dict[str, Any], dict[str, Any]]:
@@ -59,7 +60,7 @@ def parse_http_properties(
         elif key.startswith("pagination.") or key.startswith("param."):
             subkey = key.split(".", 1)[1]
             meta_kwargs[subkey] = value
-       
+
     # httpx consider empty headers or json as an actual headers or json
     # that it will encode to the server. Some API do not like this and
     # will issue 403 malformed error code. Let's just pop them.
@@ -133,6 +134,7 @@ def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -
 # Pagination Strategy Classes
 # ============================================================
 
+
 class PaginationStrategy(ABC):
     def __init__(self, meta: dict[str, Any]):
         self.meta = meta
@@ -149,8 +151,11 @@ class PaginationStrategy(ABC):
         """Returns True if this strategy uses cursors"""
         return False
 
+
 class NoPagination(PaginationStrategy):
-    def update_params(self, cursor, size): return {}
+    def update_params(self, cursor, size):
+        return {}
+
 
 class PageBasedPagination(PaginationStrategy):
     def __init__(self, meta):
@@ -163,6 +168,7 @@ class PageBasedPagination(PaginationStrategy):
         params = {self.page_param: self.page, self.size_param: size}
         self.page += 1
         return params
+
 
 class CursorBasedPagination(PaginationStrategy):
     def __init__(self, meta):
@@ -194,7 +200,7 @@ class HeaderBasedPagination(PaginationStrategy):
         if cursor:
             params[self.cursor_param] = cursor
         return params
-    
+
     def has_cursor(self) -> bool:
         return True
 
@@ -213,6 +219,7 @@ STRATEGIES = {
 # ============================================================
 # Unified Pagination Handler
 # ============================================================
+
 
 async def fetch_paginated_data(
     client: httpx.AsyncClient | httpx.Client,
@@ -268,6 +275,7 @@ async def fetch_paginated_data(
 # HTTP Requesters
 # ============================================================
 
+
 async def async_http_requester(
     jq,
     base_signer: BaseSignerT,
@@ -277,7 +285,9 @@ async def async_http_requester(
 ) -> list[dict]:
     async with httpx.AsyncClient() as client:
         logger.debug(f"running async request with {request_kwargs}")
-        return await fetch_paginated_data(client, jq, base_signer, request_kwargs, meta_kwargs, conn, True)
+        return await fetch_paginated_data(
+            client, jq, base_signer, request_kwargs, meta_kwargs, conn, True
+        )
 
 
 def sync_http_requester(
@@ -289,7 +299,16 @@ def sync_http_requester(
 ) -> list[dict]:
     with httpx.Client() as client:
         logger.debug(f"running sync request with {request_kwargs}")
-        return trio.run(fetch_paginated_data, client, jq, base_signer, request_kwargs, meta_kwargs, conn, False)
+        return trio.run(
+            fetch_paginated_data,
+            client,
+            jq,
+            base_signer,
+            request_kwargs,
+            meta_kwargs,
+            conn,
+            False,
+        )
 
 
 def build_http_requester(
@@ -301,18 +320,24 @@ def build_http_requester(
     jq, base_signer, request_kwargs, meta_kwargs = parse_http_properties(properties)
 
     if is_async:
+
         def _async_inner(conn):
-            return async_http_requester(jq, base_signer, request_kwargs, meta_kwargs, conn)
+            return async_http_requester(
+                jq, base_signer, request_kwargs, meta_kwargs, conn
+            )
+
         return _async_inner
 
     def _sync_inner(conn):
         return sync_http_requester(jq, base_signer, request_kwargs, meta_kwargs, conn)
+
     return _sync_inner
 
 
 # ============================================================
 # WebSocket Handlers
 # ============================================================
+
 
 def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
     parsed_params = {}
@@ -397,10 +422,25 @@ async def ws_generator_aggregator(
             yield msg
 
 
+# TODO: As an improvement allow for "pivoted" templating for multi stream
+# For instance binance can merge WS streams into single stream using this
+# /stream?streams=<streamName1>/<streamName2>/<streamName3>
+# How to enable that ? We split parsing between base_url and "generated"
+# stream name (of arbitrary lenght controlled by input)
+# We also need to pivot the on_start_query so it is a list
 def build_ws_generator(
     properties: dict[str, Any], templates_list: list[dict[str, str]]
 ) -> Callable[[trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]]:
-    """Create websocket generator, fan-in multiple connections if needed."""
+    """
+    Build a websocket data generator, if multiple templates are provided
+    in the templates_list, then one connection is created for each substitute
+    template. The ws_generator_aggregator for now takes care of the fan-in
+    mechanism to make sure only one single output is provided.
+    This for now doesn't handle any backpressure (i.e no buffer, locks etc).
+    """
+
+    # This happens when on_start_query doesn't exist
+    # ie the WS generator has no start conditions
     if len(templates_list) == 0:
         list_of_properties = [parse_ws_properties(properties)]
     else:
