@@ -128,7 +128,7 @@ class TrioScheduler(Service, BaseScheduler):
         async for executable in self._executable_receiver:
             if isinstance(executable, tuple):
                 func, trigger = executable
-                _ = self.add_job(func=func, trigger=trigger, misfire_grace_time=20)
+                _ = self.add_job(func=func, trigger=trigger)
             else:
                 _ = self.add_job(func=executable)
 
