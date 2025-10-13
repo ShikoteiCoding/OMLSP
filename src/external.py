@@ -7,6 +7,7 @@ from duckdb import DuckDBPyConnection
 from functools import partial
 from string import Template
 from trio_websocket import open_websocket_url
+from abc import ABC, abstractmethod
 from typing import Any, Callable, Coroutine, AsyncGenerator
 
 from auth import AUTH_DISPATCHER, BaseSignerT, SecretsHandler
@@ -23,9 +24,11 @@ def parse_http_properties(
     properties: dict[str, str],
 ) -> tuple[dict[str, Any], BaseSignerT, dict[str, Any], dict[str, Any]]:
     """Parse property dict provided by context and get required http parameters."""
+    # Build kwargs dict compatible with both httpx or requests
     requests_kwargs = {"headers": {}, "json": {}}
     meta_kwargs = {}
 
+    # Manually extract standard values
     requests_kwargs["url"] = properties["url"]
     requests_kwargs["method"] = properties["method"]
     jq = jqm.compile(properties["jq"])
@@ -35,25 +38,28 @@ def parse_http_properties(
         secrets_handler
     )
 
+    # Build "dict" kwargs dynamically
+    # TODO: improve with defaultdict(dict)
     for key, value in properties.items():
+        # Handle headers, will always be a dict
         if key.startswith("headers."):
+            # TODO: Implement more robust link between executable and SECRET.
             subkey = key.split(".", 1)[1]
             if "SECRET" in value:
+                # Get secret_name from value which should respect format:
+                # SECRET secret_name
                 value = value.split(" ")[1]
                 secrets_handler.add(subkey, value)
             requests_kwargs["headers"][subkey] = value
 
         elif key.startswith("json."):
             requests_kwargs["json"][key.split(".", 1)[1]] = value
+            # TODO: handle bytes, form and url params
 
         elif key.startswith("pagination.") or key.startswith("param."):
             subkey = key.split(".", 1)[1]
             meta_kwargs[subkey] = value
        
-        elif key.startswith("param."):
-            # Extract subkey after 'param.'
-            subkey = key.split(".", 1)[1]
-            meta_kwargs[subkey] = value
     # httpx consider empty headers or json as an actual headers or json
     # that it will encode to the server. Some API do not like this and
     # will issue 403 malformed error code. Let's just pop them.
@@ -127,18 +133,24 @@ def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -
 # Pagination Strategy Classes
 # ============================================================
 
-class PaginationStrategy:
+class PaginationStrategy(ABC):
     def __init__(self, meta: dict[str, Any]):
         self.meta = meta
 
-    def update_params(self, cursor, size): ...
-    def extract_next_cursor(self, batch, response): ...
+    @abstractmethod
+    def update_params(self, cursor, size) -> dict:
+        pass
 
+    def extract_next_cursor(self, batch, response):
+        """Return the next cursor or None"""
+        return None
+
+    def has_cursor(self) -> bool:
+        """Returns True if this strategy uses cursors"""
+        return False
 
 class NoPagination(PaginationStrategy):
     def update_params(self, cursor, size): return {}
-    def extract_next_cursor(self, batch, response): return None
-
 
 class PageBasedPagination(PaginationStrategy):
     def __init__(self, meta):
@@ -152,9 +164,6 @@ class PageBasedPagination(PaginationStrategy):
         self.page += 1
         return params
 
-    def extract_next_cursor(self, batch, response): return None
-
-
 class CursorBasedPagination(PaginationStrategy):
     def __init__(self, meta):
         super().__init__(meta)
@@ -167,9 +176,10 @@ class CursorBasedPagination(PaginationStrategy):
             params[self.cursor_param] = cursor
         return params
 
+    def has_cursor(self) -> bool:
+        return True
+
     def extract_next_cursor(self, batch, response):
-        if not batch:
-            return None
         return batch[-1].get(self.cursor_id)
 
 
@@ -184,6 +194,9 @@ class HeaderBasedPagination(PaginationStrategy):
         if cursor:
             params[self.cursor_param] = cursor
         return params
+    
+    def has_cursor(self) -> bool:
+        return True
 
     def extract_next_cursor(self, batch, response):
         return response.headers.get(self.next_cursor_header)
@@ -191,7 +204,6 @@ class HeaderBasedPagination(PaginationStrategy):
 
 STRATEGIES = {
     None: NoPagination,
-    "none": NoPagination,
     "page-based": PageBasedPagination,
     "cursor-based": CursorBasedPagination,
     "header-based": HeaderBasedPagination,
@@ -244,9 +256,10 @@ async def fetch_paginated_data(
         if len(batch) < size or (max_items and total >= max_items):
             break
 
-        cursor = strategy.extract_next_cursor(batch, response)
-        if cursor is None:
-            break
+        if strategy.has_cursor():
+            cursor = strategy.extract_next_cursor(batch, response)
+            if cursor is None:
+                break
 
     return results
 
