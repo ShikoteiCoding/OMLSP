@@ -63,7 +63,11 @@ def parse_http_properties(
             # Extract subkey after 'pagination.'
             subkey = key.split(".", 1)[1]
             meta_kwargs[subkey] = value
-
+       
+        elif key.startswith("param."):
+            # Extract subkey after 'param.'
+            subkey = key.split(".", 1)[1]
+            meta_kwargs[subkey] = value
     # httpx consider empty headers or json as an actual headers or json
     # that it will encode to the server. Some API do not like this and
     # will issue 403 malformed error code. Let's just pop them.
@@ -155,40 +159,39 @@ async def async_fetch_paginated_data(
 
     Pagination Types
     ----------------
-    1. limit_offset (page-based)
+    1. page-based
        - The API uses numeric offsets or pages (e.g., ?page=1, ?limit=100)
        - Required meta_kwargs:
-            pagination_type = "limit_offset"
-            pagination_page_param = e.g, "page" or "start"
-            pagination_limit_param = e.g, "limit"
-            pagination_page_start = 0
+            type = "limit_offset"
+            page_param = e.g, "page" or "start"
+            size_param = e.g, "limit"
        - Example: https://api.coinlore.net/api/tickers?start=0&limit=100
 
-    2. cursor (ID-based or token-based)
+    2. cursor-based (ID-based or token-based)
        - The API provides a cursor (like an "id" or "nextToken") in response
        - Required meta_kwargs:
-            pagination_type = "cursor"
-            pagination_cursor_param = # request query param name e.g, "fromId"
-            pagination_cursor_id = # JSON key from last item e.g, "a"
+            type = "cursor"
+            cursor_param = # request query param name e.g, "fromId"
+            cursor_id = # JSON key from last item e.g, "a"
        - Example: https://api.binance.com/api/v3/aggTrades?fromId=12345
 
-    3. header (next-cursor via response headers)
+    3. header-based (next-cursor via response headers)
        - The API includes the next cursor in a response header
        - Required meta_kwargs:
-            pagination_type = "header"
-            pagination_next_header = # name of response header e.g, "cb-after"
-            pagination_cursor_param = # query param for next call e.g, "after"
+            type = "header"
+            next_header = # name of response header e.g, "cb-after"
+            cursor_param = # query param for next call e.g, "after"
        - Example: Coinbase API: "cb-after" header → ?after=xxx
 
-    4. body_link (next URL inside JSON)
+    4. body_link-based (next URL inside JSON)
        - The response JSON includes a direct “next” URL to call.
        - TODO: implement this
 
     Optional Controls
     -----------------
-    pagination_limit : int
+    limit : int
         Maximum number of items per request (default 100)
-    pagination_max : int
+    max : int
         Stop after fetching this many total items (safety limit)
 
     Returns
@@ -200,9 +203,9 @@ async def async_fetch_paginated_data(
 
     handlers = {
         None: fetch_no_pagination,
-        "limit_offset": fetch_limit_offset_pagination,
-        "cursor": fetch_cursor_pagination,
-        "header": fetch_header_pagination,
+        "page-based": fetch_page_based_pagination,
+        "cursor-based": fetch_cursor_based_pagination,
+        "header-based": fetch_header_based_pagination,
     }
 
     handler = handlers.get(pagination_type, fetch_no_pagination)
@@ -221,7 +224,7 @@ async def fetch_no_pagination(
     return parse_response(response.json(), jq)
 
 
-async def fetch_limit_offset_pagination(
+async def fetch_page_based_pagination(
     client: httpx.AsyncClient,
     jq: Any,
     signer: BaseSignerT,
@@ -230,17 +233,16 @@ async def fetch_limit_offset_pagination(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle numeric offset/page-based pagination."""
-    limit = int(meta_kwargs.get("limit", 100))
-    limit_param = meta_kwargs.get("limit_param", "limit")
+    size = int(meta_kwargs.get("size", 100))
+    size_param = meta_kwargs.get("size_param", "limit")
     page_param = meta_kwargs.get("page_param", "page")
     page = 0
-    retried = False
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
 
     results, total = [], 0
 
     while True:
-        params = {limit_param: limit, page_param: page}
+        params = {size_param: size, page_param: page}
         paginated_url = build_paginated_url(request_kwargs["url"], params)
         req = {**request_kwargs, "url": paginated_url}
 
@@ -248,16 +250,15 @@ async def fetch_limit_offset_pagination(
         batch = parse_response(response.json(), jq)
 
         if not batch:
-            if page == 0 and not retried:
+            if page == 0:
                 page = 1
-                retried = True
                 continue
             break
 
         results.extend(batch)
         total += len(batch)
 
-        if len(batch) < limit or (max_items and total >= max_items):
+        if len(batch) < size or (max_items and total >= max_items):
             break
 
         page += 1
@@ -265,7 +266,7 @@ async def fetch_limit_offset_pagination(
     return results
 
 
-async def fetch_cursor_pagination(
+async def fetch_cursor_based_pagination(
     client: httpx.AsyncClient,
     jq: Any,
     signer: BaseSignerT,
@@ -274,8 +275,8 @@ async def fetch_cursor_pagination(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle cursor/id-based pagination."""
-    limit = int(meta_kwargs.get("limit", 100))
-    limit_param = meta_kwargs.get("limit_param", "limit")
+    size = int(meta_kwargs.get("size", 100))
+    size_param = meta_kwargs.get("size_param", "limit")
     cursor_param = meta_kwargs.get("cursor_param", "cursor")
     cursor_id = meta_kwargs.get("cursor_id", "id")
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
@@ -283,7 +284,7 @@ async def fetch_cursor_pagination(
     results, cursor, total = [], None, 0
 
     while True:
-        params = {limit_param: limit}
+        params = {size_param: size}
         if cursor:
             params[cursor_param] = cursor
         paginated_url = build_paginated_url(request_kwargs["url"], params)
@@ -298,7 +299,7 @@ async def fetch_cursor_pagination(
         results.extend(batch)
         total += len(batch)
 
-        if len(batch) < limit or (max_items and total >= max_items):
+        if len(batch) < size or (max_items and total >= max_items):
             break
 
         last_item = batch[-1]
@@ -309,7 +310,7 @@ async def fetch_cursor_pagination(
     return results
 
 
-async def fetch_header_pagination(
+async def fetch_header_based_pagination(
     client: httpx.AsyncClient,
     jq: Any,
     signer: BaseSignerT,
@@ -318,8 +319,8 @@ async def fetch_header_pagination(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle pagination where next-cursor comes from response header."""
-    limit = int(meta_kwargs.get("limit", 100))
-    limit_param = meta_kwargs.get("limit_param", "limit")
+    size = int(meta_kwargs.get("size", 100))
+    size_param = meta_kwargs.get("size_param", "limit")
     cursor_param = meta_kwargs.get("cursor_param", "cursor")
     next_cursor_header = meta_kwargs.get("next_header")
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
@@ -327,7 +328,7 @@ async def fetch_header_pagination(
     results, cursor, total = [], None, 0
 
     while True:
-        params = {limit_param: limit}
+        params = {size_param: size}
         if cursor:
             params[cursor_param] = cursor
         paginated_url = build_paginated_url(request_kwargs["url"], params)
@@ -342,7 +343,7 @@ async def fetch_header_pagination(
         results.extend(batch)
         total += len(batch)
 
-        if len(batch) < limit or (max_items and total >= max_items):
+        if len(batch) < size or (max_items and total >= max_items):
             break
 
         cursor = response.headers.get(next_cursor_header)
@@ -364,7 +365,7 @@ def fetch_no_pagination_sync(
     return parse_response(response.json(), jq)
 
 
-def fetch_limit_offset_pagination_sync(
+def fetch_page_based_pagination_sync(
     client: httpx.Client,
     jq: Any,
     signer: BaseSignerT,
@@ -373,17 +374,16 @@ def fetch_limit_offset_pagination_sync(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle numeric offset/page-based pagination (synchronous)."""
-    limit = int(meta_kwargs.get("limit", 100))
-    limit_param = meta_kwargs.get("limit_param", "limit")
+    size = int(meta_kwargs.get("size", 100))
+    size_param = meta_kwargs.get("size_param", "limit")
     page_param = meta_kwargs.get("page_param", "page")
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
     page = 0
-    retried = False
 
     results, total = [], 0
 
     while True:
-        params = {limit_param: limit, page_param: page}
+        params = {size_param: size, page_param: page}
         paginated_url = build_paginated_url(request_kwargs["url"], params)
         req = {**request_kwargs, "url": paginated_url}
 
@@ -391,16 +391,15 @@ def fetch_limit_offset_pagination_sync(
         batch = parse_response(response.json(), jq)
 
         if not batch:
-            if page == 0 and not retried:
+            if page == 0:
                 page = 1
-                retried = True
                 continue
             break
 
         results.extend(batch)
         total += len(batch)
 
-        if len(batch) < limit or (max_items and total >= max_items):
+        if len(batch) < size or (max_items and total >= max_items):
             break
 
         page += 1
@@ -408,7 +407,7 @@ def fetch_limit_offset_pagination_sync(
     return results
 
 
-def fetch_cursor_pagination_sync(
+def fetch_cursor_based_pagination_sync(
     client: httpx.Client,
     jq: Any,
     signer: BaseSignerT,
@@ -417,8 +416,8 @@ def fetch_cursor_pagination_sync(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle cursor/id-based pagination (synchronous)."""
-    limit = int(meta_kwargs.get("limit", 100))
-    limit_param = meta_kwargs.get("limit_param", "limit")
+    size = int(meta_kwargs.get("size", 100))
+    size_param = meta_kwargs.get("size_param", "limit")
     cursor_param = meta_kwargs.get("cursor_param", "cursor")
     cursor_id = meta_kwargs.get("cursor_id", "id")
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
@@ -426,7 +425,7 @@ def fetch_cursor_pagination_sync(
     results, cursor, total = [], None, 0
 
     while True:
-        params = {limit_param: limit}
+        params = {size_param: size}
         if cursor:
             params[cursor_param] = cursor
         paginated_url = build_paginated_url(request_kwargs["url"], params)
@@ -441,7 +440,7 @@ def fetch_cursor_pagination_sync(
         results.extend(batch)
         total += len(batch)
 
-        if len(batch) < limit or (max_items and total >= max_items):
+        if len(batch) < size or (max_items and total >= max_items):
             break
 
         last_item = batch[-1]
@@ -452,7 +451,7 @@ def fetch_cursor_pagination_sync(
     return results
 
 
-def fetch_header_pagination_sync(
+def fetch_header_based_pagination_sync(
     client: httpx.Client,
     jq: Any,
     signer: BaseSignerT,
@@ -461,8 +460,8 @@ def fetch_header_pagination_sync(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle header-based pagination (synchronous)."""
-    limit = int(meta_kwargs.get("limit", 100))
-    limit_param = meta_kwargs.get("limit_param", "limit")
+    size = int(meta_kwargs.get("size", 100))
+    size_param = meta_kwargs.get("size_param", "limit")
     cursor_param = meta_kwargs.get("cursor_param", "cursor")
     next_cursor_header = meta_kwargs.get("next_header")
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
@@ -470,7 +469,7 @@ def fetch_header_pagination_sync(
     results, cursor, total = [], None, 0
 
     while True:
-        params = {limit_param: limit}
+        params = {size_param: size}
         if cursor:
             params[cursor_param] = cursor
         paginated_url = build_paginated_url(request_kwargs["url"], params)
@@ -485,7 +484,7 @@ def fetch_header_pagination_sync(
         results.extend(batch)
         total += len(batch)
 
-        if len(batch) < limit or (max_items and total >= max_items):
+        if len(batch) < size or (max_items and total >= max_items):
             break
 
         cursor = response.headers.get(next_cursor_header)
@@ -511,9 +510,9 @@ def _sync_fetch_paginated_data(
 
     handlers = {
         None: fetch_no_pagination_sync,
-        "limit_offset": fetch_limit_offset_pagination_sync,
-        "cursor": fetch_cursor_pagination_sync,
-        "header": fetch_header_pagination_sync,
+        "limit_offset": fetch_page_based_pagination_sync,
+        "cursor": fetch_cursor_based_pagination_sync,
+        "header": fetch_header_based_pagination_sync,
     }
 
     handler = handlers.get(pagination_type, fetch_no_pagination_sync)

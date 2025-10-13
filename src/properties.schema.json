@@ -33,23 +33,23 @@
         },
         "pagination.type": {
           "type": "string",
-          "enum": ["limit_offset", "cursor", "header", "body_link"],
+          "enum": ["page-based", "cursor-based", "header-based", "body_link-based"],
           "description": "Pagination strategy type."
         },
-        "pagination.limit_param": {
+        "pagination.size_param": {
           "type": "string",
-          "description": "Query parameter for per-page limit (e.g. 'limit')."
+          "description": "Query parameter for per-page size (e.g. 'limit')."
         },
         "pagination.page_param": {
           "type": "string",
           "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
         },
-        "pagination.limit": {
+        "param.size": {
           "type": "string",
           "pattern": "^[1-9][0-9]*$",
           "description": "Items per page (numeric string). Must be a positive integer."
         },
-        "pagination.max": {
+        "param.max": {
           "type": "string",
           "pattern": "^[1-9][0-9]*$",
           "description": "Maximum number of total records to fetch (numeric string)."
@@ -124,23 +124,23 @@
         },
         "pagination.type": {
           "type": "string",
-          "enum": ["limit_offset", "cursor", "header", "body_link"],
+          "enum": ["page-based", "cursor-based", "header-based", "body_link-based"],
           "description": "Pagination strategy type."
         },
-        "pagination.limit_param": {
+        "pagination.size_param": {
           "type": "string",
-          "description": "Query parameter for per-page limit (e.g. 'limit')."
+          "description": "Query parameter for per-page size (e.g. 'limit')."
         },
         "pagination.page_param": {
           "type": "string",
           "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
         },
-        "pagination.limit": {
+        "param.size": {
           "type": "string",
           "pattern": "^[1-9][0-9]*$",
           "description": "Items per page (numeric string). Must be a positive integer."
         },
-        "pagination.max": {
+        "param.max": {
           "type": "string",
           "pattern": "^[1-9][0-9]*$",
           "description": "Maximum number of total records to fetch (numeric string)."
