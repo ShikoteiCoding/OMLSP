@@ -10,57 +10,43 @@ from trio_websocket import open_websocket_url
 from typing import Any, Callable, Coroutine, AsyncGenerator
 
 from auth import AUTH_DISPATCHER, BaseSignerT, SecretsHandler
-
 from loguru import logger
 
 MAX_RETRIES = 5
 
 
+# ============================================================
+# HTTP Request Helpers
+# ============================================================
+
 def parse_http_properties(
     properties: dict[str, str],
 ) -> tuple[dict[str, Any], BaseSignerT, dict[str, Any], dict[str, Any]]:
-    """
-    Parse property dict provided by context and get required http parameters.
-    """
-    # Build kwargs dict compatible with both httpx or requests
-    requests_kwargs = {}
-    requests_kwargs["headers"] = {}
-    requests_kwargs["json"] = {}
-
+    """Parse property dict provided by context and get required http parameters."""
+    requests_kwargs = {"headers": {}, "json": {}}
     meta_kwargs = {}
-    # Manually extract standard values
+
     requests_kwargs["url"] = properties["url"]
     requests_kwargs["method"] = properties["method"]
     jq = jqm.compile(properties["jq"])
+
     secrets_handler = SecretsHandler()
     signer_class = AUTH_DISPATCHER[requests_kwargs.get("signer_class", "NoSigner")](
         secrets_handler
     )
 
-    # Build "dict" kwargs dynamically
-    # TODO: improve with defaultdict(dict)
     for key, value in properties.items():
-        # Handle headers, will always be a dict
         if key.startswith("headers."):
-            subkey = key.split(".")[1]
-
-            # TODO: Implement more robust link between executable and SECRET.
+            subkey = key.split(".", 1)[1]
             if "SECRET" in value:
-                # Get secret_name from value which should respect format:
-                # SECRET secret_name
                 value = value.split(" ")[1]
-
                 secrets_handler.add(subkey, value)
-
             requests_kwargs["headers"][subkey] = value
 
-        # Handle json, will always be a dict
         elif key.startswith("json."):
-            requests_kwargs["json"][key.split(".")[1]] = value
-        # TODO: handle bytes, form and url params
+            requests_kwargs["json"][key.split(".", 1)[1]] = value
 
-        elif key.startswith("pagination."):
-            # Extract subkey after 'pagination.'
+        elif key.startswith("pagination.") or key.startswith("param."):
             subkey = key.split(".", 1)[1]
             meta_kwargs[subkey] = value
        
@@ -85,25 +71,19 @@ async def async_request(
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
 ) -> httpx.Response:
+    """Retry async HTTP request with exponential backoff."""
     attempt = 0
     while attempt < MAX_RETRIES:
-        response = await client.request(**signer.sign(conn, request_kwargs))
-
         try:
+            response = await client.request(**signer.sign(conn, request_kwargs))
             if response.is_success:
                 logger.debug(f"{response.status_code}: response for {request_kwargs}.")
                 return response
-        except Exception:
-            pass
-
-        logger.error(
-            f"{response.status_code}: request failed {request_kwargs} with {response.text}."
-        )
+        except Exception as e:
+            logger.warning(f"Async request failed (attempt {attempt + 1}): {e}")
 
         attempt += 1
-        if attempt < MAX_RETRIES:
-            delay = attempt
-            await trio.sleep(delay)
+        await trio.sleep(attempt)
 
     logger.error(f"request to {request_kwargs} failed after {MAX_RETRIES} attempts")
     return None
@@ -115,27 +95,25 @@ def sync_request(
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
 ) -> httpx.Response:
-    try:
-        response = client.request(**signer.sign(conn, request_kwargs))
-        logger.debug("response for {}: {}", request_kwargs, response.status_code)
-
-        if response.is_success:
-            return response
-
+    """Retry sync HTTP request."""
+    for attempt in range(MAX_RETRIES):
         try:
+            response = client.request(**signer.sign(conn, request_kwargs))
+            if response.is_success:
+                logger.debug(f"{response.status_code}: response for {request_kwargs}.")
+                return response
             response.raise_for_status()
         except Exception as e:
-            logger.warning(f"unable to request: {e}")
-
-    except Exception as e:
-        logger.error(f"HTTP request failed: {e}")
-
+            logger.warning(f"Sync request failed (attempt {attempt + 1}): {e}")
+            if attempt < MAX_RETRIES - 1:
+                trio.run(trio.sleep, attempt + 1)
+    logger.error(f"request to {request_kwargs} failed after {MAX_RETRIES} attempts")
     return None
 
 
 def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]:
-    res = jq.input(data).all()
-    return res
+    """Apply jq transformation to parsed JSON."""
+    return jq.input(data).all()
 
 
 def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -> str:
@@ -145,154 +123,118 @@ def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -
     return f"{base_url}{sep}{q}"
 
 
-async def async_fetch_paginated_data(
-    client: httpx.AsyncClient,
-    jq: Any,
-    base_signer,
-    request_kwargs: dict[str, Any],
-    meta_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """
-    Unified asynchronous pagination handler
-    Supports multiple pagination strategies used by APIs
+# ============================================================
+# Pagination Strategy Classes
+# ============================================================
 
-    Pagination Types
-    ----------------
-    1. page-based
-       - The API uses numeric offsets or pages (e.g., ?page=1, ?limit=100)
-       - Required meta_kwargs:
-            type = "limit_offset"
-            page_param = e.g, "page" or "start"
-            size_param = e.g, "limit"
-       - Example: https://api.coinlore.net/api/tickers?start=0&limit=100
+class PaginationStrategy:
+    def __init__(self, meta: dict[str, Any]):
+        self.meta = meta
 
-    2. cursor-based (ID-based or token-based)
-       - The API provides a cursor (like an "id" or "nextToken") in response
-       - Required meta_kwargs:
-            type = "cursor"
-            cursor_param = # request query param name e.g, "fromId"
-            cursor_id = # JSON key from last item e.g, "a"
-       - Example: https://api.binance.com/api/v3/aggTrades?fromId=12345
-
-    3. header-based (next-cursor via response headers)
-       - The API includes the next cursor in a response header
-       - Required meta_kwargs:
-            type = "header"
-            next_header = # name of response header e.g, "cb-after"
-            cursor_param = # query param for next call e.g, "after"
-       - Example: Coinbase API: "cb-after" header → ?after=xxx
-
-    4. body_link-based (next URL inside JSON)
-       - The response JSON includes a direct “next” URL to call.
-       - TODO: implement this
-
-    Optional Controls
-    -----------------
-    limit : int
-        Maximum number of items per request (default 100)
-    max : int
-        Stop after fetching this many total items (safety limit)
-
-    Returns
-    -------
-    list[dict]
-        Flattened list of parsed records across all pages.
-    """
-    pagination_type = meta_kwargs.get("type")
-
-    handlers = {
-        None: fetch_no_pagination,
-        "page-based": fetch_page_based_pagination,
-        "cursor-based": fetch_cursor_based_pagination,
-        "header-based": fetch_header_based_pagination,
-    }
-
-    handler = handlers.get(pagination_type, fetch_no_pagination)
-    return await handler(client, jq, base_signer, request_kwargs, meta_kwargs, conn)
+    def update_params(self, cursor, size): ...
+    def extract_next_cursor(self, batch, response): ...
 
 
-async def fetch_no_pagination(
-    client: httpx.AsyncClient,
-    jq: Any,
-    signer: BaseSignerT,
-    request_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """Handle single non-paginated requests."""
-    response = await async_request(client, signer, request_kwargs, conn)
-    return parse_response(response.json(), jq)
+class NoPagination(PaginationStrategy):
+    def update_params(self, cursor, size): return {}
+    def extract_next_cursor(self, batch, response): return None
 
 
-async def fetch_page_based_pagination(
-    client: httpx.AsyncClient,
-    jq: Any,
-    signer: BaseSignerT,
-    request_kwargs: dict[str, Any],
-    meta_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """Handle numeric offset/page-based pagination."""
-    size = int(meta_kwargs.get("size", 100))
-    size_param = meta_kwargs.get("size_param", "limit")
-    page_param = meta_kwargs.get("page_param", "page")
-    page = 0
-    max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
+class PageBasedPagination(PaginationStrategy):
+    def __init__(self, meta):
+        super().__init__(meta)
+        self.page_param = meta.get("page_param", "page")
+        self.size_param = meta.get("size_param", "limit")
+        self.page = 0
 
-    results, total = [], 0
+    def update_params(self, cursor, size):
+        params = {self.page_param: self.page, self.size_param: size}
+        self.page += 1
+        return params
 
-    while True:
-        params = {size_param: size, page_param: page}
-        paginated_url = build_paginated_url(request_kwargs["url"], params)
-        req = {**request_kwargs, "url": paginated_url}
+    def extract_next_cursor(self, batch, response): return None
 
-        response = await async_request(client, signer, req, conn)
-        batch = parse_response(response.json(), jq)
 
+class CursorBasedPagination(PaginationStrategy):
+    def __init__(self, meta):
+        super().__init__(meta)
+        self.cursor_param = meta.get("cursor_param", "cursor")
+        self.cursor_id = meta.get("cursor_id", "id")
+
+    def update_params(self, cursor, size):
+        params = {"limit": size}
+        if cursor:
+            params[self.cursor_param] = cursor
+        return params
+
+    def extract_next_cursor(self, batch, response):
         if not batch:
-            if page == 0:
-                page = 1
-                continue
-            break
-
-        results.extend(batch)
-        total += len(batch)
-
-        if len(batch) < size or (max_items and total >= max_items):
-            break
-
-        page += 1
-
-    return results
+            return None
+        return batch[-1].get(self.cursor_id)
 
 
-async def fetch_cursor_based_pagination(
-    client: httpx.AsyncClient,
+class HeaderBasedPagination(PaginationStrategy):
+    def __init__(self, meta):
+        super().__init__(meta)
+        self.cursor_param = meta.get("cursor_param", "cursor")
+        self.next_cursor_header = meta.get("next_header")
+
+    def update_params(self, cursor, size):
+        params = {"limit": self.meta.get("size", 100)}
+        if cursor:
+            params[self.cursor_param] = cursor
+        return params
+
+    def extract_next_cursor(self, batch, response):
+        return response.headers.get(self.next_cursor_header)
+
+
+STRATEGIES = {
+    None: NoPagination,
+    "none": NoPagination,
+    "page-based": PageBasedPagination,
+    "cursor-based": CursorBasedPagination,
+    "header-based": HeaderBasedPagination,
+}
+
+
+# ============================================================
+# Unified Pagination Handler
+# ============================================================
+
+async def fetch_paginated_data(
+    client: httpx.AsyncClient | httpx.Client,
     jq: Any,
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     meta_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
+    is_async: bool,
 ) -> list[dict]:
-    """Handle cursor/id-based pagination."""
+    """Unified pagination handler (works for async and sync)."""
+    pagination_type = meta_kwargs.get("type", None)
+    strategy = STRATEGIES.get(pagination_type, NoPagination)(meta_kwargs)
+
     size = int(meta_kwargs.get("size", 100))
-    size_param = meta_kwargs.get("size_param", "limit")
-    cursor_param = meta_kwargs.get("cursor_param", "cursor")
-    cursor_id = meta_kwargs.get("cursor_id", "id")
     max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
 
     results, cursor, total = [], None, 0
+    request_fn = async_request if is_async else sync_request
 
     while True:
-        params = {size_param: size}
-        if cursor:
-            params[cursor_param] = cursor
+        params = strategy.update_params(cursor, size)
         paginated_url = build_paginated_url(request_kwargs["url"], params)
         req = {**request_kwargs, "url": paginated_url}
 
-        response = await async_request(client, signer, req, conn)
-        batch = parse_response(response.json(), jq)
+        response = (
+            await request_fn(client, signer, req, conn)
+            if is_async
+            else request_fn(client, signer, req, conn)
+        )
+        if not response:
+            break
 
+        batch = parse_response(response.json(), jq)
         if not batch:
             break
 
@@ -302,222 +244,16 @@ async def fetch_cursor_based_pagination(
         if len(batch) < size or (max_items and total >= max_items):
             break
 
-        last_item = batch[-1]
-        cursor = last_item.get(cursor_id)
-        if not cursor:
+        cursor = strategy.extract_next_cursor(batch, response)
+        if cursor is None:
             break
 
     return results
 
 
-async def fetch_header_based_pagination(
-    client: httpx.AsyncClient,
-    jq: Any,
-    signer: BaseSignerT,
-    request_kwargs: dict[str, Any],
-    meta_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """Handle pagination where next-cursor comes from response header."""
-    size = int(meta_kwargs.get("size", 100))
-    size_param = meta_kwargs.get("size_param", "limit")
-    cursor_param = meta_kwargs.get("cursor_param", "cursor")
-    next_cursor_header = meta_kwargs.get("next_header")
-    max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
-
-    results, cursor, total = [], None, 0
-
-    while True:
-        params = {size_param: size}
-        if cursor:
-            params[cursor_param] = cursor
-        paginated_url = build_paginated_url(request_kwargs["url"], params)
-        req = {**request_kwargs, "url": paginated_url}
-
-        response = await async_request(client, signer, req, conn)
-        batch = parse_response(response.json(), jq)
-
-        if not batch:
-            break
-
-        results.extend(batch)
-        total += len(batch)
-
-        if len(batch) < size or (max_items and total >= max_items):
-            break
-
-        cursor = response.headers.get(next_cursor_header)
-        if not cursor:
-            break
-
-    return results
-
-
-def fetch_no_pagination_sync(
-    client: httpx.Client,
-    jq: Any,
-    signer: BaseSignerT,
-    request_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """Handle single non-paginated synchronous request."""
-    response = sync_request(client, signer, request_kwargs, conn)
-    return parse_response(response.json(), jq)
-
-
-def fetch_page_based_pagination_sync(
-    client: httpx.Client,
-    jq: Any,
-    signer: BaseSignerT,
-    request_kwargs: dict[str, Any],
-    meta_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """Handle numeric offset/page-based pagination (synchronous)."""
-    size = int(meta_kwargs.get("size", 100))
-    size_param = meta_kwargs.get("size_param", "limit")
-    page_param = meta_kwargs.get("page_param", "page")
-    max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
-    page = 0
-
-    results, total = [], 0
-
-    while True:
-        params = {size_param: size, page_param: page}
-        paginated_url = build_paginated_url(request_kwargs["url"], params)
-        req = {**request_kwargs, "url": paginated_url}
-
-        response = sync_request(client, signer, req, conn)
-        batch = parse_response(response.json(), jq)
-
-        if not batch:
-            if page == 0:
-                page = 1
-                continue
-            break
-
-        results.extend(batch)
-        total += len(batch)
-
-        if len(batch) < size or (max_items and total >= max_items):
-            break
-
-        page += 1
-
-    return results
-
-
-def fetch_cursor_based_pagination_sync(
-    client: httpx.Client,
-    jq: Any,
-    signer: BaseSignerT,
-    request_kwargs: dict[str, Any],
-    meta_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """Handle cursor/id-based pagination (synchronous)."""
-    size = int(meta_kwargs.get("size", 100))
-    size_param = meta_kwargs.get("size_param", "limit")
-    cursor_param = meta_kwargs.get("cursor_param", "cursor")
-    cursor_id = meta_kwargs.get("cursor_id", "id")
-    max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
-
-    results, cursor, total = [], None, 0
-
-    while True:
-        params = {size_param: size}
-        if cursor:
-            params[cursor_param] = cursor
-        paginated_url = build_paginated_url(request_kwargs["url"], params)
-        req = {**request_kwargs, "url": paginated_url}
-
-        response = sync_request(client, signer, req, conn)
-        batch = parse_response(response.json(), jq)
-
-        if not batch:
-            break
-
-        results.extend(batch)
-        total += len(batch)
-
-        if len(batch) < size or (max_items and total >= max_items):
-            break
-
-        last_item = batch[-1]
-        cursor = last_item.get(cursor_id)
-        if not cursor:
-            break
-
-    return results
-
-
-def fetch_header_based_pagination_sync(
-    client: httpx.Client,
-    jq: Any,
-    signer: BaseSignerT,
-    request_kwargs: dict[str, Any],
-    meta_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """Handle header-based pagination (synchronous)."""
-    size = int(meta_kwargs.get("size", 100))
-    size_param = meta_kwargs.get("size_param", "limit")
-    cursor_param = meta_kwargs.get("cursor_param", "cursor")
-    next_cursor_header = meta_kwargs.get("next_header")
-    max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
-
-    results, cursor, total = [], None, 0
-
-    while True:
-        params = {size_param: size}
-        if cursor:
-            params[cursor_param] = cursor
-        paginated_url = build_paginated_url(request_kwargs["url"], params)
-        req = {**request_kwargs, "url": paginated_url}
-
-        response = sync_request(client, signer, req, conn)
-        batch = parse_response(response.json(), jq)
-
-        if not batch:
-            break
-
-        results.extend(batch)
-        total += len(batch)
-
-        if len(batch) < size or (max_items and total >= max_items):
-            break
-
-        cursor = response.headers.get(next_cursor_header)
-        if not cursor:
-            break
-
-    return results
-
-
-def _sync_fetch_paginated_data(
-    client: httpx.Client,
-    jq: Any,
-    base_signer,
-    request_kwargs: dict[str, Any],
-    meta_kwargs: dict[str, Any],
-    conn: DuckDBPyConnection,
-) -> list[dict]:
-    """
-    Unified synchronous pagination handler.
-    Delegates to specific pagination strategies.
-    """
-    pagination_type = meta_kwargs.get("type")
-
-    handlers = {
-        None: fetch_no_pagination_sync,
-        "limit_offset": fetch_page_based_pagination_sync,
-        "cursor": fetch_cursor_based_pagination_sync,
-        "header": fetch_header_based_pagination_sync,
-    }
-
-    handler = handlers.get(pagination_type, fetch_no_pagination_sync)
-    return handler(client, jq, base_signer, request_kwargs, meta_kwargs, conn)
-
+# ============================================================
+# HTTP Requesters
+# ============================================================
 
 async def async_http_requester(
     jq,
@@ -527,10 +263,8 @@ async def async_http_requester(
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     async with httpx.AsyncClient() as client:
-        logger.debug(f"running request with properties: {request_kwargs}")
-        return await async_fetch_paginated_data(
-            client, jq, base_signer, request_kwargs, meta_kwargs, conn
-        )
+        logger.debug(f"running async request with {request_kwargs}")
+        return await fetch_paginated_data(client, jq, base_signer, request_kwargs, meta_kwargs, conn, True)
 
 
 def sync_http_requester(
@@ -540,11 +274,9 @@ def sync_http_requester(
     meta_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
 ) -> list[dict]:
-    client = httpx.Client()
-    logger.debug(f"running request with properties: {request_kwargs}")
-    return _sync_fetch_paginated_data(
-        client, jq, base_signer, request_kwargs, meta_kwargs, conn
-    )
+    with httpx.Client() as client:
+        logger.debug(f"running sync request with {request_kwargs}")
+        return trio.run(fetch_paginated_data, client, jq, base_signer, request_kwargs, meta_kwargs, conn, False)
 
 
 def build_http_requester(
@@ -556,19 +288,18 @@ def build_http_requester(
     jq, base_signer, request_kwargs, meta_kwargs = parse_http_properties(properties)
 
     if is_async:
-
         def _async_inner(conn):
-            return async_http_requester(
-                jq, base_signer, request_kwargs, meta_kwargs, conn
-            )
-
+            return async_http_requester(jq, base_signer, request_kwargs, meta_kwargs, conn)
         return _async_inner
 
     def _sync_inner(conn):
         return sync_http_requester(jq, base_signer, request_kwargs, meta_kwargs, conn)
-
     return _sync_inner
 
+
+# ============================================================
+# WebSocket Handlers
+# ============================================================
 
 def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
     parsed_params = {}
@@ -653,26 +384,10 @@ async def ws_generator_aggregator(
             yield msg
 
 
-# TODO: As an improvement allow for "pivoted" templating for multi stream
-# For instance binance can merge WS streams into single stream using this
-# /stream?streams=<streamName1>/<streamName2>/<streamName3>
-# How to enable that ? We split parsing between base_url and "generated"
-# stream name (of arbitrary lenght controlled by input)
-# We also need to pivot the on_start_query so it is a list
 def build_ws_generator(
     properties: dict[str, Any], templates_list: list[dict[str, str]]
 ) -> Callable[[trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]]:
-    """
-    Build a websocket data generator, if multiple templates are provided
-    in the templates_list, then one connection is created for each substitute
-    template. The ws_generator_aggregator for now takes care of the fan-in
-    mechanism to make sure only one single output is provided.
-
-    This for now doesn't handle any backpressure (i.e no buffer, locks etc).
-    """
-
-    # This happens when on_start_query doesn't exist
-    # ie the WS generator has no start conditions
+    """Create websocket generator, fan-in multiple connections if needed."""
     if len(templates_list) == 0:
         list_of_properties = [parse_ws_properties(properties)]
     else:
