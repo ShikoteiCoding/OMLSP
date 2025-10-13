@@ -6,6 +6,7 @@ import polars as pl
 from apscheduler.triggers.cron import CronTrigger
 from datetime import timezone
 from enum import StrEnum
+from loguru import logger
 from sqlglot import exp, parse_one
 from typing import Any, Callable
 
@@ -32,17 +33,11 @@ from metadata.db import (
     METADATA_SINK_TABLE_NAME,
     METADATA_SECRET_TABLE_NAME,
 )
-from sql.dialect import OmlspDialect
-from sql.functions import get_trigger_time, get_trigger_time_epoch
-
-GENERATED_COLUMN_DISPATCH: dict[str, Callable[[dict[str, Any]], pl.Expr]] = {
-    "TRIGGER_TIME": get_trigger_time,
-    "TRIGGER_TIME_EPOCH": get_trigger_time_epoch,
-}
+from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
 
 
 def build_generated_column_func(
-    expr: exp.Expression,
+    expr: exp.Expression, dtype: exp.DataType
 ) -> Callable[[dict[str, Any]], pl.Expr]:
     """
     Pre-compile column constraint kind.
@@ -86,11 +81,14 @@ def build_generated_column_func(
             return lambda ctx, v=val: pl.lit(v)
 
         elif isinstance(node, exp.Func):
-            func_name = node.name.upper()
-            if func_name not in GENERATED_COLUMN_DISPATCH:
-                raise NotImplementedError(f"Unknown function {func_name}")
-            func = GENERATED_COLUMN_DISPATCH[func_name]
-            return lambda ctx, f=func: f(ctx)
+            # TODO: improve, function should have a "name" parameter
+            # instead of serializing by node value (generated)
+            name = str(node).upper()
+            if name not in GENERATED_COLUMN_FUNCTION_DISPATCH:
+                raise NotImplementedError(f"Unknown function `{name}`")
+            func = GENERATED_COLUMN_FUNCTION_DISPATCH[name]
+            # Inject dtype in the compiled lambda to be used at runtime
+            return lambda ctx, f=func: f(ctx, dtype)
 
         elif isinstance(node, exp.Add):
             left = _compile(node.this)
@@ -141,12 +139,12 @@ def build_generated_column_func(
             return lambda ctx: inner(ctx)
 
         else:
+            logger.error("Unsupported: {}", type(node))
             raise NotImplementedError(f"Unsupported: {type(node)}")
 
     # compile once:
     compiled = _compile(expr)
 
-    # return callable for runtime use
     return compiled
 
 
@@ -195,15 +193,16 @@ def parse_table_schema(
         # Parse Columns name + type (and optionally generated columns)
         if isinstance(col, exp.ColumnDef):
             col_name = str(col.name)
-            col_type = col.args.get("kind")  # data type
+            col_type: exp.DataType = col.args.get("kind")  # type: ignore
             column_types[col_name] = str(col_type).upper()
 
-            # Parse Generated columns referred as
-            # "constraints" in sqlglot
+            # Parse Generated columns referred as "constraints" in sqlglot
             if col.constraints:
                 # A ColumnDef can have multiple constraints, we only support the
                 # first one for now, then we extract it's "this" expression
-                value = build_generated_column_func(col.constraints[0].kind.this)
+                value = build_generated_column_func(
+                    col.constraints[0].kind.this, col_type
+                )
                 generated_columns[col_name] = value
 
                 # Deleting constraints for duckdb SQL conversion
