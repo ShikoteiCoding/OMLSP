@@ -63,7 +63,7 @@ def parse_http_properties(
             # Extract subkey after 'pagination.'
             subkey = key.split(".", 1)[1]
             meta_kwargs[subkey] = value
-       
+
         elif key.startswith("param."):
             # Extract subkey after 'param.'
             subkey = key.split(".", 1)[1]
@@ -217,6 +217,7 @@ async def fetch_no_pagination(
     jq: Any,
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
+    meta_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle single non-paginated requests."""
@@ -358,6 +359,7 @@ def fetch_no_pagination_sync(
     jq: Any,
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
+    meta_kwargs,
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     """Handle single non-paginated synchronous request."""
