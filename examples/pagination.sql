@@ -8,10 +8,8 @@ WITH (
     url = 'https://api.coinlore.net/api/tickers/',
     method = 'GET',
     'pagination.type' = 'page-based',
-    'pagination.size_param' = 'limit',
     'pagination.page_param' = 'start',
-    'param.size' = '100',
-    'param.max' = '1000',
+    'param.limit' = '100',
     schedule = '*/1 * * * *',
     jq = '.data[] | {symbol, name, price_usd}',
     'headers.Content-Type' = 'application/json'
@@ -24,13 +22,13 @@ CREATE TABLE binance_agg_trades (
 )
 WITH (
     connector = 'http',
-    url = 'https://api.binance.com/api/v3/aggTrades?symbol=BTCUSDT', 
+    url = 'https://api.binance.com/api/v3/aggTrades', 
     method = 'GET',
     'pagination.type' = 'cursor-based',
     'pagination.cursor_id' = 'a',
     'pagination.cursor_param' = 'fromId',
-    'param.size' = '500',
-    'param.max' = '1000',
+    'param.limit' = '500',
+    'param.symbol' = 'BTCUSDT',
     schedule = '*/1 * * * *',
     jq = '.[] | {a, p, T}',
     'headers.Content-Type' = 'application/json'
@@ -48,11 +46,9 @@ WITH (
     url = 'https://api.exchange.coinbase.com/products/BTC-USD/trades',
     method = 'GET',
     'pagination.type' = 'header-based',
-    'pagination.size_param' = 'limit',
     'pagination.cursor_param' = 'after',
     'pagination.next_header' = 'cb-after',
-    'param.size' = '40',
-    'param.max' = '100',
+    'param.limit' = '40',
     schedule = '*/1 * * * *',
     jq = '.[] | {trade_id, side, size, price, time}',
     'headers.Accept' = 'application/json'

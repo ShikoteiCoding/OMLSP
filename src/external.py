@@ -26,7 +26,7 @@ def parse_http_properties(
 ) -> tuple[dict[str, Any], BaseSignerT, dict[str, Any], dict[str, Any]]:
     """Parse property dict provided by context and get required http parameters."""
     # Build kwargs dict compatible with both httpx or requests
-    requests_kwargs = {"headers": {}, "json": {}}
+    requests_kwargs = {"headers": {}, "json": {}, "params": {}}
     meta_kwargs = {}
 
     # Manually extract standard values
@@ -56,8 +56,11 @@ def parse_http_properties(
         elif key.startswith("json."):
             requests_kwargs["json"][key.split(".", 1)[1]] = value
             # TODO: handle bytes, form and url params
+        
+        elif key.startswith("param."):
+            requests_kwargs["params"][key.split(".", 1)[1]] = value
 
-        elif key.startswith("pagination.") or key.startswith("param."):
+        elif key.startswith("pagination."):
             subkey = key.split(".", 1)[1]
             meta_kwargs[subkey] = value
 
@@ -153,7 +156,7 @@ class PaginationStrategy(ABC):
 
 
 class NoPagination(PaginationStrategy):
-    def update_params(self, cursor, size):
+    def update_params(self, cursor, params):
         return {}
 
 
@@ -164,8 +167,8 @@ class PageBasedPagination(PaginationStrategy):
         self.size_param = meta.get("size_param", "limit")
         self.page = 0
 
-    def update_params(self, cursor, size):
-        params = {self.page_param: self.page, self.size_param: size}
+    def update_params(self, cursor, params):
+        params[self.page_param] = self.page
         self.page += 1
         return params
 
@@ -176,8 +179,7 @@ class CursorBasedPagination(PaginationStrategy):
         self.cursor_param = meta.get("cursor_param", "cursor")
         self.cursor_id = meta.get("cursor_id", "id")
 
-    def update_params(self, cursor, size):
-        params = {"limit": size}
+    def update_params(self, cursor, params):
         if cursor:
             params[self.cursor_param] = cursor
         return params
@@ -195,8 +197,7 @@ class HeaderBasedPagination(PaginationStrategy):
         self.cursor_param = meta.get("cursor_param", "cursor")
         self.next_cursor_header = meta.get("next_header")
 
-    def update_params(self, cursor, size):
-        params = {"limit": self.meta.get("size", 100)}
+    def update_params(self, cursor, params):
         if cursor:
             params[self.cursor_param] = cursor
         return params
@@ -233,17 +234,14 @@ async def fetch_paginated_data(
     """Unified pagination handler (works for async and sync)."""
     pagination_type = meta_kwargs.get("type", None)
     strategy = STRATEGIES.get(pagination_type, NoPagination)(meta_kwargs)
-
-    size = int(meta_kwargs.get("size", 100))
-    max_items = int(meta_kwargs.get("max", 0)) if "max" in meta_kwargs else None
-
     results, cursor, total = [], None, 0
     request_fn = async_request if is_async else sync_request
+    base_params = request_kwargs.get("params", {}).copy()
+    limit = int(base_params.get("limit", 100))
 
     while True:
-        params = strategy.update_params(cursor, size)
-        paginated_url = build_paginated_url(request_kwargs["url"], params)
-        req = {**request_kwargs, "url": paginated_url}
+        params = strategy.update_params(cursor, base_params.copy())
+        req = {**request_kwargs, "params": params}
 
         response = (
             await request_fn(client, signer, req, conn)
@@ -260,7 +258,7 @@ async def fetch_paginated_data(
         results.extend(batch)
         total += len(batch)
 
-        if len(batch) < size or (max_items and total >= max_items):
+        if len(batch) < limit:
             break
 
         if strategy.has_cursor():
