@@ -3,7 +3,6 @@ import trio
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.base import BaseTrigger
-from apscheduler.util import maybe_ref
 from services import Service
 from channel import Channel
 from typing import Callable
@@ -147,11 +146,6 @@ class TrioScheduler(Service, BaseScheduler):
         self._is_shutting_down = True
 
         logger.success("[{}] shutdown completed.", self.name)
-
-    def _configure(self, config):
-        self._nursery = maybe_ref(config.pop("_nursery", None))
-        self._trio_token = maybe_ref(config.pop("_trio_token", None))
-        super()._configure(config)
 
     @staticmethod
     def require_running(func):
