@@ -47,8 +47,6 @@ async def main():
     task_manager.connect_scheduler(scheduler)
 
     async with trio.open_nursery() as nursery:
-        token = trio.lowlevel.current_trio_token()
-        scheduler._configure({"_nursery": nursery, "_trio_token": token})
 
         nursery.start_soon(app.start, nursery)
         for sql in iter_sql_statements(sql_filepath):
