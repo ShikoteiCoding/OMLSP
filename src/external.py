@@ -63,7 +63,7 @@ def parse_http_properties(
             # Extract subkey after 'pagination.'
             subkey = key.split(".", 1)[1]
             meta_kwargs[subkey] = value
-       
+
         elif key.startswith("param."):
             # Extract subkey after 'param.'
             subkey = key.split(".", 1)[1]
