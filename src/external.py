@@ -2,7 +2,7 @@ import trio
 import jq as jqm
 import httpx
 import json
-
+import time
 from duckdb import DuckDBPyConnection
 from functools import partial
 from string import Template
@@ -55,9 +55,9 @@ def parse_http_properties(
 
         elif key.startswith("json."):
             requests_kwargs["json"][key.split(".", 1)[1]] = value
-            # TODO: handle bytes, form and url params
+            # TODO: handle bytes, form 
         
-        elif key.startswith("param."):
+        elif key.startswith("params."):
             requests_kwargs["params"][key.split(".", 1)[1]] = value
 
         elif key.startswith("pagination."):
@@ -93,7 +93,7 @@ async def async_request(
             logger.warning(f"Async request failed (attempt {attempt + 1}): {e}")
 
         attempt += 1
-        await trio.sleep(attempt)
+        await trio.sleep(2 ** attempt)
 
     logger.error(f"request to {request_kwargs} failed after {MAX_RETRIES} attempts")
     return None
@@ -105,8 +105,9 @@ def sync_request(
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
 ) -> httpx.Response:
-    """Retry sync HTTP request."""
-    for attempt in range(MAX_RETRIES):
+    """Retry sync HTTP request with exponential backoff."""
+    attempt = 0
+    while attempt < MAX_RETRIES:
         try:
             response = client.request(**signer.sign(conn, request_kwargs))
             if response.is_success:
@@ -115,8 +116,10 @@ def sync_request(
             response.raise_for_status()
         except Exception as e:
             logger.warning(f"Sync request failed (attempt {attempt + 1}): {e}")
-            if attempt < MAX_RETRIES - 1:
-                trio.run(trio.sleep, attempt + 1)
+        
+        attempt += 1 
+        time.sleep(2 ** attempt)
+
     logger.error(f"request to {request_kwargs} failed after {MAX_RETRIES} attempts")
     return None
 
@@ -138,15 +141,14 @@ def build_paginated_url(base_url: str, params: dict[str, Any], sep: str = "?") -
 # ============================================================
 
 
-class PaginationStrategy(ABC):
+class BasicPagination(ABC):
     def __init__(self, meta: dict[str, Any]):
         self.meta = meta
 
-    @abstractmethod
-    def update_params(self, cursor, size) -> dict:
-        pass
+    def update_params(self, cursor: str, params: dict[str, str]) -> dict:
+        return {}
 
-    def extract_next_cursor(self, batch, response):
+    def extract_next_cursor(self, batch: list[dict[str, Any]], response: httpx.Response):
         """Return the next cursor or None"""
         return None
 
@@ -154,32 +156,26 @@ class PaginationStrategy(ABC):
         """Returns True if this strategy uses cursors"""
         return False
 
-
-class NoPagination(PaginationStrategy):
-    def update_params(self, cursor, params):
-        return {}
-
-
-class PageBasedPagination(PaginationStrategy):
+class PageBasedPagination(BasicPagination):
     def __init__(self, meta):
         super().__init__(meta)
         self.page_param = meta.get("page_param", "page")
         self.size_param = meta.get("size_param", "limit")
         self.page = 0
 
-    def update_params(self, cursor, params):
+    def update_params(self, cursor: str, params: dict[str, str]):
         params[self.page_param] = self.page
         self.page += 1
         return params
 
 
-class CursorBasedPagination(PaginationStrategy):
+class CursorBasedPagination(BasicPagination):
     def __init__(self, meta):
         super().__init__(meta)
         self.cursor_param = meta.get("cursor_param", "cursor")
         self.cursor_id = meta.get("cursor_id", "id")
 
-    def update_params(self, cursor, params):
+    def update_params(self, cursor: str, params: dict[str, str]):
         if cursor:
             params[self.cursor_param] = cursor
         return params
@@ -187,17 +183,17 @@ class CursorBasedPagination(PaginationStrategy):
     def has_cursor(self) -> bool:
         return True
 
-    def extract_next_cursor(self, batch, response):
+    def extract_next_cursor(self, batch: list[dict[str, Any]], response: httpx.Response):
         return batch[-1].get(self.cursor_id)
 
 
-class HeaderBasedPagination(PaginationStrategy):
+class HeaderBasedPagination(BasicPagination):
     def __init__(self, meta):
         super().__init__(meta)
         self.cursor_param = meta.get("cursor_param", "cursor")
         self.next_cursor_header = meta.get("next_header")
 
-    def update_params(self, cursor, params):
+    def update_params(self, cursor: str, params: dict[str, str]):
         if cursor:
             params[self.cursor_param] = cursor
         return params
@@ -205,12 +201,12 @@ class HeaderBasedPagination(PaginationStrategy):
     def has_cursor(self) -> bool:
         return True
 
-    def extract_next_cursor(self, batch, response):
+    def extract_next_cursor(self, batch: list[dict[str, Any]], response: httpx.Response):
         return response.headers.get(self.next_cursor_header)
 
 
 STRATEGIES = {
-    None: NoPagination,
+    None: BasicPagination,
     "page-based": PageBasedPagination,
     "cursor-based": CursorBasedPagination,
     "header-based": HeaderBasedPagination,
@@ -233,8 +229,8 @@ async def fetch_paginated_data(
 ) -> list[dict]:
     """Unified pagination handler (works for async and sync)."""
     pagination_type = meta_kwargs.get("type", None)
-    strategy = STRATEGIES.get(pagination_type, NoPagination)(meta_kwargs)
-    results, cursor, total = [], None, 0
+    strategy = STRATEGIES.get(pagination_type, BasicPagination)(meta_kwargs)
+    results, cursor = [], None
     request_fn = async_request if is_async else sync_request
     base_params = request_kwargs.get("params", {}).copy()
     limit = int(base_params.get("limit", 100))
@@ -242,6 +238,8 @@ async def fetch_paginated_data(
     while True:
         params = strategy.update_params(cursor, base_params.copy())
         req = {**request_kwargs, "params": params}
+        if req["params"] == {}:
+            req.pop("params")
 
         response = (
             await request_fn(client, signer, req, conn)
@@ -256,8 +254,6 @@ async def fetch_paginated_data(
             break
 
         results.extend(batch)
-        total += len(batch)
-
         if len(batch) < limit:
             break
 

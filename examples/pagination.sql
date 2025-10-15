@@ -9,7 +9,7 @@ WITH (
     method = 'GET',
     'pagination.type' = 'page-based',
     'pagination.page_param' = 'start',
-    'param.limit' = '100',
+    'params.limit' = '100',
     schedule = '*/1 * * * *',
     jq = '.data[] | {symbol, name, price_usd}',
     'headers.Content-Type' = 'application/json'
@@ -27,8 +27,8 @@ WITH (
     'pagination.type' = 'cursor-based',
     'pagination.cursor_id' = 'a',
     'pagination.cursor_param' = 'fromId',
-    'param.limit' = '500',
-    'param.symbol' = 'BTCUSDT',
+    'params.limit' = '500',
+    'params.symbol' = 'BTCUSDT',
     schedule = '*/1 * * * *',
     jq = '.[] | {a, p, T}',
     'headers.Content-Type' = 'application/json'
@@ -48,7 +48,7 @@ WITH (
     'pagination.type' = 'header-based',
     'pagination.cursor_param' = 'after',
     'pagination.next_header' = 'cb-after',
-    'param.limit' = '40',
+    'params.limit' = '40',
     schedule = '*/1 * * * *',
     jq = '.[] | {trade_id, side, size, price, time}',
     'headers.Accept' = 'application/json'
