@@ -27,13 +27,12 @@ from context.context import (
 from inout import cache
 from metadata import (
     create_macro_definition,
+    get_batch_id_from_source_metadata,
     get_batch_id_from_table_metadata,
     get_lookup_tables,
     get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
-    get_batch_id_from_view_metadata,
-    update_batch_id_in_view_metadata,
 )
 from external import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
@@ -284,9 +283,10 @@ def records_to_polars(
 async def http_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
-    table_name: str,
+    name: str,
     column_types: dict[str, str],
     dynamic_columns: dict[str, Callable],
+    is_source: bool,
     http_requester: Callable,
 ) -> pl.DataFrame:
     # Create generated column context (to be applied upon at exec time)
@@ -297,7 +297,13 @@ async def http_source_executable(
         "trigger_time": datetime.now(timezone.utc).replace(microsecond=0)
     }
 
-    batch_id = get_batch_id_from_table_metadata(conn, table_name)
+    # This is slow and kept synchrone for now but making it async
+    # Through a metadata manager would risk concurrency conflicts
+    if is_source:
+        batch_id = get_batch_id_from_source_metadata(conn, name)
+    else:
+        batch_id = get_batch_id_from_table_metadata(conn, name)
+
     logger.info(
         "[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"]
     )
@@ -314,11 +320,16 @@ async def http_source_executable(
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
         df = records_to_polars(records, column_types, dynamic_columns, func_context)
-        await cache(df, batch_id, epoch, table_name, conn, False)
+        await cache(df, batch_id, epoch, name, conn, not is_source)
     else:
         df = pl.DataFrame()
 
-    update_batch_id_in_table_metadata(conn, table_name, batch_id + 1)
+    # This is slow and kept synchrone for now but making it async
+    # Through a metadata manager would risk concurrency conflicts
+    if is_source:
+        update_batch_id_in_table_metadata(conn, name, batch_id + 1)
+    else:
+        update_batch_id_in_table_metadata(conn, name, batch_id + 1)
     return df
 
 
@@ -356,9 +367,10 @@ def build_scheduled_source_executable(
 ) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
     return partial(
         http_source_executable,
-        table_name=ctx.name,
+        name=ctx.name,
         column_types=ctx.column_types,
         dynamic_columns=ctx.generated_columns,
+        is_source=ctx.source,
         http_requester=build_http_requester(ctx.properties, is_async=True),
     )
 
@@ -619,13 +631,11 @@ async def transform_executable(
     transform_query = transform_query.replace(f'"{first_upstream}"', "df")
     transform_df = conn.execute(transform_query).pl()
 
-    batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
     epoch = int(time.time() * 1_000)
     # invert is_materialized for truncate
     # if is_materialized -> truncate = False -> append mode
     # if not is_materialized -> truncate = True -> truncate mode (overwrite)
-    await cache(transform_df, batch_id, epoch, name, conn, not is_materialized)
-    update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
+    await cache(transform_df, -1, epoch, name, conn, not is_materialized)
 
     return transform_df
 

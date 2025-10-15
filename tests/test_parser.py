@@ -3,7 +3,7 @@ import pytest
 
 from apscheduler.triggers.cron import CronTrigger
 from datetime import timezone
-from src.sql.sqlparser.parser import extract_one_query_context
+from sql.parser import extract_one_query_context
 from src.sql.file import iter_sql_statements
 from src.context.context import (
     CreateHTTPTableContext,
