@@ -62,8 +62,10 @@ DUCKDB_TO_PYARROW_PYTYPE = {
 DUCKDB_TO_POLARS: dict[str, Any] = {
     "VARCHAR": pl.Utf8,
     "TEXT": pl.Utf8,
-    "TIMESTAMP": pl.Datetime,
+    # match duckdb, default is microseconds
+    "TIMESTAMP": pl.Datetime("us"),
     "TIMESTAMP_MS": pl.Datetime("ms"),
+    "TIMESTAMP_US": pl.Datetime("us"),
     "TIMESTAMP_NS": pl.Datetime("ns"),
     "DATETIME": pl.Datetime,
     "FLOAT": pl.Float32,
@@ -93,6 +95,74 @@ def build_lookup_properties(
     return new_props
 
 
+def _coerce_result_dict(
+    d: dict[str, Any], field_types: dict[str, pa.DataType]
+) -> dict[str, Any]:
+    """
+    Convert the values in ``d`` so that they match the Arrow ``schema``.
+
+    Code is AI generated. This is because it's a temporary solution to use
+    duckdb for lookup logic.
+
+    TODO: move towards type mapping and pre compilation as we know the
+    python type from the jq, we can directly build response to result
+    converter. If it is pre compiled we could also detect "if we need"
+    coercion, making overall performance greatly improved.
+    """
+    out = {}
+
+    # Loop through actual keys in the dict (sparse-friendly)
+    for name, raw in d.items():
+        # Skip if this field isn't in the schema
+        if name not in field_types:
+            logger.warning(
+                "Field `{}` in dict isn't in provided schema: `{}`", name, field_types
+            )
+            continue
+
+        typ = field_types[name]
+
+        if pa.types.is_int64(typ):
+            if isinstance(raw, (int)):
+                out[name] = int(raw)
+            elif isinstance(raw, str):
+                out[name] = int(raw.strip())
+            else:
+                raise TypeError(f"Field '{name}' expected int64, got {type(raw)}")
+
+        elif pa.types.is_float64(typ) or pa.types.is_float32(typ):
+            if isinstance(raw, (float, int)):
+                out[name] = float(raw)
+            elif isinstance(raw, str):
+                out[name] = float(raw.strip())
+            else:
+                raise TypeError(f"Field '{name}' expected float64, got {type(raw)}")
+
+        # TODO: improve timestamp coercion to be stop being unit sensitive
+        elif pa.types.is_timestamp(typ):
+            if isinstance(raw, datetime):
+                out[name] = raw
+            elif isinstance(raw, (int)):
+                out[name] = datetime.fromtimestamp(float(raw), timezone.utc)
+            elif isinstance(raw, str):
+                try:
+                    out[name] = datetime.fromisoformat(raw)
+                except ValueError:
+                    out[name] = datetime.fromtimestamp(float(raw.strip()), timezone.utc)
+            else:
+                raise TypeError(f"Field '{name}' expected timestamp, got {type(raw)}")
+
+        elif pa.types.is_string(typ):
+            out[name] = str(raw)
+
+        else:
+            raise NotImplementedError(
+                f"Coercion for Arrow type {typ} (field '{name}') not implemented"
+            )
+
+    return out
+
+
 def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
@@ -115,24 +185,14 @@ def build_scalar_udf(
         )
 
     # Return type of the scalar func as pyarrow (internal)
-    return_type_arrow = pa.struct(child_types)
+    return_type_arrow: pa.Schema = pa.struct(child_types)
+    field_types = {field.name: field.type for field in return_type_arrow}
 
+    # Create named parameters for the udf, using arity as identifier
+    # Dyckdb pyarrow udf does't accept args or kwargs
     arg_names = [f"a{i}" for i in range(1, arity + 1)]
 
-    def core_udf(*arrays: pa.ChunkedArray) -> pa.Array:
-        results = []
-        for chunks in zip(*(arr.chunks for arr in arrays)):
-            py_chunks = [chunk.to_pylist() for chunk in chunks]
-            chunk_rows = zip(*py_chunks)
-            chunk_results = process_elements(chunk_rows, properties)
-            results.extend(chunk_results)
-        return pa.array(results, type=return_type_arrow)
-
-    udf = eval(
-        f"lambda {', '.join(arg_names)}: core_udf({', '.join(arg_names)})",
-        {"core_udf": core_udf},
-    )
-
+    # Threadpool http wrapper which process elements
     def process_elements(
         rows: Iterable[tuple[Any, ...]],
         properties: dict[str, str],
@@ -150,14 +210,30 @@ def build_scalar_udf(
                 if isinstance(response, list) and len(response) >= 1:
                     default_response |= response[-1]
             except Exception as e:
-                logger.exception(f"HTTP request failed: {e}")
+                logger.exception("HTTP request failed: {}", e)
 
-            return default_response
+            coerced_response = _coerce_result_dict(default_response, field_types)
+            return coerced_response
 
         with ThreadPoolExecutor() as executor:
             results = list(executor.map(_inner, rows))
 
         return results
+
+    def core_udf(*arrays: pa.ChunkedArray) -> pa.Array:
+        coerced_results = []
+        for chunks in zip(*(arr.chunks for arr in arrays)):
+            py_chunks = [chunk.to_pylist() for chunk in chunks]
+            chunk_rows = zip(*py_chunks)
+            chunk_results = process_elements(chunk_rows, properties)
+            coerced_results.extend(chunk_results)
+
+        return pa.array(coerced_results, type=return_type_arrow)
+
+    udf = eval(
+        f"lambda {', '.join(arg_names)}: core_udf({', '.join(arg_names)})",
+        {"core_udf": core_udf},
+    )
 
     return {
         "name": name,
@@ -222,11 +298,17 @@ async def http_source_executable(
     }
 
     batch_id = get_batch_id_from_table_metadata(conn, table_name)
-    logger.info(f"[{task_id}{{{batch_id}}}] Starting @ {func_context['trigger_time']}")
+    logger.info(
+        "[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"]
+    )
 
     records = await http_requester(conn)
     logger.debug(
-        f"[{task_id}{{{batch_id}}}] - http number of responses: {len(records)} - batch {batch_id}"
+        "[{}{{{}}}] - http number of responses: {} - batch {}",
+        task_id,
+        batch_id,
+        len(records),
+        batch_id,
     )
 
     if len(records) > 0:
@@ -252,7 +334,7 @@ async def ws_source_executable(
     *args,
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
-    logger.info(f"[{task_id}] - starting ws executable")
+    logger.info("[{}] - starting ws executable", task_id)
 
     # 'ws_generator_func' is supposed to be never ending (while True)
     # if an issue happens, the source task should be entirely
@@ -321,7 +403,7 @@ def build_lookup_table_prehook(
     )
     # register scalar for row to row http call
     conn.create_function(**udf_params)
-    logger.debug(f"registered function: {func_name}")
+    logger.debug("registered function: {}", func_name)
 
     # TODO: wrap SQL in function
     # register macro (to be injected in place of sql)
@@ -334,7 +416,10 @@ def build_lookup_table_prehook(
     func_def = f"{func_name}({', '.join([f'CAST({__inner_tbl}.{col} AS VARCHAR)' for col in dynamic_columns])})"
     macro_def = f"{macro_name}(table_name, {', '.join(dynamic_columns)})"
     output_cols = ", ".join(
-        [f"struct.{col_name} AS {col_name}" for col_name, _ in columns.items()]
+        [
+            f"CAST(struct.{col_name} AS {duckdb_dtype}) AS {col_name}"
+            for col_name, duckdb_dtype in columns.items()
+        ]
     )
 
     # TODO: move to metadata func
@@ -348,8 +433,10 @@ def build_lookup_table_prehook(
             FROM query_table(table_name) AS {__inner_tbl}
         ) AS {__deriv_tbl};
     """
-    conn.sql(create_macro_sql)
-    logger.debug(f"registered macro: {macro_name} with definition: {create_macro_sql}")
+    conn.execute(create_macro_sql)
+    logger.debug(
+        "registered macro: {} with definition: {}", macro_name, create_macro_sql
+    )
     create_macro_definition(conn, macro_name, dynamic_columns)
 
     return macro_name
@@ -407,7 +494,7 @@ def substitute_sql_template(
     # Substritute lookup table placeholder with template
     query = Template(original_query).substitute(substitute_mapping)
 
-    logger.debug(f"New overwritten select statement: {query}")
+    logger.debug("New overwritten select statement: {}", query)
     return query
 
 
@@ -522,13 +609,13 @@ async def transform_executable(
     # TODO: migrate away from duckdb
     # pl_ctx.register(first_upstream, df)
     # transform_df = pl_ctx.execute(transform_query)
+    logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
 
-    # This is duckdb version just to fix the lookup in views / materialized views
-    # In case we stuck to duckdb macro, i don't have a better solution than that
-    # We could explore multi stage template substitution for macros like
-    # ohlc_macro("all_tickers", ALT.symbol)
-    # but then it will require us to save the macro definition in metadata
-    # which will make it complicated for Select queries
+    # explicitely mock df registration of incoming df
+    # in case of lookup, this should also work when the
+    # registed df is called inside / through a macro !
+    # don't use conn.register() as duckdb only support
+    # global registration and would make it not thread-safe anymore
     transform_query = transform_query.replace(f'"{first_upstream}"', "df")
     transform_df = conn.execute(transform_query).pl()
 

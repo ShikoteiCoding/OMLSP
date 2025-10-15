@@ -8,12 +8,18 @@ CREATE TABLE all_tickers (
     symbol_copy STRING AS (symbol),
     -- Defining spread from buy and sell
     spread FLOAT AS (sell - buy),
-    -- Defining trigger time as timestamp default is us
-    trigger_time TIMESTAMP AS (TRIGGER_TIME()),
+    -- Defining trigger time in ms
+    trigger_time_ms TIMESTAMP_MS AS (TRIGGER_TIME()),
+    -- Defining trigger time in us (default)
+    trigger_time_us_default TIMESTAMP AS (TRIGGER_TIME()),
+    -- Defining trigger time in us
+    trigger_time_us TIMESTAMP_US AS (TRIGGER_TIME()),
+    -- Defining trigger time in ns
+    trigger_time_ns TIMESTAMP_NS AS (TRIGGER_TIME()),
     -- Defining start_at and end_at for ohlc lookup
-    -- TRIGGER_TIME_EPOCH returns epoch as us
-    start_at BIGINT AS (TRIGGER_TIME_EPOCH() / 1000000 - (5 * 60)),
-    end_at BIGINT AS (TRIGGER_TIME_EPOCH() / 1000000)
+    -- TRIGGER_TIME_EPOCH returns epoch as ms (default)
+    start_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000 - (5 * 60)),
+    end_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000)
 )
 WITH (
     connector = 'http',
@@ -27,11 +33,8 @@ WITH (
 -- Get ohlc data provided symbols
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
-    -- TODO: fix to same type as upstream table
-    $start_at STRING,
-    $end_at STRING,
-    -- TODO: fix TIMESTAMP_S, it should be integer from url response
-    -- Consider doing aumatic timestamp convertion (aka coercion)
+    $start_at BIGINT,
+    $end_at BIGINT,
     start_time TIMESTAMP,
     open FLOAT,
     high FLOAT,
@@ -59,7 +62,9 @@ WITH (
 CREATE VIEW ohlc_all_spot_tickers AS
 SELECT
     ALT.symbol,
-    start_time,
+    oh.start_at,
+    oh.end_at,
+    oh.start_time,
     open,
     high,
     low,

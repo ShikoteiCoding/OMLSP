@@ -3,7 +3,6 @@ import trio
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.base import BaseTrigger
-from apscheduler.util import maybe_ref
 from services import Service
 from channel import Channel
 from typing import Callable
@@ -102,14 +101,19 @@ class TrioScheduler(Service, BaseScheduler):
     A scheduler that runs using Trio's structured concurrency model.
     """
 
-    _nursery: trio.Nursery | None = None
+    #: Cancel scope for the wait timer
     _timer_cancel_scope: trio.CancelScope | None = None
+
+    #: Executable receiver from TaskManager
     _executable_receiver: Channel[Callable | tuple[Callable, BaseTrigger]]
+
+    #: Trio token to keep track of threaded tasks
+    _trio_token: trio.lowlevel.TrioToken | None
 
     def __init__(self, *args, **kwargs):
         Service.__init__(self, name="TrioScheduler")
         BaseScheduler.__init__(self, *args, **kwargs)
-        self._trio_token: trio.lowlevel.TrioToken | None = None
+        self._trio_token = trio.lowlevel.current_trio_token()
         self._is_shutting_down = False
 
     def add_executable_channel(
@@ -118,11 +122,7 @@ class TrioScheduler(Service, BaseScheduler):
         self._executable_receiver = channel
 
     async def on_start(self) -> None:
-        if not self._nursery or not self._trio_token:
-            raise RuntimeError(
-                "TrioScheduler.start() must be configured with a nursery and token. "
-                "Use scheduler._configure({'_nursery': nursery, '_trio_token': token})."
-            )
+        self._configure({"_nursery": self._nursery, "_trio_token": self._trio_token})
 
         BaseScheduler.start(self, paused=False)
         async for executable in self._executable_receiver:
@@ -146,11 +146,6 @@ class TrioScheduler(Service, BaseScheduler):
         self._is_shutting_down = True
 
         logger.success("[{}] shutdown completed.", self.name)
-
-    def _configure(self, config):
-        self._nursery = maybe_ref(config.pop("_nursery", None))
-        self._trio_token = maybe_ref(config.pop("_trio_token", None))
-        super()._configure(config)
 
     @staticmethod
     def require_running(func):

@@ -1,20 +1,37 @@
 from __future__ import annotations
 
+import polars as pl
+
 from typing import Any, Callable
 from sqlglot import exp, parse_one, parser, Dialect, TokenType, generator, tokens
 
-from sql.functions import OMLSP_FUNCTIONS
+from sql.functions import get_trigger_time, get_trigger_time_epoch
 
 
-def generate_functions_parser() -> dict[str, Callable]:
-    """
-    Dynamically build parser.Parser from mod:`sql.function`
-    """
-    parser_functions = {}
-    for func_name in OMLSP_FUNCTIONS:
-        parser_functions[func_name] = lambda args: exp.Func(this=func_name)
+# OMLSP specific functions available for generated columns
+class TriggerTime(exp.Func):
+    arg_types = {}
 
-    return parser_functions
+
+class TriggerEpochTime(exp.Func):
+    arg_types = {}
+
+
+# OLMSP mapping of st(node) to function
+# mainly used in mod:`sql.sqlparser.parser`
+GENERATED_COLUMN_FUNCTION_DISPATCH: dict[
+    str, Callable[[dict[str, Any], exp.DataType], pl.Expr]
+] = {
+    "TRIGGER_TIME()": get_trigger_time,
+    "TRIGGER_EPOCH_TIME()": get_trigger_time_epoch,
+}
+
+
+def generate_functions_parser():
+    return {
+        "TRIGGER_TIME": lambda args: TriggerTime(),
+        "TRIGGER_EPOCH_TIME": lambda args: TriggerEpochTime(),
+    }
 
 
 def _show_parser(
@@ -125,36 +142,23 @@ class OmlspDialect(Dialect):
     class Generator(generator.Generator):
         TRANSFORMS = {
             **generator.Generator.TRANSFORMS,
-            exp.Func: lambda self, e: self.func_sql,
+            TriggerTime: lambda self, e: "TRIGGER_TIME()",
+            TriggerEpochTime: lambda self, e: "TRIGGER_EPOCH_TIME()",
         }
-
-        def func_sql(self, expression: exp.Func) -> str:
-            return expression.name
 
         def show_sql(self, expression: exp.Show) -> str:
             return f"SHOW {expression.name}"
 
 
 if __name__ == "__main__":
-    stmt = """
+    sql = """
     CREATE TABLE all_tickers (
         symbol STRING,
-        symbolName STRING,
-        buy FLOAT,
-        sell FLOAT,
-        end_interval_time TIMESTAMP AS (start_time()),
-        start_interval_time TIMESTAMP AS (end_time())
+        trigger_time_ms TIMESTAMP_MS AS (TRIGGER_TIME()),
+        end_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000)
     )
-    WITH (
-        connector = 'http',
-        url = 'https://api.kucoin.com/api/v1/market/allTickers',
-        method = 'GET',
-        schedule = '*/1 * * * *',
-        jq = '.data.ticker[:2][] | {symbol, symbolName, buy, sell}',
-        'headers.Content-Type' = 'application/json'
-    );
     """
-    tokens = list(OmlspDialect.Tokenizer().tokenize(stmt))
-    for t in tokens:
-        print(t.token_type, t.text)
-    res = parse_one(stmt, dialect=OmlspDialect).sql(dialect=OmlspDialect)
+
+    expr = parse_one(sql, read=OmlspDialect)
+    if expr:
+        print(expr)

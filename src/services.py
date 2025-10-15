@@ -137,6 +137,15 @@ class Service(ServiceCallbacks):
     Kudos: https://github.com/ask/mode/tree/master
     """
 
+    __slots__ = (
+        "shutdown_timeout",
+        "_nursery",
+        "_started",
+        "_stopped",
+        "_shutdown",
+        "_dependencies",
+    )
+
     #: Default timeout for graceful shutdown after stop()
     shutdown_timeout: float
 
@@ -165,8 +174,8 @@ class Service(ServiceCallbacks):
         self.shutdown_timeout = shutdown_timeout
 
         # TODO: Not implemented yet
-        self._polling_started = False
-        self._pollers = []
+        # self._polling_started = False
+        # self._pollers = []
 
     async def on_start(self) -> None:
         """
@@ -217,14 +226,14 @@ class Service(ServiceCallbacks):
         for dep in reversed(self._dependencies):
             await dep.stop()
 
-        if self._polling_started:
-            with trio.move_on_after(self.shutdown_timeout) as cancel_scope:
-                await self._shutdown.wait()
+        # if self._polling_started:
+        #     with trio.move_on_after(self.shutdown_timeout) as cancel_scope:
+        #         await self._shutdown.wait()
 
-            if cancel_scope.cancelled_caught:
-                logger.warning(
-                    f"Operation timed out after {self.shutdown_timeout} seconds."
-                )
+        #     if cancel_scope.cancelled_caught:
+        #         logger.warning(
+        #             f"Operation timed out after {self.shutdown_timeout} seconds."
+        #         )
 
         await self.on_shutdown()
 

@@ -18,4 +18,6 @@ async def cache(
     else:
         conn.execute(f"TRUNCATE TABLE {table_name}")
         conn.execute(f"INSERT INTO {table_name} SELECT * FROM df")
-    logger.debug(f"[{table_name}{{{batch_id}}}] {len(df)} records inserted @ {epoch}")
+    logger.debug(
+        "[{}{{{}}}] {} records inserted @ {}", table_name, batch_id, len(df), epoch
+    )
