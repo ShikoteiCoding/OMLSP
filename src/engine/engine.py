@@ -34,7 +34,7 @@ from metadata import (
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
 )
-from external import build_http_requester, build_ws_generator
+from transport import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
 
 
@@ -653,7 +653,7 @@ async def transform_executable(
 if __name__ == "__main__":
     import jq as jqm
     from duckdb import connect
-    from external import ws_generator
+    from transport import ws_generator
 
     conn: DuckDBPyConnection = connect(database=":memory:")
 
