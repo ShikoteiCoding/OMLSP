@@ -1,17 +1,16 @@
 import trio
 import jq as jqm
-import json
 from duckdb import DuckDBPyConnection
-from functools import partial
-from string import Template
-from trio_websocket import open_websocket_url
 from typing import Any, Callable, Coroutine, AsyncGenerator
 from loguru import logger
 from external import (
     parse_http_properties,
     async_http_requester,
     sync_http_requester,
-    parse_response,
+    parse_ws_properties,
+    build_ws_properties,
+    ws_generator,
+    ws_generator_aggregator,
     STRATEGIES,
     NoPagination,
 )
@@ -27,16 +26,17 @@ class TransportBuilder:
         self.properties = props
         self.mode = None
 
-    def build(self, name: str):
-        mapping = {
+    def build(self, name: str) -> "TransportBuilder":
+        builders  = {
             "async": self._set_async,
             "sync": self._set_sync,
             "http": lambda: HttpBuilder(self),
+            "ws": lambda: WsBuilder(self),
             # TODO add WsBuilder
         }
-        if name not in mapping:
+        if name not in builders:
             raise ValueError(f"Unknown build step: {name}")
-        return mapping[name]()
+        return builders [name]()
 
     def _set_async(self):
         self.mode = "async"
@@ -68,7 +68,10 @@ class HttpBuilder(TransportBuilder):
         self.strategy = STRATEGIES.get(pagination_type, NoPagination)(meta_kwargs)
         return self
 
-    def finalize(self):
+    def finalize(self) -> (
+    Callable[[DuckDBPyConnection], Coroutine[Any, Any, list[dict]]]
+    | Callable[[DuckDBPyConnection], list[dict]]
+):
         strategy = self.strategy
 
         if self.mode == "async":
@@ -100,93 +103,50 @@ def build_http_requester(
     return TransportBuilder(properties).build(mode).build("http").configure().finalize()
 
 
-# ============================================================
-# WebSocket Handlers
-# ============================================================
+class WsBuilder(TransportBuilder):
+    def __init__(self, base: TransportBuilder):
+        super().__init__(base.properties)
+        self.mode = base.mode
+        self.templates_list: list[dict[str, Any]] = []
+        self.list_of_properties: list[dict[str, Any]] = []
+        self.generator_fn = None
 
+    def configure(self):
+        """
+        Configure websocket properties.
+        Detect templating or start condition logic and build
+        list_of_properties for ws connections.
+        """
+        # Parse base ws properties (same idea as parse_http_properties)
+        base_props = self.properties
 
-def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
-    parsed_params = {}
+        # If templating or start query logic is already extracted in properties
+        # (for instance from previous stage), handle it here.
+        templates_list = base_props.get("templates_list", [])
+        if not isinstance(templates_list, list):
+            templates_list = []
 
-    for key, value in params.items():
-        if key == "jq":
-            parsed_params["jq"] = jqm.compile(value)
+        # Build the websocket properties
+        if len(templates_list) == 0:
+            list_of_properties = [parse_ws_properties(base_props)]
         else:
-            parsed_params[key] = value
+            list_of_properties = [
+                parse_ws_properties(build_ws_properties(base_props, template))
+                for template in templates_list
+            ]
 
-    return parsed_params
+        self.list_of_properties = list_of_properties
+        return self
 
+    def finalize(self) -> Callable[[trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]]:
+        """
+        Produce the websocket generator function.
+        Returns a callable like: `lambda nursery: AsyncGenerator`
+        """
+        def generator(nursery: trio.Nursery):
+            return ws_generator_aggregator(self.list_of_properties, nursery)
 
-def build_ws_properties(
-    properties: dict[str, Any], template: dict[str, Any]
-) -> dict[str, Any]:
-    """
-    Build websocket properties with Template substitution
-    applied against a single context (template variables).
-    """
-    new_props: dict[str, Any] = {}
-
-    for key, value in properties.items():
-        if key in ["jq"]:  # don't template compile-only keys
-            new_props[key] = value
-            continue
-
-        if isinstance(value, str):
-            new_props[key] = Template(value).safe_substitute(template)
-        else:
-            new_props[key] = value
-
-    return new_props
-
-
-async def ws_generator(
-    properties: dict[str, Any], nursery: trio.Nursery
-) -> AsyncGenerator[list[dict[str, Any]], None]:
-    url = properties["url"]
-    logger.debug("Starting websocket generator on {}", url)
-    async with open_websocket_url(url) as ws:
-        while True:
-            message = await ws.get_message()
-            yield parse_response(json.loads(message), properties["jq"])
-
-
-async def ws_generator_aggregator(
-    list_of_properties: list[dict[str, Any]], nursery: trio.Nursery
-) -> AsyncGenerator[list[dict[str, Any]], None]:
-    """
-    Trio version: fan-in multiple ws_generator streams into one.
-    """
-
-    # This happens when either no templating was required
-    # (no on_start_query condition) or when only 1 element
-    # in the start condition to substitute
-    if len(list_of_properties) == 1:
-        async for msg in ws_generator(
-            properties=list_of_properties[0], nursery=nursery
-        ):
-            yield msg
-
-    # This happens when start condition has multiple
-    # values and thus creating multiple websocket
-    # to aggregate in one simple field
-    else:
-        # Locally scopped channel for agregation purposes
-        # size 0 is an attempt to not miss any event
-        # this might be blocking operation in case of backpressure
-        send, recv = trio.open_memory_channel[list[dict]](10)
-
-        # TODO: Move fan-in mechanism inside the Continuous task
-        # so we can reuse for Trasnform Task
-        async def consume(props: dict[str, Any]):
-            async for msg in ws_generator(properties=props, nursery=nursery):
-                await send.send(msg)
-
-        for props in list_of_properties:
-            nursery.start_soon(consume, props)
-
-        async for msg in recv:
-            yield msg
-
+        return generator
 
 # TODO: As an improvement allow for "pivoted" templating for multi stream
 # For instance binance can merge WS streams into single stream using this
@@ -205,20 +165,21 @@ def build_ws_generator(
     This for now doesn't handle any backpressure (i.e no buffer, locks etc).
     """
 
-    # This happens when on_start_query doesn't exist
-    # ie the WS generator has no start conditions
-    if len(templates_list) == 0:
-        list_of_properties = [parse_ws_properties(properties)]
-    else:
-        # For each template element create a new properties dict
-        list_of_properties = [
-            parse_ws_properties(build_ws_properties(properties, template))
-            for template in templates_list
-        ]
+    # Inject templates_list into properties so WsBuilder can handle them
+    ws_properties = properties.copy()
+    ws_properties["templates_list"] = templates_list
 
-    # Multiple list of properties needs one ws connection
-    # This requires fan-in mechanism through aggregator
-    return partial(ws_generator_aggregator, list_of_properties)
+    # Use Builder chain
+    ws_gen = (
+        TransportBuilder(ws_properties)
+            .build("async")
+            .build("ws")
+            .configure()
+            .finalize()
+    )
+
+    # Return the callable expected by higher-level continuous source
+    return ws_gen
 
 
 if __name__ == "__main__":

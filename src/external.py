@@ -2,9 +2,12 @@ import trio
 import jq as jqm
 import httpx
 import time
+import json
+from string import Template
+from trio_websocket import open_websocket_url
 from duckdb import DuckDBPyConnection
 from typing import Any
-
+from typing import Any, AsyncGenerator
 from auth import AUTH_DISPATCHER, BaseSignerT, SecretsHandler
 from loguru import logger
 
@@ -278,3 +281,88 @@ def sync_http_requester(
                     break
 
         return results
+
+# ============================================================
+# WebSocket Handlers
+# ============================================================
+
+def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
+    parsed_params = {}
+
+    for key, value in params.items():
+        if key == "jq":
+            parsed_params["jq"] = jqm.compile(value)
+        else:
+            parsed_params[key] = value
+
+    return parsed_params
+
+def build_ws_properties(
+    properties: dict[str, Any], template: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Build websocket properties with Template substitution
+    applied against a single context (template variables).
+    """
+    new_props: dict[str, Any] = {}
+
+    for key, value in properties.items():
+        if key in ["jq"]:  # don't template compile-only keys
+            new_props[key] = value
+            continue
+
+        if isinstance(value, str):
+            new_props[key] = Template(value).safe_substitute(template)
+        else:
+            new_props[key] = value
+
+    return new_props
+
+
+async def ws_generator(
+    properties: dict[str, Any], nursery: trio.Nursery
+) -> AsyncGenerator[list[dict[str, Any]], None]:
+    url = properties["url"]
+    logger.debug("Starting websocket generator on {}", url)
+    async with open_websocket_url(url) as ws:
+        while True:
+            message = await ws.get_message()
+            yield parse_response(json.loads(message), properties["jq"])
+
+
+async def ws_generator_aggregator(
+    list_of_properties: list[dict[str, Any]], nursery: trio.Nursery
+) -> AsyncGenerator[list[dict[str, Any]], None]:
+    """
+    Trio version: fan-in multiple ws_generator streams into one.
+    """
+
+    # This happens when either no templating was required
+    # (no on_start_query condition) or when only 1 element
+    # in the start condition to substitute
+    if len(list_of_properties) == 1:
+        async for msg in ws_generator(
+            properties=list_of_properties[0], nursery=nursery
+        ):
+            yield msg
+
+    # This happens when start condition has multiple
+    # values and thus creating multiple websocket
+    # to aggregate in one simple field
+    else:
+        # Locally scopped channel for agregation purposes
+        # size 0 is an attempt to not miss any event
+        # this might be blocking operation in case of backpressure
+        send, recv = trio.open_memory_channel[list[dict]](10)
+
+        # TODO: Move fan-in mechanism inside the Continuous task
+        # so we can reuse for Trasnform Task
+        async def consume(props: dict[str, Any]):
+            async for msg in ws_generator(properties=props, nursery=nursery):
+                await send.send(msg)
+
+        for props in list_of_properties:
+            nursery.start_soon(consume, props)
+
+        async for msg in recv:
+            yield msg
