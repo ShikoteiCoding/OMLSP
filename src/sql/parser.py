@@ -8,16 +8,18 @@ from datetime import timezone
 from enum import StrEnum
 from loguru import logger
 from sqlglot import exp, parse_one
+from sqlglot.errors import ParseError
 from typing import Any, Callable
 
 from context.context import (
     CommandContext,
     CreateHTTPLookupTableContext,
     CreateHTTPTableContext,
+    CreateWSSourceContext,
     CreateWSTableContext,
+    CreateHTTPSourceContext,
     CreateSinkContext,
     CreateViewContext,
-    CreateMaterializedViewContext,
     CreateSecretContext,
     InvalidContext,
     QueryContext,
@@ -29,11 +31,24 @@ from context.context import (
 from metadata.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
-    METADATA_VIEW_MATERIALIZED_TABLE_NAME,
     METADATA_SINK_TABLE_NAME,
     METADATA_SECRET_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
+
+
+class CreateKind(StrEnum):
+    SINK = "SINK"
+    TABLE = "TABLE"
+    SOURCE = "SOURCE"
+    VIEW = "VIEW"
+    SECRET = "SECRET"
+
+
+class SourceConnectorKind(StrEnum):
+    HTTP = "http"
+    LOOKUP_HTTP = "lookup-http"
+    WS = "ws"
 
 
 def build_generated_column_func(
@@ -148,19 +163,6 @@ def build_generated_column_func(
     return compiled
 
 
-class CreateKind(StrEnum):
-    SINK = "SINK"
-    TABLE = "TABLE"
-    VIEW = "VIEW"
-    SECRET = "SECRET"
-
-
-class TableConnectorKind(StrEnum):
-    HTTP = "http"
-    LOOKUP_HTTP = "lookup-http"
-    WS = "ws"
-
-
 def get_name(expression: exp.Expression) -> str:
     return getattr(getattr(expression, "this", expression), "name", "")
 
@@ -183,7 +185,7 @@ def parse_table_schema(
     table: exp.Schema,
 ) -> tuple[exp.Schema, str, list[str], dict[str, str], dict[str, Callable]]:
     """Parse table schema expression into required metadata"""
-    table_name = get_name(table)
+    table_name = table.this.name
     table = table.copy()
 
     column_types: dict[str, str] = {}
@@ -191,22 +193,14 @@ def parse_table_schema(
     generated_columns: dict[str, Callable] = {}
     for col in table.expressions:
         # Parse Columns name + type (and optionally generated columns)
-        if isinstance(col, exp.ColumnDef):
-            col_name = str(col.name)
-            col_type: exp.DataType = col.args.get("kind")  # type: ignore
-            column_types[col_name] = str(col_type).upper()
+        col_name, column_type, generated_column = parse_column_def(col)
+        column_types[col_name] = column_type
 
-            # Parse Generated columns referred as "constraints" in sqlglot
-            if col.constraints:
-                # A ColumnDef can have multiple constraints, we only support the
-                # first one for now, then we extract it's "this" expression
-                value = build_generated_column_func(
-                    col.constraints[0].kind.this, col_type
-                )
-                generated_columns[col_name] = value
-
-                # Deleting constraints for duckdb SQL conversion
-                col.set("constraints", None)
+        # If generated column exist, remove it from sql
+        # for duckdb sql generation
+        if generated_column:
+            generated_columns[col_name] = generated_column
+            col.set("constraints", None)
 
     return table, table_name, columns, column_types, generated_columns
 
@@ -232,18 +226,46 @@ def parse_lookup_table_schema(
     return table, table_name, columns, dynamic_columns
 
 
-def parse_ws_table_schema(table: exp.Schema) -> tuple[str, dict[str, str]]:
+def parse_column_def(
+    col: exp.ColumnDef,
+) -> tuple[str, str, Callable[[dict[str, Any]], pl.Expr] | None]:
+    col_name = str(col.name)
+    col_type: exp.DataType = col.args.get("kind")  # type: ignore
+    column_type = str(col_type).upper()
+    generated_column: None | Callable[[dict[str, Any]], pl.Expr] = None
+
+    # Parse Generated columns referred as "constraints" in sqlglot
+    if col.constraints:
+        # A ColumnDef can have multiple constraints, we only support the
+        # first one for now, then we extract it's "this" expression
+        generated_column = build_generated_column_func(
+            col.constraints[0].kind.this, col_type
+        )
+
+    return col_name, column_type, generated_column
+
+
+def parse_ws_table_schema(
+    table: exp.Schema,
+) -> tuple[str, dict[str, str], dict[str, Callable]]:
     # Parse web socket table schema.
+    table = table.copy()
     table_name = table.this.name
 
-    column_types = {}
+    column_types: dict[str, str] = {}
+    generated_columns: dict[str, Callable] = {}
     for col in table.expressions:
-        if isinstance(col, exp.ColumnDef):
-            col_name = str(col.name)
-            col_type = col.args.get("kind")  # data type
-            column_types[col_name] = str(col_type).upper()
+        # Parse Columns name + type (and optionally generated columns)
+        col_name, column_type, generated_column = parse_column_def(col)
+        column_types[col_name] = column_type
 
-    return table_name, column_types
+        # If generated column exist, remove it from sql
+        # for duckdb sql generation
+        if generated_column:
+            generated_columns[col_name] = generated_column
+            col.set("constraints", None)
+
+    return table_name, column_types, generated_columns
 
 
 def validate_create_properties(
@@ -280,9 +302,9 @@ def extract_create_properties(statement: exp.Create) -> dict[str, str]:
     return properties
 
 
-def build_create_http_table_context(
+def build_create_http_table_or_source_context(
     statement: exp.Create, properties: dict[str, str]
-) -> CreateHTTPTableContext:
+) -> CreateHTTPTableContext | CreateHTTPSourceContext:
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
 
@@ -293,6 +315,10 @@ def build_create_http_table_context(
 
     # overwrite modified table statement
     statement.set("this", updated_table_statement)
+    # extract source for correct typing
+    is_source = str(statement.kind) == "SOURCE"
+    # restore table for state creation
+    statement.set("kind", "TABLE")
 
     # cron schedule for http
     trigger = CronTrigger.from_crontab(
@@ -300,12 +326,21 @@ def build_create_http_table_context(
     )
 
     # get query purged of it's omlsp specific syntax
-    clean_query = get_duckdb_sql(statement)
+    duckdb_query = get_duckdb_sql(statement)
 
+    if is_source:
+        return CreateHTTPSourceContext(
+            name=table_name,
+            properties=properties,
+            query=duckdb_query,
+            column_types=column_types,
+            generated_columns=generated_columns,
+            trigger=trigger,
+        )
     return CreateHTTPTableContext(
         name=table_name,
         properties=properties,
-        query=clean_query,
+        query=duckdb_query,
         column_types=column_types,
         generated_columns=generated_columns,
         trigger=trigger,
@@ -339,21 +374,37 @@ def build_create_http_lookup_table_context(
 
 def build_create_ws_table_context(
     statement: exp.Create, properties: dict[str, str]
-) -> CreateWSTableContext:
+) -> CreateWSSourceContext | CreateWSTableContext:
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
 
-    table_name, column_types = parse_ws_table_schema(statement.this)
+    table_name, column_types, generated_columns = parse_ws_table_schema(statement.this)
+
+    # extract source for correct typing
+    is_source = str(statement.kind) == "SOURCE"
+    # restore table for state creation
+    statement.set("kind", "TABLE")
 
     # get query purged of omlsp-specific syntax
     clean_query = get_duckdb_sql(statement)
 
     on_start_query = properties.pop("on_start_query", "")
 
+    if is_source:
+        return CreateWSSourceContext(
+            name=table_name,
+            properties=properties,
+            column_types=column_types,
+            generated_columns=generated_columns,
+            query=clean_query,
+            on_start_query=on_start_query,
+        )
+
     return CreateWSTableContext(
         name=table_name,
         properties=properties,
         column_types=column_types,
+        generated_columns=generated_columns,
         query=clean_query,
         on_start_query=on_start_query,
     )
@@ -398,7 +449,7 @@ def build_create_sink_context(
 
 def build_create_view_context(
     statement: exp.Create,
-) -> CreateViewContext | CreateMaterializedViewContext | InvalidContext:
+) -> CreateViewContext | InvalidContext:
     name = statement.this.name
 
     ctx = extract_select_context(statement.expression)
@@ -417,11 +468,12 @@ def build_create_view_context(
     if properties:
         for prop in properties.expressions:
             if isinstance(prop, exp.MaterializedProperty):
-                return CreateMaterializedViewContext(
+                return CreateViewContext(
                     name=name,
                     upstreams=upstreams,
                     query=query,
                     transform_ctx=ctx,
+                    materialized=True,
                 )
 
     return CreateViewContext(
@@ -429,14 +481,17 @@ def build_create_view_context(
         upstreams=upstreams,
         query=query,
         transform_ctx=ctx,
+        materialized=False,
     )
 
 
-def build_generic_create_table_context(
+def build_generic_create_table_or_source_context(
     statement: exp.Create, properties_schema: dict
 ) -> (
     CreateHTTPTableContext
+    | CreateHTTPSourceContext
     | CreateHTTPLookupTableContext
+    | CreateWSSourceContext
     | CreateWSTableContext
     | InvalidContext
 ):
@@ -452,13 +507,13 @@ def build_generic_create_table_context(
 
     connector = properties.pop("connector")
 
-    if connector == TableConnectorKind.LOOKUP_HTTP.value:
+    if connector == SourceConnectorKind.LOOKUP_HTTP.value:
         return build_create_http_lookup_table_context(statement, properties)
 
-    if connector == TableConnectorKind.HTTP.value:
-        return build_create_http_table_context(statement, properties)
+    if connector == SourceConnectorKind.HTTP.value:
+        return build_create_http_table_or_source_context(statement, properties)
 
-    if connector == TableConnectorKind.WS.value:
+    if connector == SourceConnectorKind.WS.value:
         return build_create_ws_table_context(statement, properties)
 
     return InvalidContext(
@@ -488,16 +543,22 @@ def extract_create_context(
     statement: exp.Create, properties_schema: dict
 ) -> (
     CreateHTTPTableContext
+    | CreateHTTPSourceContext
     | CreateHTTPLookupTableContext
+    | CreateWSSourceContext
     | CreateWSTableContext
     | CreateSinkContext
     | CreateViewContext
-    | CreateMaterializedViewContext
     | CreateSecretContext
     | InvalidContext
 ):
-    if str(statement.kind) == CreateKind.TABLE.value:
-        return build_generic_create_table_context(statement, properties_schema)
+    if (
+        str(statement.kind) == CreateKind.TABLE.value
+        or str(statement.kind) == CreateKind.SOURCE.value
+    ):
+        return build_generic_create_table_or_source_context(
+            statement, properties_schema
+        )
 
     elif str(statement.kind) == CreateKind.SINK.value:
         return build_create_sink_context(statement, properties_schema)
@@ -600,9 +661,6 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
     if "TABLES" in sql:
         query += METADATA_TABLE_TABLE_NAME
 
-    elif "MATERIALIZED VIEWS" in sql:
-        query += METADATA_VIEW_MATERIALIZED_TABLE_NAME
-
     elif "VIEWS" in sql:
         query += METADATA_VIEW_TABLE_NAME
 
@@ -623,12 +681,24 @@ def extract_command_context(
     return CommandContext(query=sql_string)
 
 
+def parse_with_sqlglot(query: str) -> exp.Expression | ParseError:
+    try:
+        parsed_statement = parse_one(query, dialect=OmlspDialect)
+        return parsed_statement
+    except ParseError as e:
+        logger.error(e)
+        return e
+
+
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> QueryContext | NonQueryContext:
-    parsed_statement = parse_one(query, dialect=OmlspDialect)
+    parsed_statement = parse_with_sqlglot(query)
 
-    if isinstance(parsed_statement, exp.Create):
+    if isinstance(parsed_statement, exp.Command):
+        return extract_command_context(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.Create):
         return extract_create_context(parsed_statement, properties_schema)
 
     elif isinstance(parsed_statement, exp.Select):
@@ -643,8 +713,8 @@ def extract_one_query_context(
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
 
-    elif isinstance(parsed_statement, exp.Command):
-        return extract_command_context(parsed_statement)
+    elif isinstance(parsed_statement, ParseError):
+        return InvalidContext(reason=f"Parsing error: {parsed_statement}")
 
     return InvalidContext(
         reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}"

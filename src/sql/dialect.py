@@ -48,9 +48,10 @@ class OmlspDialect(Dialect):
         KEYWORDS = {
             # TODO: ADD SOURCE HERE
             **tokens.Tokenizer.KEYWORDS,
-            "SINK": TokenType.SINK,
-            "WITH": TokenType.WITH,
             "SHOW": TokenType.SHOW,
+            "SINK": TokenType.SINK,
+            "SOURCE": TokenType.SOURCE,
+            "WITH": TokenType.WITH,
             # Generic token type for "non existing" tokens
             # Can only be delt dynamically if self._match
             "SECRET": TokenType.COMMAND,
@@ -152,10 +153,13 @@ class OmlspDialect(Dialect):
 
 if __name__ == "__main__":
     sql = """
-    CREATE TABLE all_tickers (
+    CREATE SOURCE all_tickers (
         symbol STRING,
         trigger_time_ms TIMESTAMP_MS AS (TRIGGER_TIME()),
         end_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000)
+    )
+    WITH (
+        'key1' = 'val1'
     )
     """
 

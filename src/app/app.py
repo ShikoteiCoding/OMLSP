@@ -7,9 +7,9 @@ from context.context import (
     CommandContext,
     CreateSecretContext,
     CreateSinkContext,
+    CreateSourceContext,
     CreateTableContext,
     CreateViewContext,
-    CreateMaterializedViewContext,
     EvaluableContext,
     InvalidContext,
     SelectContext,
@@ -22,16 +22,16 @@ from engine.engine import duckdb_to_dicts, duckdb_to_pl, substitute_sql_template
 from metadata import (
     create_secret,
     create_sink,
+    create_source,
     create_table,
     create_view,
-    create_view_materialized,
     get_lookup_tables,
     get_duckdb_tables,
     init_metadata_store,
 )
 from server import ClientManager
 from sql.file.reader import iter_sql_statements
-from sql.sqlparser.parser import extract_one_query_context
+from sql.parser import extract_one_query_context
 from scheduler import TrioScheduler
 from task import TaskManager
 from services import Service
@@ -181,10 +181,10 @@ class App(Service):
         try:
             if isinstance(ctx, CreateTableContext):
                 return create_table(self._conn, ctx)
+            elif isinstance(ctx, CreateSourceContext):
+                return create_source(self._conn, ctx)
             elif isinstance(ctx, CreateViewContext):
                 return create_view(self._conn, ctx)
-            elif isinstance(ctx, CreateMaterializedViewContext):
-                return create_view_materialized(self._conn, ctx)
             elif isinstance(ctx, CreateSinkContext):
                 return create_sink(self._conn, ctx)
             elif isinstance(ctx, CreateSecretContext):

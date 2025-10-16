@@ -27,13 +27,12 @@ from context.context import (
 from inout import cache
 from metadata import (
     create_macro_definition,
+    get_batch_id_from_source_metadata,
     get_batch_id_from_table_metadata,
     get_lookup_tables,
     get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
-    get_batch_id_from_view_metadata,
-    update_batch_id_in_view_metadata,
 )
 from transport import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
@@ -284,9 +283,10 @@ def records_to_polars(
 async def http_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
-    table_name: str,
+    name: str,
     column_types: dict[str, str],
     dynamic_columns: dict[str, Callable],
+    is_source: bool,
     http_requester: Callable,
 ) -> pl.DataFrame:
     # Create generated column context (to be applied upon at exec time)
@@ -297,7 +297,13 @@ async def http_source_executable(
         "trigger_time": datetime.now(timezone.utc).replace(microsecond=0)
     }
 
-    batch_id = get_batch_id_from_table_metadata(conn, table_name)
+    # This is slow and kept synchrone for now but making it async
+    # Through a metadata manager would risk concurrency conflicts
+    if is_source:
+        batch_id = get_batch_id_from_source_metadata(conn, name)
+    else:
+        batch_id = get_batch_id_from_table_metadata(conn, name)
+
     logger.info(
         "[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"]
     )
@@ -314,11 +320,16 @@ async def http_source_executable(
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
         df = records_to_polars(records, column_types, dynamic_columns, func_context)
-        await cache(df, batch_id, epoch, table_name, conn, False)
+        await cache(df, batch_id, epoch, name, conn, is_source)
     else:
         df = pl.DataFrame()
 
-    update_batch_id_in_table_metadata(conn, table_name, batch_id + 1)
+    # This is slow and kept synchrone for now but making it async
+    # Through a metadata manager would risk concurrency conflicts
+    if is_source:
+        update_batch_id_in_table_metadata(conn, name, batch_id + 1)
+    else:
+        update_batch_id_in_table_metadata(conn, name, batch_id + 1)
     return df
 
 
@@ -327,6 +338,7 @@ async def ws_source_executable(
     conn: DuckDBPyConnection,
     table_name: str,
     column_types: dict[str, str],
+    is_source: bool,
     ws_generator_func: Callable[
         [trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]
     ],
@@ -343,7 +355,7 @@ async def ws_source_executable(
         if len(records) > 0:
             df = records_to_polars(records, column_types, {}, {})
             # Do not truncate the cache, this is a Table
-            await cache(df, 0, int(time.time() * 1_000), table_name, conn, False)
+            await cache(df, 0, int(time.time() * 1_000), table_name, conn, is_source)
         else:
             # This should not happen, just in case
             df = pl.DataFrame()
@@ -356,9 +368,10 @@ def build_scheduled_source_executable(
 ) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
     return partial(
         http_source_executable,
-        table_name=ctx.name,
+        name=ctx.name,
         column_types=ctx.column_types,
         dynamic_columns=ctx.generated_columns,
+        is_source=ctx.source,
         http_requester=build_http_requester(ctx.properties, is_async=True),
     )
 
@@ -381,6 +394,7 @@ def build_continuous_source_executable(
         ws_source_executable,
         table_name=table_name,
         column_types=ctx.column_types,
+        is_source=ctx.source,
         ws_generator_func=build_ws_generator(properties, on_start_results),
     )
 
@@ -442,14 +456,22 @@ def build_lookup_table_prehook(
     return macro_name
 
 
-def build_substitute_macro_definition(
-    con: DuckDBPyConnection,
+def get_substitute_macro_definition(
+    conn: DuckDBPyConnection,
     join_table: str,
     from_table: str,
     from_table_or_alias: str,
     join_table_or_alias: str,
 ) -> str:
-    macro_name, fields = get_macro_definition_by_name(con, f"{join_table}_macro")
+    # Lookup tables should go through a macro definition.
+    #
+    # This function returns macro definition which can be used in SQL statement.
+    #
+    # Example:
+    #     - table: ohlc
+    #     - returns: ohlc_macro("all_tickers", ALT.field1, ALT.field2)
+
+    macro_name, fields = get_macro_definition_by_name(conn, f"{join_table}_macro")
     scalar_func_fields = ",".join(
         [f"{from_table_or_alias}.{field}" for field in fields]
     )
@@ -485,7 +507,7 @@ def substitute_sql_template(
     # build the substitute mapping
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
-            substitute_mapping[join_table] = build_substitute_macro_definition(
+            substitute_mapping[join_table] = get_substitute_macro_definition(
                 conn, join_table, from_table, from_table_or_alias, join_table_or_alias
             )
         else:
@@ -619,13 +641,11 @@ async def transform_executable(
     transform_query = transform_query.replace(f'"{first_upstream}"', "df")
     transform_df = conn.execute(transform_query).pl()
 
-    batch_id = get_batch_id_from_view_metadata(conn, name, is_materialized)
     epoch = int(time.time() * 1_000)
     # invert is_materialized for truncate
     # if is_materialized -> truncate = False -> append mode
     # if not is_materialized -> truncate = True -> truncate mode (overwrite)
-    await cache(transform_df, batch_id, epoch, name, conn, not is_materialized)
-    update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
+    await cache(transform_df, -1, epoch, name, conn, not is_materialized)
 
     return transform_df
 
@@ -655,7 +675,7 @@ if __name__ == "__main__":
             }
 
             async for msg in ws_source_executable(
-                "0", conn, "abcd", {}, partial(ws_generator, properties), nursery
+                "0", conn, "abcd", {}, False, partial(ws_generator, properties), nursery
             ):
                 logger.info(msg)
 
