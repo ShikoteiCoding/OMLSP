@@ -36,23 +36,9 @@
           "enum": ["page-based", "cursor-based", "header-based", "body_link-based"],
           "description": "Pagination strategy type."
         },
-        "pagination.size_param": {
-          "type": "string",
-          "description": "Query parameter for per-page size (e.g. 'limit')."
-        },
         "pagination.page_param": {
           "type": "string",
           "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
-        },
-        "param.size": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]*$",
-          "description": "Items per page (numeric string). Must be a positive integer."
-        },
-        "param.max": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]*$",
-          "description": "Maximum number of total records to fetch (numeric string)."
         },
         "pagination.cursor_param": {
           "type": "string",
@@ -83,6 +69,10 @@
             "type": "string",
             "pattern": "^SECRET\\s+[a-zA-Z0-9_]+$",
             "description": "Accept SECRET values"
+          },
+          "^params\\..+$": {
+            "type": "string",
+            "description": "Additional parameter configuration"
           }
         }
       },
@@ -127,23 +117,9 @@
           "enum": ["page-based", "cursor-based", "header-based", "body_link-based"],
           "description": "Pagination strategy type."
         },
-        "pagination.size_param": {
-          "type": "string",
-          "description": "Query parameter for per-page size (e.g. 'limit')."
-        },
         "pagination.page_param": {
           "type": "string",
           "description": "Query parameter for page index or offset (e.g. 'page', 'start')."
-        },
-        "param.size": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]*$",
-          "description": "Items per page (numeric string). Must be a positive integer."
-        },
-        "param.max": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]*$",
-          "description": "Maximum number of total records to fetch (numeric string)."
         },
         "pagination.cursor_param": {
           "type": "string",
@@ -170,6 +146,10 @@
         "^json\\..+$": {
           "type": "string",
           "description": "Additional JSON configuration"
+        },
+        "^params\\..+$": {
+          "type": "string",
+          "description": "Additional parameter configuration"
         }
       },
       "additionalProperties": true
