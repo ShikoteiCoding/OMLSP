@@ -15,6 +15,7 @@ from context.context import (
     CommandContext,
     CreateHTTPLookupTableContext,
     CreateHTTPTableContext,
+    CreateWSSourceContext,
     CreateWSTableContext,
     CreateHTTPSourceContext,
     CreateSinkContext,
@@ -184,7 +185,7 @@ def parse_table_schema(
     table: exp.Schema,
 ) -> tuple[exp.Schema, str, list[str], dict[str, str], dict[str, Callable]]:
     """Parse table schema expression into required metadata"""
-    table_name = get_name(table)
+    table_name = table.this.name
     table = table.copy()
 
     column_types: dict[str, str] = {}
@@ -192,22 +193,14 @@ def parse_table_schema(
     generated_columns: dict[str, Callable] = {}
     for col in table.expressions:
         # Parse Columns name + type (and optionally generated columns)
-        if isinstance(col, exp.ColumnDef):
-            col_name = str(col.name)
-            col_type: exp.DataType = col.args.get("kind")  # type: ignore
-            column_types[col_name] = str(col_type).upper()
+        col_name, column_type, generated_column = parse_column_def(col)
+        column_types[col_name] = column_type
 
-            # Parse Generated columns referred as "constraints" in sqlglot
-            if col.constraints:
-                # A ColumnDef can have multiple constraints, we only support the
-                # first one for now, then we extract it's "this" expression
-                value = build_generated_column_func(
-                    col.constraints[0].kind.this, col_type
-                )
-                generated_columns[col_name] = value
-
-                # Deleting constraints for duckdb SQL conversion
-                col.set("constraints", None)
+        # If generated column exist, remove it from sql
+        # for duckdb sql generation
+        if generated_column:
+            generated_columns[col_name] = generated_column
+            col.set("constraints", None)
 
     return table, table_name, columns, column_types, generated_columns
 
@@ -233,18 +226,46 @@ def parse_lookup_table_schema(
     return table, table_name, columns, dynamic_columns
 
 
-def parse_ws_table_schema(table: exp.Schema) -> tuple[str, dict[str, str]]:
+def parse_column_def(
+    col: exp.ColumnDef,
+) -> tuple[str, str, Callable[[dict[str, Any]], pl.Expr] | None]:
+    col_name = str(col.name)
+    col_type: exp.DataType = col.args.get("kind")  # type: ignore
+    column_type = str(col_type).upper()
+    generated_column: None | Callable[[dict[str, Any]], pl.Expr] = None
+
+    # Parse Generated columns referred as "constraints" in sqlglot
+    if col.constraints:
+        # A ColumnDef can have multiple constraints, we only support the
+        # first one for now, then we extract it's "this" expression
+        generated_column = build_generated_column_func(
+            col.constraints[0].kind.this, col_type
+        )
+
+    return col_name, column_type, generated_column
+
+
+def parse_ws_table_schema(
+    table: exp.Schema,
+) -> tuple[str, dict[str, str], dict[str, Callable]]:
     # Parse web socket table schema.
+    table = table.copy()
     table_name = table.this.name
 
-    column_types = {}
+    column_types: dict[str, str] = {}
+    generated_columns: dict[str, Callable] = {}
     for col in table.expressions:
-        if isinstance(col, exp.ColumnDef):
-            col_name = str(col.name)
-            col_type = col.args.get("kind")  # data type
-            column_types[col_name] = str(col_type).upper()
+        # Parse Columns name + type (and optionally generated columns)
+        col_name, column_type, generated_column = parse_column_def(col)
+        column_types[col_name] = column_type
 
-    return table_name, column_types
+        # If generated column exist, remove it from sql
+        # for duckdb sql generation
+        if generated_column:
+            generated_columns[col_name] = generated_column
+            col.set("constraints", None)
+
+    return table_name, column_types, generated_columns
 
 
 def validate_create_properties(
@@ -353,21 +374,37 @@ def build_create_http_lookup_table_context(
 
 def build_create_ws_table_context(
     statement: exp.Create, properties: dict[str, str]
-) -> CreateWSTableContext:
+) -> CreateWSSourceContext | CreateWSTableContext:
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
 
-    table_name, column_types = parse_ws_table_schema(statement.this)
+    table_name, column_types, generated_columns = parse_ws_table_schema(statement.this)
+
+    # extract source for correct typing
+    is_source = str(statement.kind) == "SOURCE"
+    # restore table for state creation
+    statement.set("kind", "TABLE")
 
     # get query purged of omlsp-specific syntax
     clean_query = get_duckdb_sql(statement)
 
     on_start_query = properties.pop("on_start_query", "")
 
+    if is_source:
+        return CreateWSSourceContext(
+            name=table_name,
+            properties=properties,
+            column_types=column_types,
+            generated_columns=generated_columns,
+            query=clean_query,
+            on_start_query=on_start_query,
+        )
+
     return CreateWSTableContext(
         name=table_name,
         properties=properties,
         column_types=column_types,
+        generated_columns=generated_columns,
         query=clean_query,
         on_start_query=on_start_query,
     )
@@ -454,6 +491,7 @@ def build_generic_create_table_or_source_context(
     CreateHTTPTableContext
     | CreateHTTPSourceContext
     | CreateHTTPLookupTableContext
+    | CreateWSSourceContext
     | CreateWSTableContext
     | InvalidContext
 ):
@@ -507,6 +545,7 @@ def extract_create_context(
     CreateHTTPTableContext
     | CreateHTTPSourceContext
     | CreateHTTPLookupTableContext
+    | CreateWSSourceContext
     | CreateWSTableContext
     | CreateSinkContext
     | CreateViewContext

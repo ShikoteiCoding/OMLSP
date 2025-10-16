@@ -31,6 +31,7 @@ class CreateWSTableContext:
     name: str
     properties: dict[str, Any]
     column_types: dict[str, str]
+    generated_columns: dict[str, Callable]
     query: str
     on_start_query: str
     lookup: bool = False
@@ -64,6 +65,22 @@ class CreateHTTPSourceContext:
     source: bool = True
 
     # executable of http table context
+    # returns a polars dataframe
+    _out_type: Type = field(default=pl.DataFrame)
+
+
+@dataclass
+class CreateWSSourceContext:
+    name: str
+    properties: dict[str, Any]
+    column_types: dict[str, str]
+    generated_columns: dict[str, Callable]
+    query: str
+    on_start_query: str
+    lookup: bool = False
+    source: bool = True
+
+    # executable of ws table context
     # returns a polars dataframe
     _out_type: Type = field(default=pl.DataFrame)
 
@@ -136,6 +153,7 @@ EvaluableContext = Union[
     CreateHTTPLookupTableContext,
     CreateHTTPSourceContext,
     CreateHTTPTableContext,
+    CreateWSSourceContext,
     CreateWSTableContext,
     CreateSecretContext,
     CreateSinkContext,
@@ -152,6 +170,7 @@ QueryContext = Union[
     CreateHTTPLookupTableContext,
     CreateHTTPSourceContext,
     CreateHTTPTableContext,
+    CreateWSSourceContext,
     CreateWSTableContext,
     CreateSinkContext,
     CreateViewContext,
@@ -165,17 +184,27 @@ NonQueryContext = Union[CreateSecretContext, InvalidContext]
 
 # Table contexts of different connector type
 CreateTableContext = Union[
-    CreateHTTPLookupTableContext, CreateHTTPTableContext, CreateWSTableContext
+    CreateHTTPLookupTableContext,
+    CreateHTTPTableContext,
+    CreateWSSourceContext,
+    CreateWSTableContext,
 ]
 
 # Source contexts of different connector type
-CreateSourceContext = Union[CreateHTTPSourceContext]
+CreateSourceContext = Union[CreateWSSourceContext, CreateHTTPSourceContext]
 
 # Context part of task flow
 ScheduledTaskContext = Union[CreateHTTPSourceContext, CreateHTTPTableContext]
-ContinousTaskContext = Union[CreateWSTableContext]
+ContinousTaskContext = Union[CreateWSSourceContext, CreateWSTableContext]
 SinkTaskContext = Union[CreateSinkContext]
 TransformTaskContext = Union[CreateViewContext]
 TaskContext = Union[
-    ScheduledTaskContext, ContinousTaskContext, SinkTaskContext, TransformTaskContext
+    ScheduledTaskContext,
+    ContinousTaskContext,
+    SinkTaskContext,
+    TransformTaskContext,
+    # TODO: I don't think this should be considered a TaskContext
+    # Move the lookup registration to the app._eval_ctx and make it
+    # register macro + scalar func from there
+    CreateHTTPLookupTableContext,
 ]

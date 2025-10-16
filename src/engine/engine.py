@@ -320,7 +320,7 @@ async def http_source_executable(
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
         df = records_to_polars(records, column_types, dynamic_columns, func_context)
-        await cache(df, batch_id, epoch, name, conn, not is_source)
+        await cache(df, batch_id, epoch, name, conn, is_source)
     else:
         df = pl.DataFrame()
 
@@ -338,6 +338,7 @@ async def ws_source_executable(
     conn: DuckDBPyConnection,
     table_name: str,
     column_types: dict[str, str],
+    is_source: bool,
     ws_generator_func: Callable[
         [trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]
     ],
@@ -354,7 +355,7 @@ async def ws_source_executable(
         if len(records) > 0:
             df = records_to_polars(records, column_types, {}, {})
             # Do not truncate the cache, this is a Table
-            await cache(df, 0, int(time.time() * 1_000), table_name, conn, False)
+            await cache(df, 0, int(time.time() * 1_000), table_name, conn, is_source)
         else:
             # This should not happen, just in case
             df = pl.DataFrame()
@@ -393,6 +394,7 @@ def build_continuous_source_executable(
         ws_source_executable,
         table_name=table_name,
         column_types=ctx.column_types,
+        is_source=ctx.source,
         ws_generator_func=build_ws_generator(properties, on_start_results),
     )
 
@@ -454,14 +456,22 @@ def build_lookup_table_prehook(
     return macro_name
 
 
-def build_substitute_macro_definition(
-    con: DuckDBPyConnection,
+def get_substitute_macro_definition(
+    conn: DuckDBPyConnection,
     join_table: str,
     from_table: str,
     from_table_or_alias: str,
     join_table_or_alias: str,
 ) -> str:
-    macro_name, fields = get_macro_definition_by_name(con, f"{join_table}_macro")
+    # Lookup tables should go through a macro definition.
+    #
+    # This function returns macro definition which can be used in SQL statement.
+    #
+    # Example:
+    #     - table: ohlc
+    #     - returns: ohlc_macro("all_tickers", ALT.field1, ALT.field2)
+
+    macro_name, fields = get_macro_definition_by_name(conn, f"{join_table}_macro")
     scalar_func_fields = ",".join(
         [f"{from_table_or_alias}.{field}" for field in fields]
     )
@@ -497,7 +507,7 @@ def substitute_sql_template(
     # build the substitute mapping
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
-            substitute_mapping[join_table] = build_substitute_macro_definition(
+            substitute_mapping[join_table] = get_substitute_macro_definition(
                 conn, join_table, from_table, from_table_or_alias, join_table_or_alias
             )
         else:
@@ -665,7 +675,7 @@ if __name__ == "__main__":
             }
 
             async for msg in ws_source_executable(
-                "0", conn, "abcd", {}, partial(ws_generator, properties), nursery
+                "0", conn, "abcd", {}, False, partial(ws_generator, properties), nursery
             ):
                 logger.info(msg)
 
