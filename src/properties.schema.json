@@ -70,7 +70,7 @@
             "pattern": "^SECRET\\s+[a-zA-Z0-9_]+$",
             "description": "Accept SECRET values"
           },
-          "^param\\..+$": {
+          "^params\\..+$": {
             "type": "string",
             "description": "Additional parameter configuration"
           }
