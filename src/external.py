@@ -20,7 +20,11 @@ def parse_http_properties(
 ) -> tuple[dict[str, Any], BaseSignerT, dict[str, Any], dict[str, Any]]:
     """Parse property dict provided by context and get required http parameters."""
     # Build kwargs dict compatible with both httpx or requests
-    requests_kwargs = {"headers": {}, "json": {}, "params": {}}
+    requests_kwargs: dict[str, Any] = {
+        "headers": {},
+        "json": {},
+        "params": {},
+    }
     meta_kwargs = {}
 
     # Manually extract standard values
@@ -74,7 +78,7 @@ async def async_request(
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
-) -> httpx.Response:
+) -> httpx.Response | None:
     """Retry async HTTP request with exponential backoff."""
     attempt = 0
     while attempt < MAX_RETRIES:
@@ -98,7 +102,7 @@ def sync_request(
     signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     conn: DuckDBPyConnection,
-) -> httpx.Response:
+) -> httpx.Response | None:
     """Retry sync HTTP request with exponential backoff."""
     attempt = 0
     while attempt < MAX_RETRIES:
@@ -148,7 +152,7 @@ class PageBasedPagination(NoPagination):
         self.size_param = meta.get("size_param", "limit")
         self.page = 0
 
-    def update_params(self, cursor: str, params: dict[str, str]):
+    def update_params(self, cursor: str, params: dict[str, Any]):
         params[self.page_param] = self.page
         self.page += 1
         return params
@@ -191,6 +195,8 @@ class HeaderBasedPagination(NoPagination):
     def extract_next_cursor(
         self, batch: list[dict[str, Any]], response: httpx.Response
     ):
+        if not self.next_cursor_header:
+            return None
         return response.headers.get(self.next_cursor_header)
 
 

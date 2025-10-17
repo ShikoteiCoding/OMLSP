@@ -15,6 +15,7 @@ from external import (
     STRATEGIES,
     NoPagination,
 )
+from auth import NoSigner, SecretsHandler
 
 
 # ============================================================
@@ -51,12 +52,12 @@ class HttpBuilder(TransportBuilder):
     def __init__(self, base: TransportBuilder):
         super().__init__(base.properties)
         self.mode = base.mode
-        self.signer = getattr(base, "signer", None)
+        self.signer = getattr(base, "signer", NoSigner(SecretsHandler()))
         self.jq = getattr(base, "jq", None)
         self.meta_kwargs = {}
         self.request_kwargs = {}
         self.strategy = NoPagination
-    
+
     def configure(self):
         jq, signer, request_kwargs, meta_kwargs = parse_http_properties(self.properties)
         self.jq = jq
@@ -64,7 +65,7 @@ class HttpBuilder(TransportBuilder):
         self.request_kwargs = request_kwargs
         self.meta_kwargs = meta_kwargs
 
-        pagination_type = meta_kwargs.get("type") if meta_kwargs else None 
+        pagination_type = meta_kwargs.get("type") if meta_kwargs else None
         self.strategy = STRATEGIES.get(pagination_type, NoPagination)(meta_kwargs)
         return self
 
@@ -73,21 +74,21 @@ class HttpBuilder(TransportBuilder):
 
         if self.mode == "async":
 
-            async def requester(conn):
+            async def async_requester(conn):
                 return await async_http_requester(
                     self.jq, self.signer, self.request_kwargs, strategy, conn
                 )
 
-            return requester
+            return async_requester
 
         else:
 
-            def requester(conn):
+            def sync_requester(conn):
                 return sync_http_requester(
                     self.jq, self.signer, self.request_kwargs, strategy, conn
                 )
 
-            return requester
+            return sync_requester
 
 
 def build_http_requester(
