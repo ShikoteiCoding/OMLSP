@@ -15,7 +15,7 @@ from external import (
     STRATEGIES,
     NoPagination,
 )
-from auth import (NoSigner, SecretsHandler)
+from auth import NoSigner, SecretsHandler
 
 
 # ============================================================
@@ -57,7 +57,7 @@ class HttpBuilder(TransportBuilder):
         self.meta_kwargs = {}
         self.request_kwargs = {}
         self.strategy = NoPagination
-    
+
     def configure(self):
         jq, signer, request_kwargs, meta_kwargs = parse_http_properties(self.properties)
         self.jq = jq
@@ -65,7 +65,7 @@ class HttpBuilder(TransportBuilder):
         self.request_kwargs = request_kwargs
         self.meta_kwargs = meta_kwargs
 
-        pagination_type = meta_kwargs.get("type") if meta_kwargs else None 
+        pagination_type = meta_kwargs.get("type") if meta_kwargs else None
         self.strategy = STRATEGIES.get(pagination_type, NoPagination)(meta_kwargs)
         return self
 
