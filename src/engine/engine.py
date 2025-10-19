@@ -285,7 +285,7 @@ def records_to_polars(
 
 async def http_source_executable(
     task_id: str,
-    registry_conn: DuckDBPyConnection,
+    conn: DuckDBPyConnection,
     name: str,
     column_types: dict[str, str],
     dynamic_columns: dict[str, Callable],
@@ -303,15 +303,15 @@ async def http_source_executable(
     # This is slow and kept synchrone for now but making it async
     # Through a metadata manager would risk concurrency conflicts
     if is_source:
-        batch_id = get_batch_id_from_source_metadata(registry_conn, name)
+        batch_id = get_batch_id_from_source_metadata(conn, name)
     else:
-        batch_id = get_batch_id_from_table_metadata(registry_conn, name)
+        batch_id = get_batch_id_from_table_metadata(conn, name)
 
     logger.info(
         "[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"]
     )
 
-    records = await http_requester(registry_conn)
+    records = await http_requester(conn)
     logger.debug(
         "[{}{{{}}}] - http number of responses: {} - batch {}",
         task_id,
@@ -323,22 +323,22 @@ async def http_source_executable(
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
         df = records_to_polars(records, column_types, dynamic_columns, func_context)
-        await cache(df, batch_id, epoch, name, registry_conn, is_source)
+        await cache(df, batch_id, epoch, name, conn, is_source)
     else:
         df = pl.DataFrame()
 
     # This is slow and kept synchrone for now but making it async
     # Through a metadata manager would risk concurrency conflicts
     if is_source:
-        update_batch_id_in_table_metadata(registry_conn, name, batch_id + 1)
+        update_batch_id_in_table_metadata(conn, name, batch_id + 1)
     else:
-        update_batch_id_in_table_metadata(registry_conn, name, batch_id + 1)
+        update_batch_id_in_table_metadata(conn, name, batch_id + 1)
     return df
 
 
 async def ws_source_executable(
     task_id: str,
-    registry_conn: DuckDBPyConnection,
+    conn: DuckDBPyConnection,
     table_name: str,
     column_types: dict[str, str],
     is_source: bool,
@@ -359,7 +359,7 @@ async def ws_source_executable(
             df = records_to_polars(records, column_types, {}, {})
             # Do not truncate the cache, this is a Table
             await cache(
-                df, 0, int(time.time() * 1_000), table_name, registry_conn, is_source
+                df, 0, int(time.time() * 1_000), table_name, conn, is_source
             )
         else:
             # This should not happen, just in case
@@ -382,7 +382,7 @@ def build_scheduled_source_executable(
 
 
 def build_continuous_source_executable(
-    ctx: ContinousTaskContext, registry_conn: DuckDBPyConnection
+    ctx: ContinousTaskContext, conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[pl.DataFrame, None]
 ]:
@@ -393,7 +393,7 @@ def build_continuous_source_executable(
     if ctx.on_start_query != "":
         # If we come all the way here, we already evaled on_start_query
         # consider passing it from App to TaskManager for improved design
-        on_start_results = duckdb_to_dicts(registry_conn, ctx.on_start_query)
+        on_start_results = duckdb_to_dicts(conn, ctx.on_start_query)
 
     return partial(
         ws_source_executable,
@@ -407,7 +407,7 @@ def build_continuous_source_executable(
 def build_lookup_table_prehook(
     create_table_context: CreateHTTPLookupTableContext,
     exec_conn: DuckDBPyConnection,
-    registry_conn: DuckDBPyConnection,
+    db_conn: DuckDBPyConnection,
 ) -> str:
     properties = create_table_context.properties
     table_name = create_table_context.name
@@ -454,12 +454,12 @@ def build_lookup_table_prehook(
             FROM query_table(table_name) AS {__inner_tbl}
         ) AS {__deriv_tbl};
     """
-    registry_conn.execute(create_macro_sql)
+    db_conn.execute(create_macro_sql)
     logger.debug(
         "registered macro: {} with definition: {}", macro_name, create_macro_sql
     )
     create_macro_definition(
-        registry_conn, macro_name, dynamic_columns, create_macro_sql
+        db_conn, macro_name, dynamic_columns, create_macro_sql
     )
 
     return macro_name
@@ -494,7 +494,7 @@ def get_substitute_macro_definition(
 
 
 def substitute_sql_template(
-    registry_conn: DuckDBPyConnection,
+    conn: DuckDBPyConnection,
     ctx: SelectContext,
     substitute_mapping: dict[str, str],
 ) -> str:
@@ -506,7 +506,7 @@ def substitute_sql_template(
     """
     original_query = ctx.query
     join_tables = ctx.joins
-    lookup_tables = get_lookup_tables(registry_conn)
+    lookup_tables = get_lookup_tables(conn)
 
     # join query
     from_table = ctx.table
@@ -517,7 +517,7 @@ def substitute_sql_template(
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
             substitute_mapping[join_table] = get_substitute_macro_definition(
-                registry_conn,
+                conn,
                 join_table,
                 from_table,
                 from_table_or_alias,
@@ -565,14 +565,14 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
 
 
 def build_sink_executable(
-    ctx: SinkTaskContext, registry_conn: DuckDBPyConnection
+    ctx: SinkTaskContext, db_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
     return partial(
         kafka_sink,
-        registry_conn=registry_conn,
+        db_conn=db_conn,
         first_upstream=ctx.upstreams[0],
         transform_query=ctx.subquery,
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
@@ -585,7 +585,7 @@ async def kafka_sink(
     task_id: str,
     exec_conn: DuckDBPyConnection,
     df: pl.DataFrame,
-    registry_conn: DuckDBPyConnection,
+    db_conn: DuckDBPyConnection,
     first_upstream: str,
     transform_query: str,
     pl_ctx: pl.SQLContext,
@@ -608,12 +608,12 @@ async def kafka_sink(
 
 
 def build_transform_executable(
-    ctx: TransformTaskContext, registry_conn: DuckDBPyConnection
+    ctx: TransformTaskContext, db_conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
 ]:
     from_table = ctx.upstreams[0]
-    duckdb_tables = get_tables(registry_conn)
+    duckdb_tables = get_tables(db_conn)
     substitute_mapping = {}
 
     for duckdb_table in duckdb_tables:
@@ -621,12 +621,12 @@ def build_transform_executable(
         substitute_mapping[duckdb_table] = val
 
     transform_sql = substitute_sql_template(
-        registry_conn, ctx.transform_ctx, substitute_mapping
+        db_conn, ctx.transform_ctx, substitute_mapping
     )
 
     return partial(
         transform_executable,
-        registry_conn=registry_conn,
+        db_conn=db_conn,
         name=ctx.name,
         first_upstream=from_table,  # TODO add joins
         transform_query=transform_sql,
@@ -640,7 +640,7 @@ async def transform_executable(
     task_id: str,
     exec_conn: DuckDBPyConnection,
     df: pl.DataFrame,
-    registry_conn: DuckDBPyConnection,
+    db_conn: DuckDBPyConnection,
     name: str,
     first_upstream: str,
     transform_query: str,
@@ -652,7 +652,7 @@ async def transform_executable(
     # transform_df = pl_ctx.execute(transform_query)
     logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
     # sync macro
-    lazy_sync_macros(registry_conn, exec_conn, transform_query, EXEC_CONN_LOADED_MACROS)
+    lazy_sync_macros(db_conn, exec_conn, transform_query, EXEC_CONN_LOADED_MACROS)
 
     # explicitely mock df registration of incoming df
     # in case of lookup, this should also work when the
@@ -666,7 +666,7 @@ async def transform_executable(
     # invert is_materialized for truncate
     # if is_materialized -> truncate = False -> append mode
     # if not is_materialized -> truncate = True -> truncate mode (overwrite)
-    await cache(transform_df, -1, epoch, name, registry_conn, not is_materialized)
+    await cache(transform_df, -1, epoch, name, db_conn, not is_materialized)
     # update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
 
     return transform_df

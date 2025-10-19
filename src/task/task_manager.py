@@ -42,7 +42,7 @@ __all__ = ["TaskManager"]
 
 class TaskManager(Service):
     #: Duckdb connections
-    registry_conn: DuckDBPyConnection
+    db_conn: DuckDBPyConnection
     exec_conn: DuckDBPyConnection
 
     #: Scheduler (trio compatible) to register
@@ -62,11 +62,11 @@ class TaskManager(Service):
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
 
-    def __init__(self, registry_conn: DuckDBPyConnection):
+    def __init__(self, db_conn: DuckDBPyConnection, exec_conn: DuckDBPyConnection):
         super().__init__(name="TaskManager")
-        self.registry_conn = registry_conn
+        self.db_conn = db_conn
         # created once and lives until tasks stop
-        self.exec_conn = connect(database=":memory:")
+        self.exec_conn = exec_conn
         self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](
             100
         )
@@ -104,7 +104,7 @@ class TaskManager(Service):
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(
-                build_sink_executable(ctx, self.registry_conn)
+                build_sink_executable(ctx, self.db_conn)
             )
             await self._scheduled_executables.send(task.run)
             logger.success(f"[TaskManager] registered sink task '{task_id}'")
@@ -112,7 +112,7 @@ class TaskManager(Service):
         elif isinstance(ctx, ScheduledTaskContext):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
-            task = ScheduledSourceTask[ctx._out_type](task_id, self.registry_conn)
+            task = ScheduledSourceTask[ctx._out_type](task_id, self.db_conn)
             self._sources[task_id] = task.register(
                 build_scheduled_source_executable(ctx)
             )
@@ -125,7 +125,7 @@ class TaskManager(Service):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             task = ContinuousSourceTask[ctx._out_type](
-                task_id, self.registry_conn, self._nursery
+                task_id, self.db_conn, self._nursery
             )
 
             # TODO: make WS Task dynamic by registering the on_start function
@@ -133,7 +133,7 @@ class TaskManager(Service):
             # on_start func and on_run func. on_start will have "waiters"
             # and timeout logic
             self._sources[task_id] = task.register(
-                build_continuous_source_executable(ctx, self.registry_conn)
+                build_continuous_source_executable(ctx, self.db_conn)
             )
             await self._scheduled_executables.send((task.run))
             logger.success(
@@ -142,7 +142,7 @@ class TaskManager(Service):
 
         elif isinstance(ctx, CreateHTTPLookupTableContext):
             # TODO: is this the place to build lookup ? grr
-            build_lookup_table_prehook(ctx, self.exec_conn, self.registry_conn)
+            build_lookup_table_prehook(ctx, self.exec_conn, self.db_conn)
             logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
 
         elif isinstance(ctx, TransformTaskContext):
@@ -151,7 +151,7 @@ class TaskManager(Service):
                 task.subscribe(self._sources[name].get_sender())
 
             self._task_id_to_task[task_id] = task.register(
-                build_transform_executable(ctx, self.registry_conn)
+                build_transform_executable(ctx, self.db_conn)
             )
             await self._scheduled_executables.send(task.run)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")

@@ -25,12 +25,13 @@ async def main():
     args = parser.parse_args()
     sql_filepath = Path(args.file)
 
-    registry_conn: DuckDBPyConnection = connect(database=":memory:")
+    db_conn: DuckDBPyConnection = connect(database=":memory:")
+    exec_conn: DuckDBPyConnection = connect(database=":memory:")
 
     scheduler = TrioScheduler()
-    task_manager = TaskManager(registry_conn)
-    client_manager = ClientManager(registry_conn)
-    app = App(registry_conn, PROPERTIES_SCHEMA)
+    task_manager = TaskManager(db_conn, exec_conn)
+    client_manager = ClientManager(db_conn)
+    app = App(db_conn, PROPERTIES_SCHEMA)
 
     # TODO: Not the most elegant, baby steps
     # towards full actor model to polish
