@@ -2,7 +2,7 @@
 Task Manager managing registration and running of Tasks.
 """
 
-from duckdb import DuckDBPyConnection
+from duckdb import DuckDBPyConnection, connect
 from apscheduler.triggers.base import BaseTrigger
 
 from channel import Channel
@@ -62,12 +62,11 @@ class TaskManager(Service):
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
 
-    def __init__(
-        self, registry_conn: DuckDBPyConnection, exec_conn: DuckDBPyConnection
-    ):
+    def __init__(self, registry_conn: DuckDBPyConnection):
         super().__init__(name="TaskManager")
         self.registry_conn = registry_conn
-        self.exec_conn = exec_conn
+        # created once and lives until tasks stop
+        self.exec_conn = connect(database=":memory:")
         self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](
             100
         )

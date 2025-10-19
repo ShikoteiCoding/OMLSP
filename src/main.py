@@ -26,10 +26,9 @@ async def main():
     sql_filepath = Path(args.file)
 
     registry_conn: DuckDBPyConnection = connect(database=":memory:")
-    exec_conn: DuckDBPyConnection = connect(database=":memory:")
 
     scheduler = TrioScheduler()
-    task_manager = TaskManager(registry_conn, exec_conn)
+    task_manager = TaskManager(registry_conn)
     client_manager = ClientManager(registry_conn)
     app = App(registry_conn, PROPERTIES_SCHEMA)
 

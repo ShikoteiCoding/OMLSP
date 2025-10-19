@@ -32,6 +32,7 @@ from metadata import (
     get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
+    lazy_sync_macros,
 )
 from transport import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
@@ -77,6 +78,8 @@ DUCKDB_TO_POLARS: dict[str, Any] = {
     "DATE": pl.Date,
     "DECIMAL": pl.Float64,
 }
+
+EXEC_CONN_LOADED_MACROS: set[str] = set()
 
 
 def build_lookup_properties(
@@ -435,13 +438,13 @@ def build_lookup_table_prehook(
             FROM query_table(table_name) AS {__inner_tbl}
         ) AS {__deriv_tbl};
     """
-    # TODO : need to sync, and only execute macro we use in the transformation
     registry_conn.execute(create_macro_sql)
-    exec_conn.execute(create_macro_sql)
     logger.debug(
         "registered macro: {} with definition: {}", macro_name, create_macro_sql
     )
-    create_macro_definition(registry_conn, macro_name, dynamic_columns)
+    create_macro_definition(
+        registry_conn, macro_name, dynamic_columns, create_macro_sql
+    )
 
     return macro_name
 
@@ -624,6 +627,8 @@ async def transform_executable(
     # pl_ctx.register(first_upstream, df)
     # transform_df = pl_ctx.execute(transform_query)
     logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
+    # sync macro
+    lazy_sync_macros(registry_conn, exec_conn, transform_query, EXEC_CONN_LOADED_MACROS)
 
     # explicitely mock df registration of incoming df
     # in case of lookup, this should also work when the
