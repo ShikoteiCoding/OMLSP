@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
 from loguru import logger
+from services import Service
 
 from channel import Channel
 
@@ -28,7 +29,7 @@ def handle_cancellation(func):
     return wrapper
 
 
-class BaseTaskT(ABC, Generic[T]):
+class BaseTaskT(ABC, Service, Generic[T]):
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         self.task_id = task_id
         self._conn = conn
