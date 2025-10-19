@@ -4,10 +4,10 @@ from duckdb import DuckDBPyConnection
 from loguru import logger
 
 from context.context import (
-    CreateTableContext,
     CreateSinkContext,
+    CreateSourceContext,
+    CreateTableContext,
     CreateViewContext,
-    CreateMaterializedViewContext,
     CreateSecretContext,
     SelectContext,
 )
@@ -15,8 +15,8 @@ from context.context import (
 import re
 
 METADATA_TABLE_TABLE_NAME = "__table_metadata"
+METADATA_SOURCE_TABLE_NAME = "__source_metadata"
 METADATA_VIEW_TABLE_NAME = "__view_metadata"
-METADATA_VIEW_MATERIALIZED_TABLE_NAME = "__view_materialized_metadata"
 METADATA_MACRO_TABLE_NAME = "__macro_metadata"
 METADATA_SINK_TABLE_NAME = "__sink_metadata"
 METADATA_SECRET_TABLE_NAME = "__secret_metadata"
@@ -42,21 +42,21 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
     """
     conn.execute(table_metadata)
 
+    source_metadata = f"""
+    CREATE TABLE {METADATA_SOURCE_TABLE_NAME} (
+        source_name STRING,
+        last_batch_id INTEGER
+    )
+    """
+    conn.execute(source_metadata)
+
     view_metadata = f"""
     CREATE TABLE {METADATA_VIEW_TABLE_NAME} (
         view_name STRING,
-        last_batch_id INTEGER
+        materialized BOOL
     )
     """
     conn.execute(view_metadata)
-
-    view_materialized_metadata = f"""
-    CREATE TABLE {METADATA_VIEW_MATERIALIZED_TABLE_NAME} (
-        view_name STRING,
-        last_batch_id INTEGER
-    )
-    """
-    conn.execute(view_materialized_metadata)
 
     sink_metadata = f"""
     CREATE TABLE {METADATA_SINK_TABLE_NAME} (
@@ -85,22 +85,22 @@ def insert_table_metadata(
     conn.execute(insert)
 
 
-def insert_view_metadata(conn: DuckDBPyConnection, context: CreateViewContext) -> None:
-    view_name = context.name
+def insert_source_metadata(
+    conn: DuckDBPyConnection, context: CreateSourceContext
+) -> None:
+    source_name = context.name
     insert = f"""
-    INSERT INTO {METADATA_VIEW_TABLE_NAME} (view_name, last_batch_id)
-    VALUES ('{view_name}', 0);
+    INSERT INTO {METADATA_SOURCE_TABLE_NAME} (source_name, last_batch_id)
+    VALUES ('{source_name}', 0);
     """
     conn.execute(insert)
 
 
-def insert_view_materialized_metadata(
-    conn: DuckDBPyConnection, context: CreateMaterializedViewContext
-) -> None:
+def insert_view_metadata(conn: DuckDBPyConnection, context: CreateViewContext) -> None:
     view_name = context.name
     insert = f"""
-    INSERT INTO {METADATA_VIEW_MATERIALIZED_TABLE_NAME} (view_name, last_batch_id)
-    VALUES ('{view_name}', 0);
+    INSERT INTO {METADATA_VIEW_TABLE_NAME} (view_name, materialized)
+    VALUES ('{view_name}', {context.materialized});
     """
     conn.execute(insert)
 
@@ -187,8 +187,6 @@ def get_tables(conn: DuckDBPyConnection) -> list[str]:
 def get_views(conn: DuckDBPyConnection) -> list[str]:
     query = f"""
     SELECT view_name FROM {METADATA_VIEW_TABLE_NAME}
-    UNION ALL
-    SELECT view_name FROM {METADATA_VIEW_MATERIALIZED_TABLE_NAME}
     """
     views = [str(table_name[0]) for table_name in conn.execute(query).fetchall()]
 
@@ -206,6 +204,17 @@ def get_duckdb_tables(conn: DuckDBPyConnection) -> list[str]:
     tables = [str(table_name[0]) for table_name in conn.execute(query).fetchall()]
 
     return tables
+
+
+def create_source(
+    conn: DuckDBPyConnection,
+    context: CreateSourceContext,
+) -> str:
+    query = context.query
+    conn.execute(query)
+    insert_source_metadata(conn, context)
+    logger.info("[db] Registered source: {}", context.name)
+    return "CREATE SOURCE"
 
 
 def create_table(
@@ -227,18 +236,7 @@ def create_view(
     conn.execute(query)
     insert_view_metadata(conn, context)
     logger.info("[db] Registered view: {}", context.name)
-    return "CREATE VIEW"
-
-
-def create_view_materialized(
-    conn: DuckDBPyConnection,
-    context: CreateMaterializedViewContext,
-) -> str:
-    query = context.query
-    conn.execute(query)
-    insert_view_materialized_metadata(conn, context)
-    logger.info("[db] Registered view materialized: {}", context.name)
-    return "CREATE MATERIALIZED VIEW"
+    return f"CREATE {'MATERIALIZED' if context.materialized else ''}VIEW"
 
 
 def create_sink(
@@ -269,6 +267,18 @@ def get_batch_id_from_table_metadata(conn: DuckDBPyConnection, table_name: str) 
     return res[0][1]
 
 
+def get_batch_id_from_source_metadata(
+    conn: DuckDBPyConnection, source_name: str
+) -> int:
+    query = f"""
+        SELECT *
+        FROM {METADATA_SOURCE_TABLE_NAME}
+        WHERE source_name = '{source_name}';
+    """
+    res = conn.execute(query).fetchall()
+    return res[0][1]
+
+
 def update_batch_id_in_table_metadata(
     conn: DuckDBPyConnection, table_name: str, batch_id: int
 ) -> None:
@@ -280,41 +290,14 @@ def update_batch_id_in_table_metadata(
     conn.execute(query)
 
 
-def get_batch_id_from_view_metadata(
-    conn: DuckDBPyConnection, view_name: str, is_materialized: bool
-) -> int:
-    if is_materialized:
-        query = f"""
-            SELECT *
-            FROM {METADATA_VIEW_MATERIALIZED_TABLE_NAME}
-            WHERE view_name = '{view_name}';
-        """
-        res = conn.execute(query).fetchall()
-    else:
-        query = f"""
-            SELECT *
-            FROM {METADATA_VIEW_TABLE_NAME}
-            WHERE view_name = '{view_name}';
-        """
-        res = conn.execute(query).fetchall()
-    return res[0][1]
-
-
-def update_batch_id_in_view_metadata(
-    conn: DuckDBPyConnection, view_name: str, batch_id: int, is_materialized: bool
+def update_batch_id_in_source_metadata(
+    conn: DuckDBPyConnection, source_name: str, batch_id: int
 ) -> None:
-    if is_materialized:
-        query = f"""
-        UPDATE {METADATA_VIEW_MATERIALIZED_TABLE_NAME}
-        SET last_batch_id={batch_id}
-        WHERE view_name = '{view_name}';
-        """
-    else:
-        query = f"""
-        UPDATE {METADATA_VIEW_TABLE_NAME}
-        SET last_batch_id={batch_id}
-        WHERE view_name = '{view_name}';
-        """
+    query = f"""
+    UPDATE {METADATA_SOURCE_TABLE_NAME}
+    SET last_batch_id={batch_id}
+    WHERE source_name = '{source_name}';
+    """
     conn.execute(query)
 
 
