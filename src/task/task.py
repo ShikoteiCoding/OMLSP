@@ -76,7 +76,7 @@ class ScheduledSourceTask(BaseSourceTaskT, Generic[T]):
 
     @handle_cancellation
     async def run(self):
-        result = await self._executable(task_id=self.task_id, conn=self._conn)
+        result = await self._executable(self.task_id, self._conn)
         if hasattr(self, "_sender"):
             await self._sender.send(result)
 
@@ -105,7 +105,7 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
     @handle_cancellation
     async def run(self):
         async for result in self._executable(
-            task_id=self.task_id, conn=self._conn, nursery=self.nursery
+           self.task_id,self._conn, self.nursery
         ):
             await self._sender.send(result)
         raise Exception("somehow exited here")

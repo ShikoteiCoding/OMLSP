@@ -25,7 +25,8 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
     macro_table_to_def = f"""
     CREATE TABLE {METADATA_MACRO_TABLE_NAME} (
         macro_name STRING,
-        fields STRING[]
+        fields STRING[],
+        macro_sql STRING
     );
     """
     conn.execute(macro_table_to_def)
@@ -154,11 +155,11 @@ def get_macro_definition_by_name(
 
 
 def create_macro_definition(
-    conn: DuckDBPyConnection, macro_name: str, fields: list[str]
+    conn: DuckDBPyConnection, macro_name: str, fields: list[str], macro_sql: str
 ) -> None:
     query = f"""
-    INSERT INTO {METADATA_MACRO_TABLE_NAME} (macro_name, fields)
-    VALUES ('{macro_name}', {fields});
+    INSERT INTO {METADATA_MACRO_TABLE_NAME} (macro_name, fields, macro_sql)
+    VALUES ('{macro_name}', {fields}, '{macro_sql}');
     """
     conn.execute(query)
 
@@ -334,3 +335,12 @@ def resolve_schema(con, relation: str | SelectContext):
         sql = f"SELECT * FROM {relation}"
         schema = get_table_schema(con, relation)
     return sql, schema
+
+# sync idea for later
+# def sync_macros_from_registry(registry_conn, exec_conn):
+#     rows = registry_conn.execute(
+#         f"SELECT macro_sql FROM {METADATA_MACRO_TABLE_NAME}"
+#     ).fetchall()
+
+#     for (sql,) in rows:
+#         exec_conn.execute(sql)
