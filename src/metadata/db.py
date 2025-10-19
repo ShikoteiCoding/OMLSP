@@ -381,7 +381,7 @@ def lazy_sync_macros(
     loaded_cache: set[str],
 ) -> None:
     """
-    Synchronizes only the necessary, missing macros from persistent registry_conn 
+    Synchronizes only the necessary, missing macros from persistent registry_conn
     into the runtime execution exec_conn
 
     This uses a 'lazy, on-demand' strategy, prioritizing efficiency by:
