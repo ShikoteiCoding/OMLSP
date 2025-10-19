@@ -24,7 +24,7 @@ async def main():
     parser.add_argument("file")
     args = parser.parse_args()
     sql_filepath = Path(args.file)
-   
+
     registry_conn: DuckDBPyConnection = connect(database=":memory:")
     exec_conn: DuckDBPyConnection = connect(database=":memory:")
 

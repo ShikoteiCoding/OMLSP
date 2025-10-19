@@ -1,4 +1,3 @@
-import re
 import time
 import json
 import trio
@@ -342,7 +341,9 @@ async def ws_source_executable(
         if len(records) > 0:
             df = records_to_polars(records, column_types, {}, {})
             # Do not truncate the cache, this is a Table
-            await cache(df, 0, int(time.time() * 1_000), table_name, registry_conn, False)
+            await cache(
+                df, 0, int(time.time() * 1_000), table_name, registry_conn, False
+            )
         else:
             # This should not happen, just in case
             df = pl.DataFrame()
@@ -434,13 +435,13 @@ def build_lookup_table_prehook(
             FROM query_table(table_name) AS {__inner_tbl}
         ) AS {__deriv_tbl};
     """
-    #TODO : need to sync, and only execute macro we use in the transformation
+    # TODO : need to sync, and only execute macro we use in the transformation
     registry_conn.execute(create_macro_sql)
     exec_conn.execute(create_macro_sql)
     logger.debug(
         "registered macro: {} with definition: {}", macro_name, create_macro_sql
     )
-    create_macro_definition(registry_conn, macro_name, dynamic_columns, create_macro_sql)
+    create_macro_definition(registry_conn, macro_name, dynamic_columns)
 
     return macro_name
 
@@ -489,7 +490,11 @@ def substitute_sql_template(
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
             substitute_mapping[join_table] = build_substitute_macro_definition(
-                registry_conn, join_table, from_table, from_table_or_alias, join_table_or_alias
+                registry_conn,
+                join_table,
+                from_table,
+                from_table_or_alias,
+                join_table_or_alias,
             )
         else:
             substitute_mapping[join_table] = join_table
@@ -588,7 +593,9 @@ def build_transform_executable(
         val = duckdb_table if duckdb_table != from_table else "df"
         substitute_mapping[duckdb_table] = val
 
-    transform_sql = substitute_sql_template(registry_conn, ctx.transform_ctx, substitute_mapping)
+    transform_sql = substitute_sql_template(
+        registry_conn, ctx.transform_ctx, substitute_mapping
+    )
 
     return partial(
         transform_executable,

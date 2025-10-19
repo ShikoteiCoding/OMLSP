@@ -62,7 +62,9 @@ class TaskManager(Service):
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
 
-    def __init__(self, registry_conn: DuckDBPyConnection, exec_conn: DuckDBPyConnection):
+    def __init__(
+        self, registry_conn: DuckDBPyConnection, exec_conn: DuckDBPyConnection
+    ):
         super().__init__(name="TaskManager")
         self.registry_conn = registry_conn
         self.exec_conn = exec_conn
@@ -102,7 +104,9 @@ class TaskManager(Service):
             task = SinkTask(task_id, self.exec_conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
-            self._task_id_to_task[task_id] = task.register(build_sink_executable(ctx, self.registry_conn))
+            self._task_id_to_task[task_id] = task.register(
+                build_sink_executable(ctx, self.registry_conn)
+            )
             await self._scheduled_executables.send(task.run)
             logger.success(f"[TaskManager] registered sink task '{task_id}'")
 
@@ -139,7 +143,7 @@ class TaskManager(Service):
 
         elif isinstance(ctx, CreateHTTPLookupTableContext):
             # TODO: is this the place to build lookup ? grr
-            build_lookup_table_prehook(ctx,self.exec_conn, self.registry_conn)
+            build_lookup_table_prehook(ctx, self.exec_conn, self.registry_conn)
             logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
 
         elif isinstance(ctx, TransformTaskContext):

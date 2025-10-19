@@ -104,9 +104,7 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
 
     @handle_cancellation
     async def run(self):
-        async for result in self._executable(
-           self.task_id,self._conn, self.nursery
-        ):
+        async for result in self._executable(self.task_id, self._conn, self.nursery):
             await self._sender.send(result)
         raise Exception("somehow exited here")
 
