@@ -25,7 +25,7 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
     macro_table_to_def = f"""
     CREATE TABLE {METADATA_MACRO_TABLE_NAME} (
         macro_name STRING,
-        fields STRING[],
+        fields STRING[]
     );
     """
     conn.execute(macro_table_to_def)
