@@ -34,7 +34,7 @@ from metadata import (
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
 )
-from transport import build_http_requester, build_ws_generator
+from transport import TransportBuilder
 from confluent_kafka import Producer
 
 
@@ -200,7 +200,13 @@ def build_scalar_udf(
             context = dict(zip(dynamic_columns, row))
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
-            requester = build_http_requester(lookup_properties, is_async=False)
+            requester = (
+                TransportBuilder(lookup_properties)
+                .option("mode", "sync")
+                .build("http")
+                .configure()
+                .finalize()
+            )
 
             try:
                 response = requester(conn)
@@ -287,7 +293,7 @@ async def http_source_executable(
     column_types: dict[str, str],
     dynamic_columns: dict[str, Callable],
     is_source: bool,
-    http_requester: Callable,
+    http_requester_func: Callable,
 ) -> pl.DataFrame:
     # Create generated column context (to be applied upon at exec time)
     # Some SQL functions in generated columns might use or not use this context
@@ -308,7 +314,7 @@ async def http_source_executable(
         "[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"]
     )
 
-    records = await http_requester(conn)
+    records = await http_requester_func(conn)
     logger.debug(
         "[{}{{{}}}] - http number of responses: {} - batch {}",
         task_id,
@@ -366,13 +372,21 @@ async def ws_source_executable(
 def build_scheduled_source_executable(
     ctx: ScheduledTaskContext,
 ) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
+    requester = (
+        TransportBuilder(ctx.properties)
+        .option("mode", "async")
+        .build("http")
+        .configure()
+        .finalize()
+    )
+
     return partial(
         http_source_executable,
         name=ctx.name,
         column_types=ctx.column_types,
         dynamic_columns=ctx.generated_columns,
         is_source=ctx.source,
-        http_requester=build_http_requester(ctx.properties, is_async=True),
+        http_requester_func=requester,
     )
 
 
@@ -390,12 +404,20 @@ def build_continuous_source_executable(
         # consider passing it from App to TaskManager for improved design
         on_start_results = duckdb_to_dicts(conn, ctx.on_start_query)
 
+    ws_generator = (
+        TransportBuilder(properties)
+        .option("templates_list", on_start_results)
+        .build("ws")
+        .configure()
+        .finalize()
+    )
+
     return partial(
         ws_source_executable,
         table_name=table_name,
         column_types=ctx.column_types,
         is_source=ctx.source,
-        ws_generator_func=build_ws_generator(properties, on_start_results),
+        ws_generator_func=ws_generator,
     )
 
 
@@ -648,35 +670,3 @@ async def transform_executable(
     await cache(transform_df, -1, epoch, name, conn, not is_materialized)
 
     return transform_df
-
-
-if __name__ == "__main__":
-    import jq as jqm
-    from duckdb import connect
-    from transport import ws_generator
-
-    conn: DuckDBPyConnection = connect(database=":memory:")
-
-    async def main():
-        async with trio.open_nursery() as nursery:
-            properties = {
-                "url": "wss://fstream.binance.com/ws/!ticker@arr",
-                "jq": jqm.compile(""".[:2][] | {
-                    event_type: .e,
-                    event_time: .E,
-                    symbol: .s,
-                    close: .c,
-                    open: .o,
-                    high: .h,
-                    low: .l,
-                    base_volume: .v,
-                    quote_volume: .q
-                 }"""),
-            }
-
-            async for msg in ws_source_executable(
-                "0", conn, "abcd", {}, False, partial(ws_generator, properties), nursery
-            ):
-                logger.info(msg)
-
-    trio.run(main)
