@@ -169,7 +169,7 @@ def build_scalar_udf(
     properties: dict[str, str],
     dynamic_columns: list[str],
     return_type: DuckDBPyType,
-    exec_conn: DuckDBPyConnection,
+    conn: DuckDBPyConnection,
     name: str,
 ) -> dict[str, Any]:
     # Number of parameters (input) of the scalar func
@@ -206,7 +206,7 @@ def build_scalar_udf(
             requester = build_http_requester(lookup_properties, is_async=False)
 
             try:
-                response = requester(exec_conn)
+                response = requester(conn)
                 if isinstance(response, dict):
                     return context | response
                 if isinstance(response, list) and len(response) >= 1:
@@ -406,8 +406,7 @@ def build_continuous_source_executable(
 
 def build_lookup_table_prehook(
     create_table_context: CreateHTTPLookupTableContext,
-    exec_conn: DuckDBPyConnection,
-    db_conn: DuckDBPyConnection,
+    conn: DuckDBPyConnection,
 ) -> str:
     properties = create_table_context.properties
     table_name = create_table_context.name
@@ -420,10 +419,10 @@ def build_lookup_table_prehook(
     # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # type: ignore
     udf_params = build_scalar_udf(
-        properties, dynamic_columns, return_type, exec_conn, func_name
+        properties, dynamic_columns, return_type, conn, func_name
     )
     # register scalar for row to row http call
-    exec_conn.create_function(**udf_params)
+    conn.create_function(**udf_params)
     logger.debug("registered function: {}", func_name)
 
     # TODO: wrap SQL in function
@@ -454,12 +453,12 @@ def build_lookup_table_prehook(
             FROM query_table(table_name) AS {__inner_tbl}
         ) AS {__deriv_tbl};
     """
-    db_conn.execute(create_macro_sql)
+    conn.execute(create_macro_sql)
     logger.debug(
         "registered macro: {} with definition: {}", macro_name, create_macro_sql
     )
     create_macro_definition(
-        db_conn, macro_name, dynamic_columns, create_macro_sql
+        conn, macro_name, dynamic_columns, create_macro_sql
     )
 
     return macro_name
@@ -565,14 +564,14 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
 
 
 def build_sink_executable(
-    ctx: SinkTaskContext, db_conn: DuckDBPyConnection
+    ctx: SinkTaskContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
     return partial(
         kafka_sink,
-        db_conn=db_conn,
+        backend_conn=backend_conn,
         first_upstream=ctx.upstreams[0],
         transform_query=ctx.subquery,
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
@@ -583,9 +582,9 @@ def build_sink_executable(
 
 async def kafka_sink(
     task_id: str,
-    exec_conn: DuckDBPyConnection,
+    transform_conn: DuckDBPyConnection,
     df: pl.DataFrame,
-    db_conn: DuckDBPyConnection,
+    backend_conn: DuckDBPyConnection,
     first_upstream: str,
     transform_query: str,
     pl_ctx: pl.SQLContext,
@@ -608,12 +607,12 @@ async def kafka_sink(
 
 
 def build_transform_executable(
-    ctx: TransformTaskContext, db_conn: DuckDBPyConnection
+    ctx: TransformTaskContext, backend_conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
 ]:
     from_table = ctx.upstreams[0]
-    duckdb_tables = get_tables(db_conn)
+    duckdb_tables = get_tables(backend_conn)
     substitute_mapping = {}
 
     for duckdb_table in duckdb_tables:
@@ -621,12 +620,12 @@ def build_transform_executable(
         substitute_mapping[duckdb_table] = val
 
     transform_sql = substitute_sql_template(
-        db_conn, ctx.transform_ctx, substitute_mapping
+        backend_conn, ctx.transform_ctx, substitute_mapping
     )
 
     return partial(
         transform_executable,
-        db_conn=db_conn,
+        backend_conn=backend_conn,
         name=ctx.name,
         first_upstream=from_table,  # TODO add joins
         transform_query=transform_sql,
@@ -638,9 +637,9 @@ def build_transform_executable(
 
 async def transform_executable(
     task_id: str,
-    exec_conn: DuckDBPyConnection,
+    transform_conn: DuckDBPyConnection,
     df: pl.DataFrame,
-    db_conn: DuckDBPyConnection,
+    backend_conn: DuckDBPyConnection,
     name: str,
     first_upstream: str,
     transform_query: str,
@@ -652,7 +651,7 @@ async def transform_executable(
     # transform_df = pl_ctx.execute(transform_query)
     logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
     # sync macro
-    lazy_sync_macros(db_conn, exec_conn, transform_query, EXEC_CONN_LOADED_MACROS)
+    lazy_sync_macros(backend_conn, transform_conn, transform_query, EXEC_CONN_LOADED_MACROS)
 
     # explicitely mock df registration of incoming df
     # in case of lookup, this should also work when the
@@ -660,13 +659,13 @@ async def transform_executable(
     # don't use conn.register() as duckdb only support
     # global registration and would make it not thread-safe anymore
     transform_query = transform_query.replace(f'"{first_upstream}"', "df")
-    transform_df = exec_conn.execute(transform_query).pl()
+    transform_df = transform_conn.execute(transform_query).pl()
 
     epoch = int(time.time() * 1_000)
     # invert is_materialized for truncate
     # if is_materialized -> truncate = False -> append mode
     # if not is_materialized -> truncate = True -> truncate mode (overwrite)
-    await cache(transform_df, -1, epoch, name, db_conn, not is_materialized)
+    await cache(transform_df, -1, epoch, name, backend_conn, not is_materialized)
     # update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
 
     return transform_df

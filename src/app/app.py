@@ -229,12 +229,12 @@ if __name__ == "__main__":
 
     with open(Path("src/properties.schema.json"), "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
-    db_conn: DuckDBPyConnection = connect(database=":memory:")
-    exec_conn: DuckDBPyConnection = connect(database=":memory:")
+    backend_conn: DuckDBPyConnection = connect(database=":memory:")
+    transform_conn: DuckDBPyConnection = backend_conn
     scheduler = TrioScheduler()
-    task_manager = TaskManager(db_conn, exec_conn)
-    client_manager = ClientManager(db_conn)
-    runner = App(db_conn, properties_schema)
+    task_manager = TaskManager(backend_conn, transform_conn)
+    client_manager = ClientManager(backend_conn)
+    runner = App(backend_conn, properties_schema)
 
     async def main():
         # preload file mSQLs
