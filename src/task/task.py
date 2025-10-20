@@ -31,6 +31,7 @@ def handle_cancellation(func):
 
 class BaseTaskT(ABC, Service, Generic[T]):
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
+        super().__init__(name=task_id)
         self.task_id = task_id
         self._conn = conn
 
@@ -41,6 +42,13 @@ class BaseTaskT(ABC, Service, Generic[T]):
     @abstractmethod
     async def run(self):
         pass
+
+    async def on_start(self) -> None:
+        logger.info(f"[{self.task_id}] on_start -> run()")
+        self._nursery.start_soon(self.run)
+
+    async def on_stop(self) -> None:
+        logger.info(f"[{self.task_id}] on_stop -> shutdown")
 
 
 class BaseSourceTaskT(BaseTaskT, Generic[T]):
@@ -56,6 +64,14 @@ class BaseSourceTaskT(BaseTaskT, Generic[T]):
     @abstractmethod
     def get_sender(self) -> Channel:
         pass
+
+    async def on_stop(self) -> None:
+        logger.info(f"[{self.task_id}] on_stop -> shutdown")
+        if hasattr(self, "_sender"):
+            try:
+                await self._sender.aclose_sender()
+            except Exception:
+                logger.exception("error closing sender channel")
 
 
 class ScheduledSourceTask(BaseSourceTaskT, Generic[T]):

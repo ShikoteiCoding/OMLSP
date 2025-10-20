@@ -26,18 +26,15 @@ class Channel(Generic[T]):
 
     async def recv(self) -> T:
         return await self._recv_ch.receive()
-    
+
     async def aclose_sender(self):
-            """Asynchronously closes the sender end of the channel."""
-            # This closes the primary sending channel
-            await self._send_ch.aclose()
-            
-            # close all subscriber channels!
-            for sub in list(self._subscribers):
-                try:
-                    await sub.aclose()
-                except trio.BrokenResourceError:
-                    pass # Ignore if already closed/broken
+        await self._send_ch.aclose()
+
+        for sub in list(self._subscribers):
+            try:
+                await sub.aclose()
+            except trio.BrokenResourceError:
+                pass  # Ignore if already closed/broken
 
     def __aiter__(self):
         return self

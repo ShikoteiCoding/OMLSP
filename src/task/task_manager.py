@@ -101,7 +101,7 @@ class TaskManager(Service):
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(build_sink_executable(ctx))
-            await self._scheduled_executables.send(task.run)
+            self._nursery.start_soon(task.start, self._nursery)
             logger.success(f"[TaskManager] registered sink task '{task_id}'")
 
         elif isinstance(ctx, ScheduledTaskContext):
@@ -130,7 +130,7 @@ class TaskManager(Service):
             self._sources[task_id] = task.register(
                 build_continuous_source_executable(ctx, self.conn)
             )
-            await self._scheduled_executables.send((task.run))
+            self._nursery.start_soon(task.start, self._nursery)
             logger.success(
                 f"[TaskManager] registered continuous source task '{task_id}'"
             )
@@ -148,5 +148,5 @@ class TaskManager(Service):
             self._task_id_to_task[task_id] = task.register(
                 build_transform_executable(ctx, self.conn)
             )
-            await self._scheduled_executables.send(task.run)
+            self._nursery.start_soon(task.start, self._nursery)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")
