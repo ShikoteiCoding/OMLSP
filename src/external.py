@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import abc
 import trio
 import jq as jqm
 import httpx
@@ -10,6 +9,7 @@ from typing import Any
 
 from auth import AUTH_DISPATCHER, BaseSignerT, SecretsHandler
 from loguru import logger
+from typing import Protocol
 
 MAX_RETRIES = 5
 
@@ -131,36 +131,30 @@ def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]
     return jq.input(data).all()
 
 
-class BasePaginationT(abc.ABC):
-    @abc.abstractmethod
+class Pagination(Protocol):
     def update_params(self):
         pass
 
-    @abc.abstractmethod
     def extract_next_cursor(self):
         pass
 
-    @abc.abstractmethod
     def has_cursor(self):
         pass
 
 
-class BasePagination(BasePaginationT):
+class BasePagination:
     def __init__(self, meta: dict[str, Any]):
         self.meta = meta
 
-    @abc.abstractmethod
     def update_params(self, cursor: str, params: dict[str, str]):
         pass
 
-    @abc.abstractmethod
     def extract_next_cursor(
         self, batch: list[dict[str, Any]], response: httpx.Response
     ):
         pass
 
-    @abc.abstractmethod
-    def has_cursor(self) -> bool:
+    def has_cursor(self):
         pass
 
 

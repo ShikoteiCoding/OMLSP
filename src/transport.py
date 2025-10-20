@@ -3,7 +3,6 @@ from __future__ import annotations
 import trio
 import jq as jqm
 import json
-import abc
 from functools import partial
 from string import Template
 from trio_websocket import open_websocket_url
@@ -18,29 +17,10 @@ from external import (
     BasePagination,
 )
 from auth import BaseSignerT
+from typing import Protocol
 
 
 type TransportMode = Literal["sync", "async"]
-
-
-class Transport(abc.ABC):
-    """Runtime transport object (sync or async)."""
-
-    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
-        self.properties = properties
-        self.config = config
-
-    @abc.abstractmethod
-    def configure(self) -> Transport:
-        """Prepare internal state before execution."""
-        pass
-
-    @abc.abstractmethod
-    def finalize(
-        self,
-    ) -> Callable:
-        """Return the executable callable (sync or async)."""
-        pass
 
 
 class TransportBuilder:
@@ -66,6 +46,20 @@ class TransportBuilder:
         self.config[key] = value
 
         return self
+
+
+class TransportT(Protocol):
+    def configure(self) -> TransportT: ...
+
+    def finalize(self) -> Callable: ...
+
+
+class Transport(TransportT):
+    """Runtime transport object (sync or async)."""
+
+    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
+        self.properties = properties
+        self.config = config
 
 
 class HttpTransport(Transport):
