@@ -12,9 +12,6 @@ sync:
 run:
 	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
 
-dev-entrypoint:
-	PYTHONPATH=src/ uv run --active src/pagination.py
-
 client:
 	PYTHONPATH=src/ uv run --active src/client.py 1
 
