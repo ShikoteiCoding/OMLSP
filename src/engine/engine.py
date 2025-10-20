@@ -33,7 +33,6 @@ from metadata import (
     get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
-    lazy_sync_macros,
 )
 from transport import build_http_requester, build_ws_generator
 from confluent_kafka import Producer
@@ -358,9 +357,7 @@ async def ws_source_executable(
         if len(records) > 0:
             df = records_to_polars(records, column_types, {}, {})
             # Do not truncate the cache, this is a Table
-            await cache(
-                df, 0, int(time.time() * 1_000), table_name, conn, is_source
-            )
+            await cache(df, 0, int(time.time() * 1_000), table_name, conn, is_source)
         else:
             # This should not happen, just in case
             df = pl.DataFrame()
@@ -457,9 +454,7 @@ def build_lookup_table_prehook(
     logger.debug(
         "registered macro: {} with definition: {}", macro_name, create_macro_sql
     )
-    create_macro_definition(
-        conn, macro_name, dynamic_columns, create_macro_sql
-    )
+    create_macro_definition(conn, macro_name, dynamic_columns, create_macro_sql)
 
     return macro_name
 
@@ -650,8 +645,6 @@ async def transform_executable(
     # pl_ctx.register(first_upstream, df)
     # transform_df = pl_ctx.execute(transform_query)
     logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
-    # sync macro
-    lazy_sync_macros(backend_conn, transform_conn, transform_query, EXEC_CONN_LOADED_MACROS)
 
     # explicitely mock df registration of incoming df
     # in case of lookup, this should also work when the

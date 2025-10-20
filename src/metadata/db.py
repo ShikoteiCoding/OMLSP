@@ -12,7 +12,6 @@ from context.context import (
     SelectContext,
 )
 
-import re
 
 METADATA_TABLE_TABLE_NAME = "__table_metadata"
 METADATA_SOURCE_TABLE_NAME = "__source_metadata"
@@ -320,74 +319,3 @@ def resolve_schema(con, relation: str | SelectContext):
         sql = f"SELECT * FROM {relation}"
         schema = get_table_schema(con, relation)
     return sql, schema
-
-
-def get_known_macros(registry_conn: DuckDBPyConnection) -> set[str]:
-    rows = registry_conn.execute(
-        f"SELECT macro_name FROM {METADATA_MACRO_TABLE_NAME}"
-    ).fetchall()
-    return {row[0] for row in rows}
-
-
-def detect_referenced_macros_optimized(
-    transform_query: str, known_macros: set[str]
-) -> set[str]:
-    if not known_macros:
-        return set()
-
-    # Sort macros descending to ensure longer names are processed first in the pattern
-    sorted_macros = sorted(known_macros, key=len, reverse=True)
-
-    # Build the pattern: \b(MACRO_A|MACRO_B)\b
-    pattern_string = "|".join(re.escape(name) for name in sorted_macros)
-    full_pattern = rf"\b({pattern_string})\b"
-
-    # Run the single, fast search
-    found_matches = re.findall(full_pattern, transform_query, re.IGNORECASE)
-
-    # Map results back to the original casing
-    found_macros_lower = {name.lower() for name in found_matches}
-
-    original_casing_macros = {
-        original_name
-        for original_name in known_macros
-        if original_name.lower() in found_macros_lower
-    }
-
-    return original_casing_macros
-
-
-def lazy_sync_macros(
-    registry_conn: DuckDBPyConnection,
-    exec_conn: DuckDBPyConnection,
-    transform_query: str,
-    loaded_cache: set[str],
-) -> None:
-    """
-    Synchronizes only the necessary, missing macros from persistent registry_conn
-    into the runtime execution exec_conn
-
-    This uses a 'lazy, on-demand' strategy, prioritizing efficiency by:
-    1. Detecting dependencies quickly using a single optimized regex (O(M))
-    2. Using a fast Python Set (loaded_cache) to track already registered macros (O(1))
-    """
-    known_macros = get_known_macros(registry_conn)
-    needed_macros = detect_referenced_macros_optimized(transform_query, known_macros)
-
-    macros_to_sync_sql = []
-    macros_to_sync_names = []
-
-    for macro_name in needed_macros:
-        if macro_name not in loaded_cache:
-            sql_row = registry_conn.execute(
-                f"SELECT macro_sql FROM {METADATA_MACRO_TABLE_NAME} WHERE macro_name = '{macro_name}'"
-            ).fetchone()
-
-            if sql_row:
-                macros_to_sync_sql.append(sql_row[0])
-                macros_to_sync_names.append(macro_name)
-
-    if macros_to_sync_sql:
-        for sql in macros_to_sync_sql:
-            exec_conn.execute(sql)
-        loaded_cache.update(macros_to_sync_names)

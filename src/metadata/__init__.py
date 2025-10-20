@@ -18,7 +18,6 @@ from metadata.db import (
     resolve_schema,
     update_batch_id_in_source_metadata,
     update_batch_id_in_table_metadata,
-    lazy_sync_macros,
 )
 
 __all__ = [
@@ -41,5 +40,4 @@ __all__ = [
     "resolve_schema",
     "update_batch_id_in_source_metadata",
     "update_batch_id_in_table_metadata",
-    "lazy_sync_macros",
 ]
