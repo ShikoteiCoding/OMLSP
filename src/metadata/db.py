@@ -26,8 +26,7 @@ def init_metadata_store(conn: DuckDBPyConnection) -> None:
     macro_table_to_def = f"""
     CREATE TABLE {METADATA_MACRO_TABLE_NAME} (
         macro_name STRING,
-        fields STRING[],
-        macro_sql STRING
+        fields STRING[]
     );
     """
     conn.execute(macro_table_to_def)
@@ -156,11 +155,11 @@ def get_macro_definition_by_name(
 
 
 def create_macro_definition(
-    conn: DuckDBPyConnection, macro_name: str, fields: list[str], macro_sql: str
+    conn: DuckDBPyConnection, macro_name: str, fields: list[str]
 ) -> None:
     query = f"""
     INSERT INTO {METADATA_MACRO_TABLE_NAME} (macro_name, fields, macro_sql)
-    VALUES ('{macro_name}', {fields}, '{macro_sql}');
+    VALUES ('{macro_name}', {fields});
     """
     conn.execute(query)
 

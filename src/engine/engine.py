@@ -79,8 +79,6 @@ DUCKDB_TO_POLARS: dict[str, Any] = {
     "DECIMAL": pl.Float64,
 }
 
-EXEC_CONN_LOADED_MACROS: set[str] = set()
-
 
 def build_lookup_properties(
     properties: dict[str, str], context: dict[str, Any]
@@ -454,7 +452,7 @@ def build_lookup_table_prehook(
     logger.debug(
         "registered macro: {} with definition: {}", macro_name, create_macro_sql
     )
-    create_macro_definition(conn, macro_name, dynamic_columns, create_macro_sql)
+    create_macro_definition(conn, macro_name, dynamic_columns)
 
     return macro_name
 
