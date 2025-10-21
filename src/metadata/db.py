@@ -158,7 +158,7 @@ def create_macro_definition(
     conn: DuckDBPyConnection, macro_name: str, fields: list[str]
 ) -> None:
     query = f"""
-    INSERT INTO {METADATA_MACRO_TABLE_NAME} (macro_name, fields, macro_sql)
+    INSERT INTO {METADATA_MACRO_TABLE_NAME} (macro_name, fields)
     VALUES ('{macro_name}', {fields});
     """
     conn.execute(query)
