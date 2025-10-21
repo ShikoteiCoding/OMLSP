@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import abc
 import polars as pl
 import trio
 
-from abc import ABC, abstractmethod
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
 from loguru import logger
@@ -28,16 +28,16 @@ def handle_cancellation(func):
     return wrapper
 
 
-class BaseTaskT(ABC, Generic[T]):
+class BaseTaskT(abc.ABC, Generic[T]):
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         self.task_id = task_id
         self._conn = conn
 
-    @abstractmethod
+    @abc.abstractmethod
     def register(self, executable: Callable) -> BaseTaskT[T]:
         pass
 
-    @abstractmethod
+    @abc.abstractmethod
     async def run(self):
         pass
 
@@ -47,13 +47,13 @@ class BaseSourceTaskT(BaseTaskT, Generic[T]):
         super().__init__(task_id, conn)
         self._sender = Channel[T]()
 
-    @abstractmethod
+    @abc.abstractmethod
     def register(self, executable: Callable) -> BaseSourceTaskT[T]:
         self._executable = executable
         return self
 
-    @abstractmethod
-    def get_sender(self) -> Channel:
+    @abc.abstractmethod
+    def get_sender(self) -> Channel[T]:
         pass
 
 

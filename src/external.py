@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import trio
 import jq as jqm
 import httpx
@@ -7,17 +9,14 @@ from typing import Any
 
 from auth import AUTH_DISPATCHER, BaseSignerT, SecretsHandler
 from loguru import logger
+from typing import Protocol
 
 MAX_RETRIES = 5
-
-# ============================================================
-# HTTP Request Helpers
-# ============================================================
 
 
 def parse_http_properties(
     properties: dict[str, str],
-) -> tuple[dict[str, Any], BaseSignerT, dict[str, Any], dict[str, Any]]:
+) -> tuple[Any, BaseSignerT, dict[str, Any], dict[str, Any]]:
     """Parse property dict provided by context and get required http parameters."""
     # Build kwargs dict compatible with both httpx or requests
     requests_kwargs: dict[str, Any] = {
@@ -25,13 +24,16 @@ def parse_http_properties(
         "json": {},
         "params": {},
     }
-    meta_kwargs = {}
+    meta_kwargs = {"type": "no-pagination"}
 
     # Manually extract standard values
     requests_kwargs["url"] = properties["url"]
     requests_kwargs["method"] = properties["method"]
     jq = jqm.compile(properties["jq"])
 
+    # TODO: Move this the same way as Pagination in the
+    # TransportBuilder layer -> We should align dynamic
+    # dispatched instanciation.
     secrets_handler = SecretsHandler()
     signer_class = AUTH_DISPATCHER[requests_kwargs.get("signer_class", "NoSigner")](
         secrets_handler
@@ -69,6 +71,8 @@ def parse_http_properties(
         requests_kwargs.pop("headers")
     if requests_kwargs["json"] == {}:
         requests_kwargs.pop("json")
+    if requests_kwargs["params"] == {}:
+        requests_kwargs.pop("params")
 
     return jq, signer_class, requests_kwargs, meta_kwargs
 
@@ -127,7 +131,34 @@ def parse_response(data: dict[str, Any], jq: Any = None) -> list[dict[str, Any]]
     return jq.input(data).all()
 
 
-class NoPagination:
+class Pagination(Protocol):
+    def update_params(self):
+        pass
+
+    def extract_next_cursor(self):
+        pass
+
+    def has_cursor(self):
+        pass
+
+
+class BasePagination:
+    def __init__(self, meta: dict[str, Any]):
+        self.meta = meta
+
+    def update_params(self, cursor: str, params: dict[str, str]):
+        pass
+
+    def extract_next_cursor(
+        self, batch: list[dict[str, Any]], response: httpx.Response
+    ):
+        pass
+
+    def has_cursor(self):
+        pass
+
+
+class NoPagination(BasePagination):
     def __init__(self, meta: dict[str, Any]):
         self.meta = meta
 
@@ -145,7 +176,7 @@ class NoPagination:
         return False
 
 
-class PageBasedPagination(NoPagination):
+class PageBasedPagination(BasePagination):
     def __init__(self, meta):
         super().__init__(meta)
         self.page_param = meta.get("page_param", "page")
@@ -158,7 +189,7 @@ class PageBasedPagination(NoPagination):
         return params
 
 
-class CursorBasedPagination(NoPagination):
+class CursorBasedPagination(BasePagination):
     def __init__(self, meta):
         super().__init__(meta)
         self.cursor_param = meta.get("cursor_param", "cursor")
@@ -178,7 +209,7 @@ class CursorBasedPagination(NoPagination):
         return batch[-1].get(self.cursor_id)
 
 
-class HeaderBasedPagination(NoPagination):
+class HeaderBasedPagination(BasePagination):
     def __init__(self, meta):
         super().__init__(meta)
         self.cursor_param = meta.get("cursor_param", "cursor")
@@ -200,8 +231,8 @@ class HeaderBasedPagination(NoPagination):
         return response.headers.get(self.next_cursor_header)
 
 
-STRATEGIES = {
-    None: NoPagination,
+PAGINATION_DISPATCH: dict[str, type[BasePagination]] = {
+    "no-pagination": NoPagination,
     "page-based": PageBasedPagination,
     "cursor-based": CursorBasedPagination,
     "header-based": HeaderBasedPagination,
@@ -212,7 +243,7 @@ async def async_http_requester(
     jq,
     base_signer: BaseSignerT,
     request_kwargs: dict[str, Any],
-    pagination_strategy: Any,
+    pagination_strategy: BasePagination,
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     async with httpx.AsyncClient() as client:
@@ -243,6 +274,8 @@ async def async_http_requester(
                 cursor = pagination_strategy.extract_next_cursor(batch, response)
                 if cursor is None:
                     break
+            else:
+                break
 
         return results
 
@@ -251,7 +284,7 @@ def sync_http_requester(
     jq,
     base_signer: BaseSignerT,
     request_kwargs: dict[str, Any],
-    pagination_strategy: Any,
+    pagination_strategy: BasePagination,
     conn: DuckDBPyConnection,
 ) -> list[dict]:
     with httpx.Client() as client:
