@@ -3,7 +3,7 @@ from __future__ import annotations
 import polars as pl
 import trio
 
-from abc import ABC, abstractmethod
+from typing import Protocol
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
 from loguru import logger
@@ -28,20 +28,39 @@ def handle_cancellation(func):
 
     return wrapper
 
+class BaseTaskT(Protocol, Generic[T]):
+    def register(self, executable: Callable[..., Any]) -> BaseTaskT[T]:
+        ...
 
-class BaseTaskT(ABC, Service, Generic[T]):
+    async def run(self) -> None:
+        ...
+
+class BaseSourceTaskT(BaseTaskT[T], Protocol):
+    def register(self, executable: Callable[..., Any]) -> BaseSourceTaskT[T]:
+        ...
+
+    def get_sender(self) -> Channel[T]:
+        ...
+
+class BaseTask(Service, Generic[T]):
+    """Common base for all tasks."""
+
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(name=task_id)
         self.task_id = task_id
         self._conn = conn
+        self._executable: Callable[..., Any] | None = None
 
-    @abstractmethod
-    def register(self, executable: Callable) -> BaseTaskT[T]:
-        pass
+    def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
+        """Attach the executable coroutine or function to this task."""
+        self._executable = executable
+        return self
 
-    @abstractmethod
-    async def run(self):
-        pass
+    async def run(self) -> None:
+        """Override in subclasses."""
+        if not self._executable:
+            raise RuntimeError(f"[{self.task_id}] No executable registered.")
+        await self._executable()
 
     async def on_start(self) -> None:
         logger.info(f"[{self.task_id}] on_start -> run()")
@@ -51,30 +70,24 @@ class BaseTaskT(ABC, Service, Generic[T]):
         logger.info(f"[{self.task_id}] on_stop -> shutdown")
 
 
-class BaseSourceTaskT(BaseTaskT, Generic[T]):
+class BaseSourceTask(BaseTask[T]):
+    """A base task that produces output through a Channel."""
+
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._sender = Channel[T]()
 
-    @abstractmethod
-    def register(self, executable: Callable) -> BaseSourceTaskT[T]:
-        self._executable = executable
-        return self
-
-    @abstractmethod
-    def get_sender(self) -> Channel:
-        pass
+    def get_sender(self) -> Channel[T]:
+        return self._sender
 
     async def on_stop(self) -> None:
         logger.info(f"[{self.task_id}] on_stop -> shutdown")
-        if hasattr(self, "_sender"):
-            try:
-                await self._sender.aclose_sender()
-            except Exception:
-                logger.exception("error closing sender channel")
+        try:
+            await self._sender.aclose_sender()
+        except Exception:
+            logger.exception(f"[{self.task_id}] Error closing sender channel")
 
-
-class ScheduledSourceTask(BaseSourceTaskT, Generic[T]):
+class ScheduledSourceTask(BaseSourceTask, Generic[T]):
     _sender: Channel
     _executable: Callable
 
@@ -98,7 +111,7 @@ class ScheduledSourceTask(BaseSourceTaskT, Generic[T]):
             await self._sender.send(result)
 
 
-class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
+class ContinuousSourceTask(BaseSourceTask, Generic[T]):
     _sender: Channel[T]
     _executable: Callable
 
@@ -128,7 +141,7 @@ class ContinuousSourceTask(BaseSourceTaskT, Generic[T]):
         raise Exception("somehow exited here")
 
 
-class SinkTask(BaseTaskT, Generic[T]):
+class SinkTask(BaseTask, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
@@ -154,7 +167,7 @@ class SinkTask(BaseTaskT, Generic[T]):
             # await self._executable(self.task_id, self._conn, df)
 
 
-class TransformTask(BaseTaskT, Generic[T]):
+class TransformTask(BaseTask, Generic[T]):
     _sender: Channel[T]
     _receivers: list[Channel[T]]
     _executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]]
