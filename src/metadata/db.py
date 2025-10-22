@@ -12,6 +12,7 @@ from context.context import (
     SelectContext,
 )
 
+
 METADATA_TABLE_TABLE_NAME = "__table_metadata"
 METADATA_SOURCE_TABLE_NAME = "__source_metadata"
 METADATA_VIEW_TABLE_NAME = "__view_metadata"
