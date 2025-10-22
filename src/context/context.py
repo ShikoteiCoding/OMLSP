@@ -6,13 +6,22 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Type, Union
 from apscheduler.triggers.cron import CronTrigger
 
-class EvaluableContext:
+
+class ValidContext:
+    # Valid context are valid statements according to OMLSP Dialect
+    # as opposed to InvalidContext
+    ...
+
+
+class EvaluableContext(ValidContext):
     # Evaluable context are supposed to be run directly by the app
     ...
+
 
 # --- Context definitions ---
 class CreateContext(EvaluableContext):
     name: str
+
 
 # ---------- Table Contexts ----------
 class CreateTableContext(CreateContext):
@@ -67,6 +76,7 @@ class CreateHTTPLookupTableContext(CreateTableContext):
 class CreateSourceContext(CreateContext):
     name: str
     query: str
+
 
 @dataclass
 class CreateHTTPSourceContext(CreateSourceContext):
@@ -159,26 +169,11 @@ class CommandContext(EvaluableContext):
 class InvalidContext:
     reason: str
 
+
 OnStartContext = CreateWSTableContext
 
-# Everything except Invalid and CreateSecret
-QueryContext = Union[
-    CreateHTTPLookupTableContext,
-    CreateHTTPSourceContext,
-    CreateHTTPTableContext,
-    CreateWSSourceContext,
-    CreateWSTableContext,
-    CreateSinkContext,
-    CreateViewContext,
-    SetContext,
-    CommandContext,
-    SelectContext,
-    ShowContext,
-]
-
-NonQueryContext = Union[CreateSecretContext, InvalidContext]
-
 # Context part of task flow
+# TODO: change union for mixin dependencies
 ScheduledTaskContext = Union[CreateHTTPSourceContext, CreateHTTPTableContext]
 ContinousTaskContext = Union[CreateWSSourceContext, CreateWSTableContext]
 SinkTaskContext = Union[CreateSinkContext]

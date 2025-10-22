@@ -22,15 +22,13 @@ from context.context import (
     TaskContext,
     OnStartContext,
 )
-from engine.engine import eval_select, duckdb_to_dicts, duckdb_to_pl, substitute_sql_template
+from engine.engine import eval_select, duckdb_to_dicts, duckdb_to_pl
 from metadata import (
     create_secret,
     create_sink,
     create_source,
     create_table,
     create_view,
-    get_lookup_tables,
-    get_duckdb_tables,
     init_metadata_store,
 )
 from server import ClientManager
