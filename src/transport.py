@@ -141,18 +141,22 @@ def build_ws_properties(
 
 
 async def ws_generator(
-    properties: dict[str, Any], nursery: trio.Nursery
+    properties: dict[str, Any], nursery: trio.Nursery, cancel_event: trio.Event
 ) -> AsyncGenerator[list[dict[str, Any]], None]:
     url = properties["url"]
     logger.debug("Starting websocket generator on {}", url)
     async with open_websocket_url(url) as ws:
         while True:
+            if cancel_event.is_set():
+                break
             message = await ws.get_message()
             yield parse_response(json.loads(message), properties["jq"])
 
 
 async def ws_generator_aggregator(
-    list_of_properties: list[dict[str, Any]], nursery: trio.Nursery
+    list_of_properties: list[dict[str, Any]],
+    nursery: trio.Nursery,
+    cancel_event: trio.Event,
 ) -> AsyncGenerator[list[dict[str, Any]], None]:
     """
     Trio version: fan-in multiple ws_generator streams into one.
@@ -163,7 +167,7 @@ async def ws_generator_aggregator(
     # in the start condition to substitute
     if len(list_of_properties) == 1:
         async for msg in ws_generator(
-            properties=list_of_properties[0], nursery=nursery
+            properties=list_of_properties[0], nursery=nursery, cancel_event=cancel_event
         ):
             yield msg
 
@@ -179,7 +183,9 @@ async def ws_generator_aggregator(
         # TODO: Move fan-in mechanism inside the Continuous task
         # so we can reuse for Trasnform Task
         async def consume(props: dict[str, Any]):
-            async for msg in ws_generator(properties=props, nursery=nursery):
+            async for msg in ws_generator(
+                properties=props, nursery=nursery, cancel_event=cancel_event
+            ):
                 await send.send(msg)
 
         for props in list_of_properties:
@@ -197,7 +203,7 @@ async def ws_generator_aggregator(
 # We also need to pivot the on_start_query so it is a list
 def build_ws_generator(
     properties: dict[str, Any], templates_list: list[dict[str, str]]
-) -> Callable[[trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]]:
+) -> Callable[[trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]]:
     """
     Build a websocket data generator, if multiple templates are provided
     in the templates_list, then one connection is created for each substitute
@@ -225,6 +231,7 @@ def build_ws_generator(
 if __name__ == "__main__":
 
     async def main():
+        cancel_event = trio.Event()
         async with trio.open_nursery() as nursery:
             properties = {
                 "url": "wss://stream.binance.com/ws/ethbtc@miniTicker",
@@ -241,7 +248,7 @@ if __name__ == "__main__":
                 }"""),
             }
 
-            async for msg in ws_generator(properties, nursery):
+            async for msg in ws_generator(properties, nursery, cancel_event):
                 logger.info(msg)
 
     trio.run(main)

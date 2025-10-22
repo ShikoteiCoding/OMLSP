@@ -340,7 +340,7 @@ async def ws_source_executable(
     column_types: dict[str, str],
     is_source: bool,
     ws_generator_func: Callable[
-        [trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]
+        [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
     ],
     nursery: trio.Nursery,
     cancel_event: trio.Event,
@@ -352,19 +352,16 @@ async def ws_source_executable(
     # 'ws_generator_func' is supposed to be never ending (while True)
     # if an issue happens, the source task should be entirely
     # restarted (not a feature yet)
-    while not cancel_event.is_set():
-        async for records in ws_generator_func(nursery):
-            if len(records) > 0:
-                df = records_to_polars(records, column_types, {}, {})
-                # Do not truncate the cache, this is a Table
-                await cache(
-                    df, 0, int(time.time() * 1_000), table_name, conn, is_source
-                )
-            else:
-                # This should not happen, just in case
-                df = pl.DataFrame()
+    async for records in ws_generator_func(nursery, cancel_event):
+        if len(records) > 0:
+            df = records_to_polars(records, column_types, {}, {})
+            # Do not truncate the cache, this is a Table
+            await cache(df, 0, int(time.time() * 1_000), table_name, conn, is_source)
+        else:
+            # This should not happen, just in case
+            df = pl.DataFrame()
 
-            yield df
+        yield df
 
 
 def build_scheduled_source_executable(

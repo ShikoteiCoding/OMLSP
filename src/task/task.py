@@ -38,7 +38,8 @@ class BaseTask(Service, Generic[T]):
         super().__init__(name=task_id)
         self.task_id = task_id
         self._conn = conn
-        self._executable: Callable[..., Any] | None = None
+        self._executable: Callable[..., Any]
+        self._cancel_scope = self._nursery.cancel_scope
 
     def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
         """Attach the executable coroutine or function to this task."""
@@ -47,13 +48,10 @@ class BaseTask(Service, Generic[T]):
 
     async def run(self) -> None:
         """Override in subclasses."""
-        if not self._executable:
-            raise RuntimeError(f"[{self.task_id}] No executable registered.")
         await self._executable()
 
     async def on_start(self) -> None:
         logger.info(f"[{self.task_id}] task running")
-        self._cancel_scope = self._nursery.cancel_scope
         self._nursery.start_soon(self.run)
 
     async def on_stop(self) -> None:
