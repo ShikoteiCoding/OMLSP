@@ -6,12 +6,23 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Type, Union
 from apscheduler.triggers.cron import CronTrigger
 
-# --- Context definitions ---
+class EvaluableContext:
+    # Evaluable context are supposed to be run directly by the app
+    ...
 
+# --- Context definitions ---
+class CreateContext(EvaluableContext):
+    name: str
 
 # ---------- Table Contexts ----------
+class CreateTableContext(CreateContext):
+    name: str
+    query: str
+    lookup: bool
+
+
 @dataclass
-class CreateHTTPTableContext:
+class CreateHTTPTableContext(CreateTableContext):
     name: str
     properties: dict[str, Any]
     query: str
@@ -27,7 +38,7 @@ class CreateHTTPTableContext:
 
 
 @dataclass
-class CreateWSTableContext:
+class CreateWSTableContext(CreateTableContext):
     name: str
     properties: dict[str, Any]
     column_types: dict[str, str]
@@ -43,7 +54,7 @@ class CreateWSTableContext:
 
 
 @dataclass
-class CreateHTTPLookupTableContext:
+class CreateHTTPLookupTableContext(CreateTableContext):
     name: str
     properties: dict[str, Any]
     query: str
@@ -53,15 +64,18 @@ class CreateHTTPLookupTableContext:
 
 
 # ---------- Source Contexts ----------
+class CreateSourceContext(CreateContext):
+    name: str
+    query: str
+
 @dataclass
-class CreateHTTPSourceContext:
+class CreateHTTPSourceContext(CreateSourceContext):
     name: str
     properties: dict[str, Any]
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     trigger: CronTrigger
-    lookup: bool = False
     source: bool = True
 
     # executable of http table context
@@ -70,14 +84,13 @@ class CreateHTTPSourceContext:
 
 
 @dataclass
-class CreateWSSourceContext:
+class CreateWSSourceContext(CreateSourceContext):
     name: str
     properties: dict[str, Any]
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     query: str
     on_start_query: str
-    lookup: bool = False
     source: bool = True
 
     # executable of ws table context
@@ -87,7 +100,7 @@ class CreateWSSourceContext:
 
 # ---------- View / Sink Contexts ----------
 @dataclass
-class CreateViewContext:
+class CreateViewContext(CreateContext):
     name: str
     upstreams: list[str]
     query: str
@@ -101,7 +114,7 @@ class CreateViewContext:
 
 
 @dataclass
-class CreateSinkContext:
+class CreateSinkContext(CreateContext):
     name: str
     upstreams: list[str]
     properties: dict[str, Any]
@@ -109,7 +122,7 @@ class CreateSinkContext:
 
 
 @dataclass
-class CreateSecretContext:
+class CreateSecretContext(CreateContext):
     name: str
     properties: dict[str, Any]
     value: str
@@ -117,7 +130,7 @@ class CreateSecretContext:
 
 # ---------- Query / Command Contexts ----------
 @dataclass
-class SelectContext:
+class SelectContext(EvaluableContext):
     columns: list[str]
     table: str
     alias: str
@@ -127,41 +140,24 @@ class SelectContext:
 
 
 @dataclass
-class SetContext:
+class SetContext(EvaluableContext):
     query: str
 
 
 @dataclass
-class ShowContext:
+class ShowContext(EvaluableContext):
     user_query: str
     query: str
 
 
 @dataclass
-class CommandContext:
+class CommandContext(EvaluableContext):
     query: str
 
 
 @dataclass
 class InvalidContext:
     reason: str
-
-
-# ----------  Unions for type hints ----------
-EvaluableContext = Union[
-    CommandContext,
-    CreateHTTPLookupTableContext,
-    CreateHTTPSourceContext,
-    CreateHTTPTableContext,
-    CreateWSSourceContext,
-    CreateWSTableContext,
-    CreateSecretContext,
-    CreateSinkContext,
-    CreateViewContext,
-    SetContext,
-    SelectContext,
-    ShowContext,
-]
 
 OnStartContext = CreateWSTableContext
 
@@ -181,17 +177,6 @@ QueryContext = Union[
 ]
 
 NonQueryContext = Union[CreateSecretContext, InvalidContext]
-
-# Table contexts of different connector type
-CreateTableContext = Union[
-    CreateHTTPLookupTableContext,
-    CreateHTTPTableContext,
-    CreateWSSourceContext,
-    CreateWSTableContext,
-]
-
-# Source contexts of different connector type
-CreateSourceContext = Union[CreateWSSourceContext, CreateHTTPSourceContext]
 
 # Context part of task flow
 ScheduledTaskContext = Union[CreateHTTPSourceContext, CreateHTTPTableContext]
