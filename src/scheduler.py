@@ -134,11 +134,9 @@ class TrioScheduler(Service, BaseScheduler):
 
     async def on_stop(self) -> None:
         self._stop_timer()
-
         if self._nursery:
             logger.debug(f"[{self.name}] Cancelling all background tasks.")
             self._nursery.cancel_scope.cancel()
-
         logger.success("[{}] stopping.", self.name)
 
     async def on_shutdown(self) -> None:

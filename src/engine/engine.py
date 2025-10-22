@@ -343,6 +343,7 @@ async def ws_source_executable(
         [trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]
     ],
     nursery: trio.Nursery,
+    cancel_event: trio.Event,
     *args,
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
@@ -351,16 +352,19 @@ async def ws_source_executable(
     # 'ws_generator_func' is supposed to be never ending (while True)
     # if an issue happens, the source task should be entirely
     # restarted (not a feature yet)
-    async for records in ws_generator_func(nursery):
-        if len(records) > 0:
-            df = records_to_polars(records, column_types, {}, {})
-            # Do not truncate the cache, this is a Table
-            await cache(df, 0, int(time.time() * 1_000), table_name, conn, is_source)
-        else:
-            # This should not happen, just in case
-            df = pl.DataFrame()
+    while not cancel_event.is_set():
+        async for records in ws_generator_func(nursery):
+            if len(records) > 0:
+                df = records_to_polars(records, column_types, {}, {})
+                # Do not truncate the cache, this is a Table
+                await cache(
+                    df, 0, int(time.time() * 1_000), table_name, conn, is_source
+                )
+            else:
+                # This should not happen, just in case
+                df = pl.DataFrame()
 
-        yield df
+            yield df
 
 
 def build_scheduled_source_executable(
@@ -379,7 +383,8 @@ def build_scheduled_source_executable(
 def build_continuous_source_executable(
     ctx: ContinousTaskContext, conn: DuckDBPyConnection
 ) -> Callable[
-    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[pl.DataFrame, None]
+    [str, DuckDBPyConnection, trio.Nursery, trio.Event],
+    AsyncGenerator[pl.DataFrame, None],
 ]:
     properties = ctx.properties
     table_name = ctx.name
@@ -656,6 +661,7 @@ if __name__ == "__main__":
     from transport import ws_generator
 
     conn: DuckDBPyConnection = connect(database=":memory:")
+    cancel_event = trio.Event()
 
     async def main():
         async with trio.open_nursery() as nursery:
@@ -675,7 +681,14 @@ if __name__ == "__main__":
             }
 
             async for msg in ws_source_executable(
-                "0", conn, "abcd", {}, False, partial(ws_generator, properties), nursery
+                "0",
+                conn,
+                "abcd",
+                {},
+                False,
+                partial(ws_generator, properties),
+                nursery,
+                cancel_event,
             ):
                 logger.info(msg)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import polars as pl
 import trio
 
+
 from typing import Protocol
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
@@ -13,34 +14,22 @@ from channel import Channel
 
 TaskOutput: TypeAlias = Any
 TaskId = str
+DEFAULT_CAPACITY = 100
 
 T = TypeVar("T")
 
 
-def handle_cancellation(func):
-    async def wrapper(self, *args, **kwargs):
-        try:
-            return await func(self, *args, **kwargs)
-        except trio.Cancelled:
-            logger.debug(
-                f"[{self.__class__.__name__}] cancelled gracefully during shutdown."
-            )
-
-    return wrapper
-
 class BaseTaskT(Protocol, Generic[T]):
-    def register(self, executable: Callable[..., Any]) -> BaseTaskT[T]:
-        ...
+    def register(self, executable: Callable[..., Any]) -> BaseTaskT[T]: ...
 
-    async def run(self) -> None:
-        ...
+    async def run(self) -> None: ...
+
 
 class BaseSourceTaskT(BaseTaskT[T], Protocol):
-    def register(self, executable: Callable[..., Any]) -> BaseSourceTaskT[T]:
-        ...
+    def register(self, executable: Callable[..., Any]) -> BaseSourceTaskT[T]: ...
 
-    def get_sender(self) -> Channel[T]:
-        ...
+    def get_sender(self) -> Channel[T]: ...
+
 
 class BaseTask(Service, Generic[T]):
     """Common base for all tasks."""
@@ -63,11 +52,12 @@ class BaseTask(Service, Generic[T]):
         await self._executable()
 
     async def on_start(self) -> None:
-        logger.info(f"[{self.task_id}] on_start -> run()")
+        logger.info(f"[{self.task_id}] task running")
+        self._cancel_scope = self._nursery.cancel_scope
         self._nursery.start_soon(self.run)
 
     async def on_stop(self) -> None:
-        logger.info(f"[{self.task_id}] on_stop -> shutdown")
+        logger.info(f"[{self.task_id}] task stopping")
 
 
 class BaseSourceTask(BaseTask[T]):
@@ -76,16 +66,19 @@ class BaseSourceTask(BaseTask[T]):
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._sender = Channel[T]()
+        self._cancel_event = trio.Event()
 
     def get_sender(self) -> Channel[T]:
         return self._sender
 
     async def on_stop(self) -> None:
-        logger.info(f"[{self.task_id}] on_stop -> shutdown")
-        try:
+        logger.info(f"[{self.task_id}] task stopping")
+        self._cancel_event.set()
+        if hasattr(self, "_sender"):
             await self._sender.aclose_sender()
-        except Exception:
-            logger.exception(f"[{self.task_id}] Error closing sender channel")
+        if hasattr(self, "_cancel_scope") and self._cancel_scope is not None:
+            self._cancel_scope.cancel()
+
 
 class ScheduledSourceTask(BaseSourceTask, Generic[T]):
     _sender: Channel
@@ -93,7 +86,7 @@ class ScheduledSourceTask(BaseSourceTask, Generic[T]):
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
-        self._sender = Channel[T](100)
+        self._sender = Channel[T](DEFAULT_CAPACITY)
 
     def register(
         self, executable: Callable[[TaskId, DuckDBPyConnection], Coroutine[Any, Any, T]]
@@ -104,10 +97,9 @@ class ScheduledSourceTask(BaseSourceTask, Generic[T]):
     def get_sender(self) -> Channel:
         return self._sender
 
-    @handle_cancellation
     async def run(self):
-        result = await self._executable(task_id=self.task_id, conn=self._conn)
-        if hasattr(self, "_sender"):
+        if not self._cancel_event.is_set():
+            result = await self._executable(task_id=self.task_id, conn=self._conn)
             await self._sender.send(result)
 
 
@@ -117,13 +109,14 @@ class ContinuousSourceTask(BaseSourceTask, Generic[T]):
 
     def __init__(self, task_id: str, conn: DuckDBPyConnection, nursery: trio.Nursery):
         super().__init__(task_id, conn)
-        self._sender = Channel[T](100)
+        self._sender = Channel[T](DEFAULT_CAPACITY)
         self.nursery = nursery
 
     def register(
         self,
         executable: Callable[
-            [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[Any, T]
+            [str, DuckDBPyConnection, trio.Nursery, trio.Event],
+            AsyncGenerator[Any, T],
         ],
     ) -> ContinuousSourceTask[T]:
         self._executable = executable
@@ -132,13 +125,14 @@ class ContinuousSourceTask(BaseSourceTask, Generic[T]):
     def get_sender(self) -> Channel[T]:
         return self._sender
 
-    @handle_cancellation
     async def run(self):
         async for result in self._executable(
-            task_id=self.task_id, conn=self._conn, nursery=self.nursery
+            task_id=self.task_id,
+            conn=self._conn,
+            nursery=self.nursery,
+            cancel_event=self._cancel_event,
         ):
             await self._sender.send(result)
-        raise Exception("somehow exited here")
 
 
 class SinkTask(BaseTask, Generic[T]):
@@ -158,7 +152,6 @@ class SinkTask(BaseTask, Generic[T]):
     def subscribe(self, recv: Channel):
         self._receivers.append(recv.clone())
 
-    @handle_cancellation
     async def run(self):
         # TODO: receive many upstreams
         receiver = self._receivers[0]
@@ -167,7 +160,7 @@ class SinkTask(BaseTask, Generic[T]):
             # await self._executable(self.task_id, self._conn, df)
 
 
-class TransformTask(BaseTask, Generic[T]):
+class TransformTask(BaseSourceTask, Generic[T]):
     _sender: Channel[T]
     _receivers: list[Channel[T]]
     _executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]]
@@ -175,7 +168,7 @@ class TransformTask(BaseTask, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
-        self._sender = Channel[T](100)
+        self._sender = Channel[T](DEFAULT_CAPACITY)
 
     def register(
         self,
@@ -190,7 +183,6 @@ class TransformTask(BaseTask, Generic[T]):
     def get_sender(self) -> Channel:
         return self._sender
 
-    @handle_cancellation
     async def run(self):
         receiver = self._receivers[0]
         async for df in receiver:

@@ -150,3 +150,6 @@ class TaskManager(Service):
             )
             self._nursery.start_soon(task.start, self._nursery)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")
+
+        if task is not None:
+            self.add_dependency(task)
