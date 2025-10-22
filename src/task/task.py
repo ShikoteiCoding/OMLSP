@@ -34,12 +34,15 @@ class BaseSourceTaskT(BaseTaskT[T], Protocol):
 class BaseTask(Service, Generic[T]):
     """Common base for all tasks."""
 
+    task_id: TaskId
+    conn: DuckDBPyConnection
+    _executable: Callable[..., Any]
+    _cancel_scope: trio.CancelScope
+
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(name=task_id)
         self.task_id = task_id
         self._conn = conn
-        self._executable: Callable[..., Any]
-        self._cancel_scope = self._nursery.cancel_scope
 
     def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
         """Attach the executable coroutine or function to this task."""
@@ -52,6 +55,7 @@ class BaseTask(Service, Generic[T]):
 
     async def on_start(self) -> None:
         logger.info(f"[{self.task_id}] task running")
+        self._cancel_scope = trio.CancelScope()
         self._nursery.start_soon(self.run)
 
     async def on_stop(self) -> None:
@@ -60,6 +64,9 @@ class BaseTask(Service, Generic[T]):
 
 class BaseSourceTask(BaseTask[T]):
     """A base task that produces output through a Channel."""
+
+    _sender: Channel
+    _cancel_event: trio.Event
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
@@ -134,6 +141,8 @@ class ContinuousSourceTask(BaseSourceTask, Generic[T]):
 
 
 class SinkTask(BaseTask, Generic[T]):
+    _receivers: list[Channel[T]]
+
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
