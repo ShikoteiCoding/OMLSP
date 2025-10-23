@@ -17,17 +17,27 @@ from external import (
     BasePagination,
 )
 from auth import BaseSignerT
-from typing import Protocol
+from typing import cast, Protocol, TypedDict
 
 
 type TransportMode = Literal["sync", "async"]
+
+
+class TransportBuilderOptions(TypedDict):
+    ...
+
+class HttpTransportOptions(TransportBuilderOptions):
+    mode: TransportMode
+
+class WSTransportOptions(TransportBuilderOptions):
+    templates_list: list[str]
 
 
 class TransportBuilder:
     """Entry-point builder for various transport layers."""
 
     #: Config for child build (spark like syntax)
-    config: dict[str, str]
+    config: TransportBuilderOptions
 
     def __init__(self, props: dict[str, str]):
         self.properties = props
@@ -36,9 +46,9 @@ class TransportBuilder:
     # allow chaining for mode
     def build(self, name: str) -> Transport:
         if name == "http":
-            return HttpTransport(self.properties, self.config)
+            return HttpTransport(self.properties, cast(HttpTransportOptions, self.config))
         elif name == "ws":
-            return WSTransport(self.properties, self.config)
+            return WSTransport(self.properties, cast(WSTransportOptions, self.config))
 
         raise ValueError(f"Unknown name: {name}")
 
@@ -55,9 +65,13 @@ class TransportT(Protocol):
 
 
 class Transport(TransportT):
-    """Runtime transport object (sync or async)."""
+    """
+    Runtime transport object (sync or async).
 
-    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
+    This inherits from TransportT to allow typing of configure() and finalize().
+    """
+
+    def __init__(self, properties: dict[str, Any], config: TransportBuilderOptions):
         self.properties = properties
         self.config = config
 
@@ -78,12 +92,10 @@ class HttpTransport(Transport):
     #: Internal configs from TransportBuilder
     mode: TransportMode
 
-    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
+    def __init__(self, properties: dict[str, Any], config: HttpTransportOptions):
         super().__init__(properties, config)
 
-        # TODO: Create static typing configs per Transport
-        # Should follow pydantic Model Params syntax
-        self.mode = config["mode"]  # type: ignore
+        self.mode = config["mode"]
 
     def configure(self) -> HttpTransport:
         jq, signer, request_kwargs, meta_kwargs = parse_http_properties(self.properties)
@@ -130,7 +142,7 @@ class WSTransport(Transport):
     #: List of templates to substitute to url
     _templates_list: list[Any] = []
 
-    def __init__(self, properties: dict[str, Any], config: dict[str, Any]):
+    def __init__(self, properties: dict[str, Any], config: WSTransportOptions):
         super().__init__(properties, config)
 
         self._templates_list = config["templates_list"]
