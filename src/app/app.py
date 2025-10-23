@@ -1,14 +1,18 @@
-from typing import Any, NoReturn
+from typing import Any, Callable, NoReturn, Type
 import trio
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
 from channel import Channel
 from context.context import (
+    CreateContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
+    CreateHTTPLookupTableContext,
     CommandContext,
     CreateSecretContext,
     CreateSinkContext,
-    CreateSourceContext,
-    CreateTableContext,
+    CreateHTTPSourceContext,
+    CreateWSSourceContext,
     CreateViewContext,
     EvaluableContext,
     InvalidContext,
@@ -18,15 +22,13 @@ from context.context import (
     TaskContext,
     OnStartContext,
 )
-from engine.engine import duckdb_to_dicts, duckdb_to_pl, substitute_sql_template
+from engine.engine import eval_select, duckdb_to_dicts, duckdb_to_pl
 from metadata import (
     create_secret,
     create_sink,
     create_source,
     create_table,
     create_view,
-    get_lookup_tables,
-    get_duckdb_tables,
     init_metadata_store,
 )
 from server import ClientManager
@@ -43,6 +45,18 @@ ClientSQL = tuple[ClientId, SQL]
 EvaledSQL = tuple[ClientId, Evaled]
 
 __all__ = ["App"]
+
+
+CREATE_QUERY_DISPATCH: dict[Type[CreateContext], Callable] = {
+    CreateHTTPLookupTableContext: create_table,
+    CreateHTTPTableContext: create_table,
+    CreateWSTableContext: create_table,
+    CreateHTTPSourceContext: create_source,
+    CreateWSSourceContext: create_source,
+    CreateViewContext: create_view,
+    CreateSinkContext: create_sink,
+    CreateSecretContext: create_secret,
+}
 
 
 class App(Service):
@@ -176,51 +190,24 @@ class App(Service):
     # so it is safe to assume we can queue per client and defer
     # results to keep ordering per client
     def _eval_ctx(self, client_id: str, ctx: EvaluableContext) -> str:
-        # Evaluate and execute various SQL context types.
-        # TODO: to be eventually replaced by visitor pattern ?
         try:
-            if isinstance(ctx, CreateTableContext):
-                return create_table(self._conn, ctx)
-            elif isinstance(ctx, CreateSourceContext):
-                return create_source(self._conn, ctx)
-            elif isinstance(ctx, CreateViewContext):
-                return create_view(self._conn, ctx)
-            elif isinstance(ctx, CreateSinkContext):
-                return create_sink(self._conn, ctx)
-            elif isinstance(ctx, CreateSecretContext):
-                return create_secret(self._conn, ctx)
+            # Query with Create Context statements to eval before
+            # Task manager instanciation
+            if isinstance(ctx, CreateContext):
+                CREATE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
             elif isinstance(ctx, CommandContext):
                 return str(duckdb_to_pl(self._conn, ctx.query))
             elif isinstance(ctx, SetContext):
                 self._conn.sql(ctx.query)
                 return "SET"
             elif isinstance(ctx, SelectContext) and client_id != self._internal_ref:
-                return self._eval_select_ctx(ctx)
+                return eval_select(self._conn, ctx)
             elif isinstance(ctx, ShowContext):
                 return str(duckdb_to_pl(self._conn, ctx.query))
         except Exception as e:
             return f"fail to run sql: '{ctx}': {e}"
 
         return ""
-
-    def _eval_select_ctx(self, ctx):
-        table_name = ctx.table
-        lookup_tables = get_lookup_tables(self._conn)
-        duckdb_tables = get_duckdb_tables(self._conn)
-
-        # add internal tables here for easier dev time
-        duckdb_tables.append("duckdb_tables")
-
-        substitute_mapping = dict(zip(duckdb_tables, duckdb_tables))
-
-        if table_name in lookup_tables:
-            return f"'{table_name}' is a lookup table, you cannot use it in FROM."
-
-        if table_name not in duckdb_tables:
-            return f"'{table_name}' doesn't exist"
-
-        duckdb_sql = substitute_sql_template(self._conn, ctx, substitute_mapping)
-        return str(duckdb_to_pl(self._conn, duckdb_sql))
 
 
 if __name__ == "__main__":
@@ -229,11 +216,12 @@ if __name__ == "__main__":
 
     with open(Path("src/properties.schema.json"), "rb") as fo:
         properties_schema = json.loads(fo.read().decode("utf-8"))
-    conn: DuckDBPyConnection = connect(database=":memory:")
+    backend_conn: DuckDBPyConnection = connect(database=":memory:")
+    transform_conn: DuckDBPyConnection = backend_conn
     scheduler = TrioScheduler()
-    task_manager = TaskManager(conn)
-    client_manager = ClientManager(conn)
-    runner = App(conn, properties_schema)
+    task_manager = TaskManager(backend_conn, transform_conn)
+    client_manager = ClientManager(backend_conn)
+    runner = App(backend_conn, properties_schema)
 
     async def main():
         # preload file mSQLs
