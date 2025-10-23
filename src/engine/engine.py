@@ -29,6 +29,7 @@ from metadata import (
     create_macro_definition,
     get_batch_id_from_source_metadata,
     get_batch_id_from_table_metadata,
+    get_duckdb_tables,
     get_lookup_tables,
     get_tables,
     get_macro_definition_by_name,
@@ -682,3 +683,28 @@ async def transform_executable(
     # update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
 
     return transform_df
+
+
+def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
+    """
+    Evaluate select statement against queryable cached layer.
+
+    This also check the select is valid to ensure success execution.
+    """
+    table_name = ctx.table
+    lookup_tables = get_lookup_tables(conn)
+    duckdb_tables = get_duckdb_tables(conn)
+
+    # add internal tables here for easier dev time
+    duckdb_tables.append("duckdb_tables")
+
+    substitute_mapping = dict(zip(duckdb_tables, duckdb_tables))
+
+    if table_name in lookup_tables:
+        return f"'{table_name}' is a lookup table, you cannot use it in FROM."
+
+    if table_name not in duckdb_tables:
+        return f"'{table_name}' doesn't exist"
+
+    duckdb_sql = substitute_sql_template(conn, ctx, substitute_mapping)
+    return str(duckdb_to_pl(conn, duckdb_sql))
