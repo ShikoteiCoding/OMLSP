@@ -86,6 +86,10 @@ class TaskManager(Service):
         """Main loop for the TaskManager, runs forever."""
         self._nursery.start_soon(self._process)
 
+    async def on_stop(self):
+        """Close channel."""
+        await self._scheduled_executables.aclose_sender()
+
     async def _process(self):
         async for taskctx in self._tasks_to_deploy:
             await self._register_one_task(taskctx)

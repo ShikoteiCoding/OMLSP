@@ -60,6 +60,8 @@ class BaseTask(Service, Generic[T]):
 
     async def on_stop(self) -> None:
         logger.info(f"[{self.task_id}] task stopping")
+        if hasattr(self, "_cancel_scope") and self._cancel_scope is not None:
+            self._cancel_scope.cancel()
 
 
 class BaseSourceTask(BaseTask[T]):

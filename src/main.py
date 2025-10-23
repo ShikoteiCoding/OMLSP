@@ -64,6 +64,9 @@ async def main():
             await app._shutdown.wait()
             logger.success("All services shut down gracefully!")
 
+            # temporary
+            nursery.cancel_scope.cancel()
+
 
 if __name__ == "__main__":
     trio.run(main)

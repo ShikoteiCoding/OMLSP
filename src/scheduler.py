@@ -129,14 +129,9 @@ class TrioScheduler(Service, BaseScheduler):
             if isinstance(executable, tuple):
                 func, trigger = executable
                 _ = self.add_job(func=func, trigger=trigger)
-            else:
-                _ = self.add_job(func=executable)
 
     async def on_stop(self) -> None:
         self._stop_timer()
-        if self._nursery:
-            logger.debug(f"[{self.name}] Cancelling all background tasks.")
-            self._nursery.cancel_scope.cancel()
         logger.success("[{}] stopping.", self.name)
 
     async def on_shutdown(self) -> None:
@@ -170,12 +165,19 @@ class TrioScheduler(Service, BaseScheduler):
             return
 
         async def timer_task():
-            logger.debug(f"[Scheduler] Sleeping for {wait_seconds}s before wakeup...")
-            try:
-                await trio.sleep(wait_seconds)
-                await self._async_wakeup()
-            except trio.Cancelled:
-                pass
+            with trio.CancelScope() as cancel_scope:
+                self._timer_cancel_scope = cancel_scope
+                try:
+                    logger.debug(
+                        f"[Scheduler] Sleeping for {wait_seconds}s before wakeup..."
+                    )
+                    await trio.sleep(wait_seconds)
+                    if not self._is_shutting_down:
+                        await self._async_wakeup()
+                except trio.Cancelled:
+                    pass
+                finally:
+                    self._timer_cancel_scope = None
 
         # Launch the timer as a background task
         self._timer_cancel_scope = (
