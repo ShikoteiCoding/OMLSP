@@ -35,7 +35,7 @@ from metadata import (
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
 )
-from transport import TransportBuilder
+from transport.builder import TransportBuilder
 from confluent_kafka import Producer
 
 
@@ -343,15 +343,13 @@ async def http_source_executable(
 async def ws_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
+    nursery: trio.Nursery,
     table_name: str,
     column_types: dict[str, str],
     is_source: bool,
     ws_generator_func: Callable[
         [trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]
     ],
-    nursery: trio.Nursery,
-    *args,
-    **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
     logger.info("[{}] - starting ws executable", task_id)
 
