@@ -88,7 +88,7 @@ class TaskManager(Service):
 
     async def on_stop(self):
         """Close channel."""
-        await self._scheduled_executables.aclose_sender()
+        await self._scheduled_executables.aclose()
 
     async def _process(self):
         async for taskctx in self._tasks_to_deploy:
@@ -111,11 +111,13 @@ class TaskManager(Service):
         elif isinstance(ctx, ScheduledTaskContext):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
-            task = ScheduledSourceTask[ctx._out_type](task_id, self.conn)
+            task = ScheduledSourceTask[ctx._out_type](
+                task_id, self.conn, self._scheduled_executables, ctx.trigger
+            )
             self._sources[task_id] = task.register(
                 build_scheduled_source_executable(ctx)
             )
-            await self._scheduled_executables.send((task.run, ctx.trigger))
+            self._nursery.start_soon(task.start, self._nursery)
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"
             )

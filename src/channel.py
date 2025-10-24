@@ -13,8 +13,12 @@ class Channel(Generic[T]):
         self._send_ch, self._recv_ch = trio.open_memory_channel[T](size)
         self._subscribers: list[trio.MemorySendChannel] = []  # for clones
         self.size = size
+        self._closed = trio.Event()
 
     async def send(self, data: T) -> None:
+        if self._closed.is_set():
+            raise trio.ClosedResourceError("Channel is closed")
+
         await self._send_ch.send(data)
 
         # TODO broadcast channel instead of clones
@@ -27,14 +31,17 @@ class Channel(Generic[T]):
     async def recv(self) -> T:
         return await self._recv_ch.receive()
 
-    async def aclose_sender(self):
+    async def aclose(self):
+        if self._closed.is_set():
+            return
+        self._closed.set()
+        # Close all subscriber send channels
+        for sub in self._subscribers:
+            await sub.aclose()
+        self._subscribers.clear()
+        # Close the primary channels
         await self._send_ch.aclose()
-
-        for sub in list(self._subscribers):
-            try:
-                await sub.aclose()
-            except trio.BrokenResourceError:
-                pass  # Ignore if already closed/broken
+        await self._recv_ch.aclose()
 
     def __aiter__(self):
         return self

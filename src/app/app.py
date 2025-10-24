@@ -1,4 +1,4 @@
-from typing import Any, NoReturn
+from typing import Any
 import trio
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
@@ -116,6 +116,12 @@ class App(Service):
         # Start sql handling
         self._nursery.start_soon(self._handle_messages)
 
+    async def on_stop(self):
+        logger.success("[App] stopping.")
+        await self._sql_to_eval.aclose()
+        await self._evaled_sql.aclose()
+        await self._tasks_to_deploy.aclose()
+
     async def submit(self, sql: str) -> None:
         """
         Convenient method to submit SQL to the app.
@@ -126,7 +132,7 @@ class App(Service):
         """
         await self._sql_to_eval.send((self._internal_ref, sql))
 
-    async def _handle_messages(self) -> NoReturn:
+    async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
 
@@ -168,7 +174,8 @@ class App(Service):
             if isinstance(ctx, TaskContext):
                 await self._tasks_to_deploy.send(ctx)
 
-        raise RuntimeError("SQL Handle message loop has exited.")
+        logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
+        return
 
     # TODO: Run eval_ctx in background to avoid thread blocking.
     # This is currently a blocking operation in _handle_messages.

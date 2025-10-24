@@ -3,10 +3,10 @@ from __future__ import annotations
 import polars as pl
 import trio
 
-
 from typing import Protocol
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
+from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from services import Service
 
@@ -55,16 +55,27 @@ class BaseTask(Service, Generic[T]):
 
     async def on_start(self) -> None:
         logger.info(f"[{self.task_id}] task running")
+
         self._cancel_scope = trio.CancelScope()
-        self._nursery.start_soon(self.run)
+
+        async def _task_runner():
+            with self._cancel_scope:
+                try:
+                    await self.run()
+                except trio.Cancelled:
+                    pass  # Normal shutdown path
+                except Exception as e:
+                    logger.exception(f"[{self.task_id}] task crashed: {e}")
+
+        # Start the real task inside the cancel scope
+        self._nursery.start_soon(_task_runner)
 
     async def on_stop(self) -> None:
         logger.info(f"[{self.task_id}] task stopping")
-        if hasattr(self, "_cancel_scope") and self._cancel_scope is not None:
-            self._cancel_scope.cancel()
+        self._cancel_scope.cancel()
 
 
-class BaseSourceTask(BaseTask[T]):
+class BaseSourceTask(BaseTask, Generic[T]):
     """A base task that produces output through a Channel."""
 
     _sender: Channel
@@ -82,18 +93,39 @@ class BaseSourceTask(BaseTask[T]):
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_event.set()
         if hasattr(self, "_sender"):
-            await self._sender.aclose_sender()
-        if hasattr(self, "_cancel_scope") and self._cancel_scope is not None:
-            self._cancel_scope.cancel()
+            await self._sender.aclose()
+        self._cancel_scope.cancel()
 
 
 class ScheduledSourceTask(BaseSourceTask, Generic[T]):
     _sender: Channel
     _executable: Callable
 
-    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
+    def __init__(
+        self,
+        task_id: TaskId,
+        conn: DuckDBPyConnection,
+        scheduled_executables: Channel[Callable | tuple[Callable, Any]],
+        trigger: CronTrigger,
+    ):
         super().__init__(task_id, conn)
         self._sender = Channel[T](DEFAULT_CAPACITY)
+        self.scheduled_executables = scheduled_executables
+        self.trigger = trigger
+
+    async def on_start(self) -> None:
+        logger.info(f"[{self.task_id}] task running")
+        self._cancel_scope = trio.CancelScope()
+
+        async def _task_runner():
+            with self._cancel_scope:
+                try:
+                    await self.scheduled_executables.send((self.run, self.trigger))
+                except trio.Cancelled:
+                    pass  # Normal shutdown path
+
+        # Start the real task inside the cancel scope
+        self._nursery.start_soon(_task_runner)
 
     def register(
         self, executable: Callable[[TaskId, DuckDBPyConnection], Coroutine[Any, Any, T]]

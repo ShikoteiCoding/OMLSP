@@ -18,6 +18,33 @@ PROPERTIES_SCHEMA = json.loads(
 )
 
 
+class DebugInstrument(trio.abc.Instrument):
+    def __init__(self):
+        # store weakrefs or task objects to show names; set is fine for debugging
+        self.live_tasks: set[trio.lowlevel.Task] = set()
+
+    def task_spawned(self, task: trio.lowlevel.Task) -> None:
+        self.live_tasks.add(task)
+        print(f"[spawned] {task.name}")
+
+    def task_exited(self, task: trio.lowlevel.Task) -> None:
+        self.live_tasks.discard(task)
+        print(f"[exited] {task.name}")
+
+    def after_run(self) -> None:
+        # called once trio.run() returns
+        if self.live_tasks:
+            names = [t.name for t in self.live_tasks]
+            print(f"[leaked tasks after run]: {names}")
+        else:
+            print("[DebugInstrument] no leaked tasks after run")
+
+
+async def debug_trio_tasks():
+    stats = trio.lowlevel.current_statistics()
+    print(f"[debug] Trio statistics: {stats}")
+
+
 async def main():
     pl.Config.set_fmt_str_lengths(900)  # TODO: expose as configuration available in SET
     parser = argparse.ArgumentParser("Run a SQL file")
@@ -63,9 +90,10 @@ async def main():
             # Now wait for all dependencies to shut down
             await app._shutdown.wait()
             logger.success("All services shut down gracefully!")
-
-            # temporary
-            nursery.cancel_scope.cancel()
+            children = nursery.child_tasks
+            print("Child tasks in the nursery:")
+            print(children)
+            await debug_trio_tasks()
 
 
 if __name__ == "__main__":
