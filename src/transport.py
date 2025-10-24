@@ -150,7 +150,9 @@ class WSTransport(Transport):
     # We also need to pivot the on_start_query so it is a list
     def finalize(
         self,
-    ) -> Callable[[trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]]:
+    ) -> Callable[
+        [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
+    ]:
         """
         Build a websocket data generator, if multiple templates are provided
         in the templates_list, then one connection is created for each substitute
@@ -182,17 +184,21 @@ def parse_ws_properties(properties: dict[str, str]) -> tuple[Any, str]:
 
 
 async def ws_generator(
-    jq: Any, url: str, nursery: trio.Nursery
+    jq: Any, url: str, nursery: trio.Nursery, cancel_event: trio.Event
 ) -> AsyncGenerator[list[dict[str, Any]], None]:
     logger.debug("Starting websocket generator on {}", url)
     async with open_websocket_url(url) as ws:
         while True:
+            if cancel_event.is_set():
+                break
             message = await ws.get_message()
             yield parse_response(json.loads(message), jq)
 
 
 async def ws_generator_aggregator(
-    list_of_properties: list[tuple[Any, str]], nursery: trio.Nursery
+    list_of_properties: list[tuple[Any, str]],
+    nursery: trio.Nursery,
+    cancel_event: trio.Event,
 ) -> AsyncGenerator[list[dict[str, Any]], None]:
     """
     Trio version: fan-in multiple ws_generator streams into one.
@@ -203,7 +209,10 @@ async def ws_generator_aggregator(
     # in the start condition to substitute
     if len(list_of_properties) == 1:
         async for msg in ws_generator(
-            jq=list_of_properties[0][0], url=list_of_properties[0][1], nursery=nursery
+            jq=list_of_properties[0][0],
+            url=list_of_properties[0][1],
+            nursery=nursery,
+            cancel_event=cancel_event,
         ):
             yield msg
 
@@ -219,7 +228,9 @@ async def ws_generator_aggregator(
         # TODO: Move fan-in mechanism inside the Continuous task
         # so we can reuse for Trasnform Task
         async def consume(jq: Any, url: str):
-            async for msg in ws_generator(jq=jq, url=url, nursery=nursery):
+            async for msg in ws_generator(
+                jq=jq, url=url, nursery=nursery, cancel_event=cancel_event
+            ):
                 await send.send(msg)
 
         for jq, url in list_of_properties:

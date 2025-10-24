@@ -45,12 +45,24 @@ class TrioExecutor(BaseExecutor):
         self._nursery = scheduler._nursery
 
     def shutdown(self, wait=True):
-        """
-        Cancel all pending Trio jobs.
-        """
-        for cancel_scope in self._pending_tasks:
+        """Cancel all pending Trio jobs gracefully."""
+        for cancel_scope in list(self._pending_tasks):
             cancel_scope.cancel()
         self._pending_tasks.clear()
+
+        if wait:
+            # Give Trio a chance to reach cancellation points
+            try:
+                trio.lowlevel.current_task()
+
+                # We're inside Trio → yield once
+                async def _wait():
+                    await trio.sleep(0)
+
+                trio.lowlevel.spawn_system_task(_wait)
+            except RuntimeError:
+                # Outside Trio context → ignore
+                pass
 
     # ----------------------------------------------------
     # Core job submission
@@ -129,22 +141,26 @@ class TrioScheduler(Service, BaseScheduler):
             if isinstance(executable, tuple):
                 func, trigger = executable
                 _ = self.add_job(func=func, trigger=trigger)
-            else:
-                _ = self.add_job(func=executable)
 
     async def on_stop(self) -> None:
+        """Gracefully stop scheduler timer and executors."""
+        self._is_shutting_down = True
         self._stop_timer()
 
-        if self._nursery:
-            logger.debug(f"[{self.name}] Cancelling all background tasks.")
-            self._nursery.cancel_scope.cancel()
+        # Stop executor tasks
+        for executor in self._executors.values():
+            if hasattr(executor, "shutdown"):
+                executor.shutdown(wait=False)
 
-        logger.success("[{}] stopping.", self.name)
+        # Close the incoming executable receiver
+        if getattr(self, "_executable_receiver", None):
+            await self._executable_receiver.aclose()
+
+        logger.success(f"[{self.name}] stopping.")
 
     async def on_shutdown(self) -> None:
-        self._trio_token = None  # cleanup
+        """Final cleanup before service exits."""
         self._is_shutting_down = True
-
         logger.success("[{}] shutdown completed.", self.name)
 
     @staticmethod
@@ -172,17 +188,20 @@ class TrioScheduler(Service, BaseScheduler):
             return
 
         async def timer_task():
-            logger.debug(f"[Scheduler] Sleeping for {wait_seconds}s before wakeup...")
-            try:
-                await trio.sleep(wait_seconds)
-                await self._async_wakeup()
-            except trio.Cancelled:
-                pass
+            with trio.CancelScope() as scope:
+                self._timer_cancel_scope = scope
+                try:
+                    logger.debug(
+                        f"[Scheduler] Sleeping for {wait_seconds}s before wakeup..."
+                    )
+                    await trio.sleep(wait_seconds)
+                    if not self._is_shutting_down:
+                        await self._async_wakeup()
+                except trio.Cancelled:
+                    logger.debug("[Scheduler] Timer cancelled.")
+                finally:
+                    self._timer_cancel_scope = None
 
-        # Launch the timer as a background task
-        self._timer_cancel_scope = (
-            self._nursery.cancel_scope.__class__()
-        )  # separate cancel scope
         self._nursery.start_soon(timer_task)
 
     async def _async_wakeup(self):
@@ -209,11 +228,11 @@ class TrioScheduler(Service, BaseScheduler):
             trio.from_thread.run(self._async_wakeup, trio_token=self._trio_token)
 
     def _stop_timer(self):
-        """
-        Cancels any currently running timer task.
-        """
+        """Cancels any currently running timer task."""
+
         if self._timer_cancel_scope:
-            self._timer_cancel_scope.cancel()
+            if not self._timer_cancel_scope.cancel_called:
+                self._timer_cancel_scope.cancel()
             self._timer_cancel_scope = None
 
     def _create_default_executor(self):
