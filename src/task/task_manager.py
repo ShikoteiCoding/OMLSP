@@ -22,6 +22,7 @@ from engine.engine import (
     build_sink_executable,
     build_transform_executable,
 )
+
 from task.task import (
     TaskId,
     BaseTaskT,
@@ -41,8 +42,9 @@ __all__ = ["TaskManager"]
 
 
 class TaskManager(Service):
-    #: Duckdb connection
-    conn: DuckDBPyConnection
+    #: Duckdb connections
+    backend_conn: DuckDBPyConnection
+    transform_conn: DuckDBPyConnection
 
     #: Scheduler (trio compatible) to register
     #: short lived or long lived processes
@@ -61,9 +63,13 @@ class TaskManager(Service):
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
 
-    def __init__(self, conn: DuckDBPyConnection):
+    def __init__(
+        self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
+    ):
         super().__init__(name="TaskManager")
-        self.conn = conn
+        self.backend_conn = backend_conn
+        # created once and lives until tasks stop
+        self.transform_conn = transform_conn
         self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](
             100
         )
@@ -101,10 +107,12 @@ class TaskManager(Service):
         if isinstance(ctx, SinkTaskContext):
             # TODO: add Transform task to handle subqueries
             # TODO: subscribe to many upstreams
-            task = SinkTask(task_id, self.conn)
+            task = SinkTask(task_id, self.transform_conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
-            self._task_id_to_task[task_id] = task.register(build_sink_executable(ctx))
+            self._task_id_to_task[task_id] = task.register(
+                build_sink_executable(ctx, self.backend_conn)
+            )
             self._nursery.start_soon(task.start, self._nursery)
             logger.success(f"[TaskManager] registered sink task '{task_id}'")
 
@@ -112,7 +120,7 @@ class TaskManager(Service):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             task = ScheduledSourceTask[ctx._out_type](
-                task_id, self.conn, self._scheduled_executables, ctx.trigger
+                task_id, self.backend_conn, self._scheduled_executables, ctx.trigger
             )
             self._sources[task_id] = task.register(
                 build_scheduled_source_executable(ctx)
@@ -126,7 +134,7 @@ class TaskManager(Service):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             task = ContinuousSourceTask[ctx._out_type](
-                task_id, self.conn, self._nursery
+                task_id, self.backend_conn, self._nursery
             )
 
             # TODO: make WS Task dynamic by registering the on_start function
@@ -134,7 +142,7 @@ class TaskManager(Service):
             # on_start func and on_run func. on_start will have "waiters"
             # and timeout logic
             self._sources[task_id] = task.register(
-                build_continuous_source_executable(ctx, self.conn)
+                build_continuous_source_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(task.start, self._nursery)
             logger.success(
@@ -143,16 +151,16 @@ class TaskManager(Service):
 
         elif isinstance(ctx, CreateHTTPLookupTableContext):
             # TODO: is this the place to build lookup ? grr
-            build_lookup_table_prehook(ctx, self.conn)
+            build_lookup_table_prehook(ctx, self.backend_conn)
             logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
 
         elif isinstance(ctx, TransformTaskContext):
-            task = TransformTask[ctx._out_type](task_id, self.conn)
+            task = TransformTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
 
             self._task_id_to_task[task_id] = task.register(
-                build_transform_executable(ctx, self.conn)
+                build_transform_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(task.start, self._nursery)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")

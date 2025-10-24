@@ -1,160 +1,202 @@
+from __future__ import annotations
+
 import trio
 import jq as jqm
 import json
-from duckdb import DuckDBPyConnection
 from functools import partial
 from string import Template
 from trio_websocket import open_websocket_url
-from typing import Any, Callable, Coroutine, AsyncGenerator
+from typing import Any, Callable, Coroutine, AsyncGenerator, Literal
 from loguru import logger
 from external import (
     parse_http_properties,
     async_http_requester,
     sync_http_requester,
     parse_response,
-    STRATEGIES,
-    NoPagination,
+    PAGINATION_DISPATCH,
+    BasePagination,
 )
-from auth import NoSigner, SecretsHandler
+from auth import BaseSignerT
+from typing import Protocol
 
 
-# ============================================================
-# Transport Builder
-# ============================================================
+type TransportMode = Literal["sync", "async"]
 
 
 class TransportBuilder:
-    def __init__(self, props: dict[str, Any]):
+    """Entry-point builder for various transport layers."""
+
+    #: Config for child build (spark like syntax)
+    config: dict[str, str]
+
+    def __init__(self, props: dict[str, str]):
         self.properties = props
-        self.mode = None
+        self.config = {}
 
-    def build(self, name: str):
-        mapping = {
-            "async": self._set_async,
-            "sync": self._set_sync,
-            "http": lambda: HttpBuilder(self),
-            # TODO add WsBuilder
-        }
-        if name not in mapping:
-            raise ValueError(f"Unknown build step: {name}")
-        return mapping[name]()
+    # allow chaining for mode
+    def build(self, name: str) -> Transport:
+        if name == "http":
+            return HttpTransport(self.properties, self.config)
+        elif name == "ws":
+            return WSTransport(self.properties, self.config)
 
-    def _set_async(self):
-        self.mode = "async"
-        return self
+        raise ValueError(f"Unknown name: {name}")
 
-    def _set_sync(self):
-        self.mode = "sync"
+    def option(self, key: str, value: Any) -> TransportBuilder:
+        self.config[key] = value
+
         return self
 
 
-class HttpBuilder(TransportBuilder):
-    def __init__(self, base: TransportBuilder):
-        super().__init__(base.properties)
-        self.mode = base.mode
-        self.signer = getattr(base, "signer", NoSigner(SecretsHandler()))
-        self.jq = getattr(base, "jq", None)
-        self.meta_kwargs = {}
-        self.request_kwargs = {}
-        self.strategy = NoPagination
+class TransportT(Protocol):
+    def configure(self) -> TransportT: ...
 
-    def configure(self):
+    def finalize(self) -> Callable: ...
+
+
+class Transport(TransportT):
+    """Runtime transport object (sync or async)."""
+
+    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
+        self.properties = properties
+        self.config = config
+
+
+class HttpTransport(Transport):
+    #: HTTP requires JQ to parse HTTP response
+    jq: Any
+
+    #: HTTP Auth signer with access to corresponding secrets
+    signer: BaseSignerT
+
+    #: httpx / requests kwargs, nested values are possible
+    request_kwargs: dict[str, dict | str]
+
+    #: Pagination strategy
+    strategy: BasePagination
+
+    #: Internal configs from TransportBuilder
+    mode: TransportMode
+
+    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
+        super().__init__(properties, config)
+
+        # TODO: Create static typing configs per Transport
+        # Should follow pydantic Model Params syntax
+        self.mode = config["mode"]  # type: ignore
+
+    def configure(self) -> HttpTransport:
         jq, signer, request_kwargs, meta_kwargs = parse_http_properties(self.properties)
         self.jq = jq
         self.signer = signer
         self.request_kwargs = request_kwargs
-        self.meta_kwargs = meta_kwargs
 
-        pagination_type = meta_kwargs.get("type") if meta_kwargs else None
-        self.strategy = STRATEGIES.get(pagination_type, NoPagination)(meta_kwargs)
+        # Pagination strategy get pre-compiled as a callable
+        pagination_type = meta_kwargs.pop("type")
+        self.strategy = PAGINATION_DISPATCH[pagination_type](meta_kwargs)
         return self
 
-    def finalize(self):
-        strategy = self.strategy
-
+    def finalize(
+        self,
+    ) -> Callable[[Any], list[dict]] | Callable[[Any], Coroutine[Any, Any, list[dict]]]:
         if self.mode == "async":
 
             async def async_requester(conn):
                 return await async_http_requester(
-                    self.jq, self.signer, self.request_kwargs, strategy, conn
+                    self.jq, self.signer, self.request_kwargs, self.strategy, conn
                 )
 
             return async_requester
 
-        else:
+        elif self.mode == "sync":
 
             def sync_requester(conn):
                 return sync_http_requester(
-                    self.jq, self.signer, self.request_kwargs, strategy, conn
+                    self.jq, self.signer, self.request_kwargs, self.strategy, conn
                 )
 
             return sync_requester
 
-
-def build_http_requester(
-    properties: dict[str, Any], is_async: bool = True
-) -> (
-    Callable[[DuckDBPyConnection], Coroutine[Any, Any, list[dict]]]
-    | Callable[[DuckDBPyConnection], list[dict]]
-):
-    mode = "async" if is_async else "sync"
-    return TransportBuilder(properties).build(mode).build("http").configure().finalize()
+        raise NotImplementedError()
 
 
-# ============================================================
-# WebSocket Handlers
-# ============================================================
+class WSTransport(Transport):
+    #: WS requires JQ to parse HTTP response
+    jq: Any
 
+    #: WS url
+    url: str
 
-def parse_ws_properties(params: dict[str, str]) -> dict[str, Any]:
-    parsed_params = {}
+    #: List of templates to substitute to url
+    _templates_list: list[Any] = []
 
-    for key, value in params.items():
-        if key == "jq":
-            parsed_params["jq"] = jqm.compile(value)
+    def __init__(self, properties: dict[str, Any], config: dict[str, Any]):
+        super().__init__(properties, config)
+
+        self._templates_list = config["templates_list"]
+
+    def configure(self) -> WSTransport:
+        jq, url = parse_ws_properties(self.properties)
+        self.jq = jq
+        self.url = url
+
+        return self
+
+    # TODO: As an improvement allow for "pivoted" templating for multi stream
+    # For instance binance can merge WS streams into single stream using this
+    # /stream?streams=<streamName1>/<streamName2>/<streamName3>
+    # How to enable that ? We split parsing between base_url and "generated"
+    # stream name (of arbitrary lenght controlled by input)
+    # We also need to pivot the on_start_query so it is a list
+    def finalize(
+        self,
+    ) -> Callable[
+        [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
+    ]:
+        """
+        Build a websocket data generator, if multiple templates are provided
+        in the templates_list, then one connection is created for each substitute
+        template. The ws_generator_aggregator for now takes care of the fan-in
+        mechanism to make sure only one single output is provided.
+        This for now doesn't handle any backpressure (i.e no buffer, locks etc).
+        """
+
+        # This happens when on_start_query doesn't exist
+        # ie the WS generator has no start conditions
+        if len(self._templates_list) == 0:
+            list_of_properties = [(self.jq, self.url)]
         else:
-            parsed_params[key] = value
+            # For each template element create a new properties dict
+            list_of_properties = [
+                (self.jq, Template(self.url).safe_substitute(template))
+                for template in self._templates_list
+            ]
 
-    return parsed_params
+        # Multiple list of properties needs one ws connection
+        # This requires fan-in mechanism through aggregator
+        return partial(ws_generator_aggregator, list_of_properties)
 
 
-def build_ws_properties(
-    properties: dict[str, Any], template: dict[str, Any]
-) -> dict[str, Any]:
-    """
-    Build websocket properties with Template substitution
-    applied against a single context (template variables).
-    """
-    new_props: dict[str, Any] = {}
-
-    for key, value in properties.items():
-        if key in ["jq"]:  # don't template compile-only keys
-            new_props[key] = value
-            continue
-
-        if isinstance(value, str):
-            new_props[key] = Template(value).safe_substitute(template)
-        else:
-            new_props[key] = value
-
-    return new_props
+def parse_ws_properties(properties: dict[str, str]) -> tuple[Any, str]:
+    jq = jqm.compile(properties["jq"])
+    url = properties["url"]
+    return jq, url
 
 
 async def ws_generator(
-    properties: dict[str, Any], nursery: trio.Nursery, cancel_event: trio.Event
+    jq: Any, url: str, nursery: trio.Nursery, cancel_event: trio.Event
 ) -> AsyncGenerator[list[dict[str, Any]], None]:
-    url = properties["url"]
     logger.debug("Starting websocket generator on {}", url)
     async with open_websocket_url(url) as ws:
         while True:
             if cancel_event.is_set():
                 break
             message = await ws.get_message()
-            yield parse_response(json.loads(message), properties["jq"])
+            yield parse_response(json.loads(message), jq)
 
 
 async def ws_generator_aggregator(
-    list_of_properties: list[dict[str, Any]],
+    list_of_properties: list[tuple[Any, str]],
     nursery: trio.Nursery,
     cancel_event: trio.Event,
 ) -> AsyncGenerator[list[dict[str, Any]], None]:
@@ -167,7 +209,10 @@ async def ws_generator_aggregator(
     # in the start condition to substitute
     if len(list_of_properties) == 1:
         async for msg in ws_generator(
-            properties=list_of_properties[0], nursery=nursery, cancel_event=cancel_event
+            jq=list_of_properties[0][0],
+            url=list_of_properties[0][1],
+            nursery=nursery,
+            cancel_event=cancel_event,
         ):
             yield msg
 
@@ -182,73 +227,14 @@ async def ws_generator_aggregator(
 
         # TODO: Move fan-in mechanism inside the Continuous task
         # so we can reuse for Trasnform Task
-        async def consume(props: dict[str, Any]):
+        async def consume(jq: Any, url: str):
             async for msg in ws_generator(
-                properties=props, nursery=nursery, cancel_event=cancel_event
+                jq=jq, url=url, nursery=nursery, cancel_event=cancel_event
             ):
                 await send.send(msg)
 
-        for props in list_of_properties:
-            nursery.start_soon(consume, props)
+        for jq, url in list_of_properties:
+            nursery.start_soon(consume, jq, url)
 
         async for msg in recv:
             yield msg
-
-
-# TODO: As an improvement allow for "pivoted" templating for multi stream
-# For instance binance can merge WS streams into single stream using this
-# /stream?streams=<streamName1>/<streamName2>/<streamName3>
-# How to enable that ? We split parsing between base_url and "generated"
-# stream name (of arbitrary lenght controlled by input)
-# We also need to pivot the on_start_query so it is a list
-def build_ws_generator(
-    properties: dict[str, Any], templates_list: list[dict[str, str]]
-) -> Callable[[trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]]:
-    """
-    Build a websocket data generator, if multiple templates are provided
-    in the templates_list, then one connection is created for each substitute
-    template. The ws_generator_aggregator for now takes care of the fan-in
-    mechanism to make sure only one single output is provided.
-    This for now doesn't handle any backpressure (i.e no buffer, locks etc).
-    """
-
-    # This happens when on_start_query doesn't exist
-    # ie the WS generator has no start conditions
-    if len(templates_list) == 0:
-        list_of_properties = [parse_ws_properties(properties)]
-    else:
-        # For each template element create a new properties dict
-        list_of_properties = [
-            parse_ws_properties(build_ws_properties(properties, template))
-            for template in templates_list
-        ]
-
-    # Multiple list of properties needs one ws connection
-    # This requires fan-in mechanism through aggregator
-    return partial(ws_generator_aggregator, list_of_properties)
-
-
-if __name__ == "__main__":
-
-    async def main():
-        cancel_event = trio.Event()
-        async with trio.open_nursery() as nursery:
-            properties = {
-                "url": "wss://stream.binance.com/ws/ethbtc@miniTicker",
-                "jq": jqm.compile("""{
-                    event_type: .e,
-                    event_time: .E,
-                    symbol: .s,
-                    close: .c,
-                    open: .o,
-                    high: .h,
-                    low: .l,
-                    base_volume: .v,
-                    quote_volume: .q
-                }"""),
-            }
-
-            async for msg in ws_generator(properties, nursery, cancel_event):
-                logger.info(msg)
-
-    trio.run(main)

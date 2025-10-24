@@ -22,8 +22,7 @@ from context.context import (
     CreateViewContext,
     CreateSecretContext,
     InvalidContext,
-    QueryContext,
-    NonQueryContext,
+    ValidContext,
     SelectContext,
     SetContext,
     ShowContext,
@@ -692,7 +691,7 @@ def parse_with_sqlglot(query: str) -> exp.Expression | ParseError:
 
 def extract_one_query_context(
     query: str, properties_schema: dict
-) -> QueryContext | NonQueryContext:
+) -> ValidContext | InvalidContext:
     parsed_statement = parse_with_sqlglot(query)
 
     if isinstance(parsed_statement, exp.Command):

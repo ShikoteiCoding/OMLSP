@@ -29,12 +29,13 @@ from metadata import (
     create_macro_definition,
     get_batch_id_from_source_metadata,
     get_batch_id_from_table_metadata,
+    get_duckdb_tables,
     get_lookup_tables,
     get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
 )
-from transport import build_http_requester, build_ws_generator
+from transport import TransportBuilder
 from confluent_kafka import Producer
 
 
@@ -200,7 +201,13 @@ def build_scalar_udf(
             context = dict(zip(dynamic_columns, row))
             lookup_properties = build_lookup_properties(properties, context)
             default_response = context.copy()
-            requester = build_http_requester(lookup_properties, is_async=False)
+            requester = (
+                TransportBuilder(lookup_properties)
+                .option("mode", "sync")
+                .build("http")
+                .configure()
+                .finalize()
+            )
 
             try:
                 response = requester(conn)
@@ -287,7 +294,7 @@ async def http_source_executable(
     column_types: dict[str, str],
     dynamic_columns: dict[str, Callable],
     is_source: bool,
-    http_requester: Callable,
+    http_requester_func: Callable,
 ) -> pl.DataFrame:
     # Create generated column context (to be applied upon at exec time)
     # Some SQL functions in generated columns might use or not use this context
@@ -308,7 +315,7 @@ async def http_source_executable(
         "[{}{{{}}}] Starting @ {}", task_id, batch_id, func_context["trigger_time"]
     )
 
-    records = await http_requester(conn)
+    records = await http_requester_func(conn)
     logger.debug(
         "[{}{{{}}}] - http number of responses: {} - batch {}",
         task_id,
@@ -367,13 +374,21 @@ async def ws_source_executable(
 def build_scheduled_source_executable(
     ctx: ScheduledTaskContext,
 ) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
+    requester = (
+        TransportBuilder(ctx.properties)
+        .option("mode", "async")
+        .build("http")
+        .configure()
+        .finalize()
+    )
+
     return partial(
         http_source_executable,
         name=ctx.name,
         column_types=ctx.column_types,
         dynamic_columns=ctx.generated_columns,
         is_source=ctx.source,
-        http_requester=build_http_requester(ctx.properties, is_async=True),
+        http_requester_func=requester,
     )
 
 
@@ -392,17 +407,26 @@ def build_continuous_source_executable(
         # consider passing it from App to TaskManager for improved design
         on_start_results = duckdb_to_dicts(conn, ctx.on_start_query)
 
+    ws_generator = (
+        TransportBuilder(properties)
+        .option("templates_list", on_start_results)
+        .build("ws")
+        .configure()
+        .finalize()
+    )
+
     return partial(
         ws_source_executable,
         table_name=table_name,
         column_types=ctx.column_types,
         is_source=ctx.source,
-        ws_generator_func=build_ws_generator(properties, on_start_results),
+        ws_generator_func=ws_generator,
     )
 
 
 def build_lookup_table_prehook(
-    create_table_context: CreateHTTPLookupTableContext, conn: DuckDBPyConnection
+    create_table_context: CreateHTTPLookupTableContext,
+    conn: DuckDBPyConnection,
 ) -> str:
     properties = create_table_context.properties
     table_name = create_table_context.name
@@ -510,7 +534,11 @@ def substitute_sql_template(
     for join_table, join_table_or_alias in join_tables.items():
         if join_table in lookup_tables:
             substitute_mapping[join_table] = get_substitute_macro_definition(
-                conn, join_table, from_table, from_table_or_alias, join_table_or_alias
+                conn,
+                join_table,
+                from_table,
+                from_table_or_alias,
+                join_table_or_alias,
             )
         else:
             substitute_mapping[join_table] = join_table
@@ -554,13 +582,14 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
 
 
 def build_sink_executable(
-    ctx: SinkTaskContext,
+    ctx: SinkTaskContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
     return partial(
         kafka_sink,
+        backend_conn=backend_conn,
         first_upstream=ctx.upstreams[0],
         transform_query=ctx.subquery,
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
@@ -571,8 +600,9 @@ def build_sink_executable(
 
 async def kafka_sink(
     task_id: str,
-    conn: DuckDBPyConnection,
+    transform_conn: DuckDBPyConnection,
     df: pl.DataFrame,
+    backend_conn: DuckDBPyConnection,
     first_upstream: str,
     transform_query: str,
     pl_ctx: pl.SQLContext,
@@ -595,22 +625,25 @@ async def kafka_sink(
 
 
 def build_transform_executable(
-    ctx: TransformTaskContext, conn: DuckDBPyConnection
+    ctx: TransformTaskContext, backend_conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
 ]:
     from_table = ctx.upstreams[0]
-    duckdb_tables = get_tables(conn)
+    duckdb_tables = get_tables(backend_conn)
     substitute_mapping = {}
 
     for duckdb_table in duckdb_tables:
         val = duckdb_table if duckdb_table != from_table else "df"
         substitute_mapping[duckdb_table] = val
 
-    transform_sql = substitute_sql_template(conn, ctx.transform_ctx, substitute_mapping)
+    transform_sql = substitute_sql_template(
+        backend_conn, ctx.transform_ctx, substitute_mapping
+    )
 
     return partial(
         transform_executable,
+        backend_conn=backend_conn,
         name=ctx.name,
         first_upstream=from_table,  # TODO add joins
         transform_query=transform_sql,
@@ -622,8 +655,9 @@ def build_transform_executable(
 
 async def transform_executable(
     task_id: str,
-    conn: DuckDBPyConnection,
+    transform_conn: DuckDBPyConnection,
     df: pl.DataFrame,
+    backend_conn: DuckDBPyConnection,
     name: str,
     first_upstream: str,
     transform_query: str,
@@ -641,52 +675,38 @@ async def transform_executable(
     # don't use conn.register() as duckdb only support
     # global registration and would make it not thread-safe anymore
     transform_query = transform_query.replace(f'"{first_upstream}"', "df")
-    transform_df = conn.execute(transform_query).pl()
+    transform_df = transform_conn.execute(transform_query).pl()
 
     epoch = int(time.time() * 1_000)
     # invert is_materialized for truncate
     # if is_materialized -> truncate = False -> append mode
     # if not is_materialized -> truncate = True -> truncate mode (overwrite)
-    await cache(transform_df, -1, epoch, name, conn, not is_materialized)
+    await cache(transform_df, -1, epoch, name, backend_conn, not is_materialized)
+    # update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
 
     return transform_df
 
 
-if __name__ == "__main__":
-    import jq as jqm
-    from duckdb import connect
-    from transport import ws_generator
+def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
+    """
+    Evaluate select statement against queryable cached layer.
 
-    conn: DuckDBPyConnection = connect(database=":memory:")
-    cancel_event = trio.Event()
+    This also check the select is valid to ensure success execution.
+    """
+    table_name = ctx.table
+    lookup_tables = get_lookup_tables(conn)
+    duckdb_tables = get_duckdb_tables(conn)
 
-    async def main():
-        async with trio.open_nursery() as nursery:
-            properties = {
-                "url": "wss://fstream.binance.com/ws/!ticker@arr",
-                "jq": jqm.compile(""".[:2][] | {
-                    event_type: .e,
-                    event_time: .E,
-                    symbol: .s,
-                    close: .c,
-                    open: .o,
-                    high: .h,
-                    low: .l,
-                    base_volume: .v,
-                    quote_volume: .q
-                 }"""),
-            }
+    # add internal tables here for easier dev time
+    duckdb_tables.append("duckdb_tables")
 
-            async for msg in ws_source_executable(
-                "0",
-                conn,
-                "abcd",
-                {},
-                False,
-                partial(ws_generator, properties),
-                nursery,
-                cancel_event,
-            ):
-                logger.info(msg)
+    substitute_mapping = dict(zip(duckdb_tables, duckdb_tables))
 
-    trio.run(main)
+    if table_name in lookup_tables:
+        return f"'{table_name}' is a lookup table, you cannot use it in FROM."
+
+    if table_name not in duckdb_tables:
+        return f"'{table_name}' doesn't exist"
+
+    duckdb_sql = substitute_sql_template(conn, ctx, substitute_mapping)
+    return str(duckdb_to_pl(conn, duckdb_sql))
