@@ -53,6 +53,20 @@ class ClientManager(Service):
             f"[ClientManager] Server running on {self._listeners[0].socket.getsockname()}"
         )
 
+    async def on_stop(self):
+        logger.success(f"[{self.name}] stopping.")
+        # First, cancel the server tasks (serve_tcp etc)
+        self._nursery.cancel_scope.cancel()
+
+        # Then close listeners safely
+        for listener in getattr(self, "_listeners", []):
+            with trio.move_on_after(1):  # don't hang if already closed
+                try:
+                    await listener.aclose()
+                except trio.ClosedResourceError:
+                    pass
+        logger.success(f"[{self.name}] stopped.")
+
     async def _handle_client(self, stream: trio.SocketStream):
         client_addr = stream.socket.getpeername()
         client_id = f"{client_addr[0]}:{client_addr[1]}"

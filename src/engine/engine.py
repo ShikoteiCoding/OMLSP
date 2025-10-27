@@ -347,9 +347,10 @@ async def ws_source_executable(
     column_types: dict[str, str],
     is_source: bool,
     ws_generator_func: Callable[
-        [trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]
+        [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
     ],
     nursery: trio.Nursery,
+    cancel_event: trio.Event,
     *args,
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
@@ -358,7 +359,7 @@ async def ws_source_executable(
     # 'ws_generator_func' is supposed to be never ending (while True)
     # if an issue happens, the source task should be entirely
     # restarted (not a feature yet)
-    async for records in ws_generator_func(nursery):
+    async for records in ws_generator_func(nursery, cancel_event):
         if len(records) > 0:
             df = records_to_polars(records, column_types, {}, {})
             # Do not truncate the cache, this is a Table
@@ -394,7 +395,8 @@ def build_scheduled_source_executable(
 def build_continuous_source_executable(
     ctx: ContinousTaskContext, conn: DuckDBPyConnection
 ) -> Callable[
-    [str, DuckDBPyConnection, trio.Nursery], AsyncGenerator[pl.DataFrame, None]
+    [str, DuckDBPyConnection, trio.Nursery, trio.Event],
+    AsyncGenerator[pl.DataFrame, None],
 ]:
     properties = ctx.properties
     table_name = ctx.name
