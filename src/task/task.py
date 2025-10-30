@@ -19,13 +19,13 @@ DEFAULT_CAPACITY = 100
 T = TypeVar("T")
 
 
-class BaseTaskT(Protocol, Generic[T]):
-    def register(self, executable: Callable[..., Any]) -> BaseTaskT[T]: ...
+class BaseTaskT(Protocol):
+    def register(self, executable: Callable[..., Any]) -> BaseTaskT: ...
 
     async def run(self) -> None: ...
 
 
-class BaseSourceTaskT(BaseTaskT[T], Protocol):
+class BaseSourceTaskT(BaseTaskT, Protocol, Generic[T]):
     def register(self, executable: Callable[..., Any]) -> BaseSourceTaskT[T]: ...
 
     def get_sender(self) -> Channel[T]: ...
