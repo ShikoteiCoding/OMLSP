@@ -168,7 +168,9 @@ class WSTransport(Transport):
     # We also need to pivot the on_start_query so it is a list
     def finalize(
         self,
-    ) -> Callable[[trio.Nursery], AsyncGenerator[list[dict[str, Any]], None]]:
+    ) -> Callable[
+        [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
+    ]:
         """
         Build a websocket data generator, if multiple templates are provided
         in the templates_list, then one connection is created for each substitute

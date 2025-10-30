@@ -10,7 +10,10 @@ sync:
 	uv sync --active
 
 run:
-	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
+	PYTHONPATH=src/ uv run --active src/main.py examples/websocket.sql
+
+dev-entrypoint:
+	PYTHONPATH=src/ uv run --active src/entrypoint.py
 
 client:
 	PYTHONPATH=src/ uv run --active src/client.py 1

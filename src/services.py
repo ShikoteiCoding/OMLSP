@@ -237,6 +237,8 @@ class Service(ServiceCallbacks):
 
         await self.on_shutdown()
 
+        self._shutdown.set()
+
     async def wait_until_stopped(self) -> None:
         """Wait until the service is signalled to stop."""
         await self._stopped.wait()
