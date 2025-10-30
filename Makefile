@@ -15,9 +15,6 @@ sync:
 run:
 	sh run.sh $(f)
 
-dev-entrypoint:
-	PYTHONPATH=src/ uv run --active src/entrypoint.py
-
 client:
 	PYTHONPATH=src/ uv run --active src/client.py 1
 
