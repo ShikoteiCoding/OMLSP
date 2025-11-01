@@ -11,14 +11,28 @@ from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
-from typing import Any, AsyncGenerator, Callable, Coroutine, Iterable
+from typing import Any, AsyncGenerator, Callable, Coroutine, Iterable, Type
 
 from duckdb import struct_type
 from loguru import logger
 
+
 from context.context import (
+    CommandContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateHTTPLookupTableContext,
+    CreateSecretContext,
+    CreateSinkContext,
+    CreateHTTPSourceContext,
+    CreateWSSourceContext,
+    CreateViewContext,
+    EvaluableContext,
     SelectContext,
+    SetContext,
+    ShowContext,
+)
+from context.context import (
     ScheduledTaskContext,
     ContinousTaskContext,
     TransformTaskContext,
@@ -34,6 +48,11 @@ from metadata import (
     get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
+    create_secret,
+    create_sink,
+    create_source,
+    create_table,
+    create_view,
 )
 from transport.builder import TransportBuilder
 from confluent_kafka import Producer
@@ -710,3 +729,25 @@ def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
 
     duckdb_sql = substitute_sql_template(conn, ctx, substitute_mapping)
     return str(duckdb_to_pl(conn, duckdb_sql))
+
+
+def eval_set(conn: DuckDBPyConnection, ctx: SetContext):
+    conn.sql(ctx.query)
+    return "SET"
+
+# Static registration of EvaluableContext to 
+# their respective evaluable function
+EVALUABLE_QUERY_DISPATCH: dict[Type[EvaluableContext], Callable] = {
+    CreateHTTPLookupTableContext: create_table,
+    CreateHTTPTableContext: create_table,
+    CreateWSTableContext: create_table,
+    CreateHTTPSourceContext: create_source,
+    CreateWSSourceContext: create_source,
+    CreateViewContext: create_view,
+    CreateSinkContext: create_sink,
+    CreateSecretContext: create_secret,
+    CommandContext: lambda conn, ctx: str(duckdb_to_pl(conn, ctx.query)),
+    SetContext: eval_set,
+    ShowContext: lambda conn, ctx: str(duckdb_to_pl(conn, ctx.query)),
+    SelectContext: eval_select,
+}

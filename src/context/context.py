@@ -15,7 +15,7 @@ class ValidContext:
 
 class EvaluableContext(ValidContext):
     # Evaluable context are supposed to be run directly by the app
-    ...
+    query: str
 
 
 # --- Context definitions ---
@@ -25,8 +25,6 @@ class CreateContext(EvaluableContext):
 
 # ---------- Table Contexts ----------
 class CreateTableContext(CreateContext):
-    name: str
-    query: str
     lookup: bool
 
 
