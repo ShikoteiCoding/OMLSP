@@ -1,33 +1,47 @@
 from __future__ import annotations
 
 import trio
-import jq as jqm
-import json
 from functools import partial
 from string import Template
-from trio_websocket import open_websocket_url
-from typing import Any, Callable, Coroutine, AsyncGenerator, Literal
-from loguru import logger
-from external import (
+from typing import (
+    Any,
+    Callable,
+    Coroutine,
+    AsyncGenerator,
+    Literal,
+    cast,
+    Protocol,
+    TypedDict,
+)
+
+from auth import BaseSignerT
+from transport.http import (
     parse_http_properties,
     async_http_requester,
     sync_http_requester,
-    parse_response,
-    PAGINATION_DISPATCH,
-    BasePagination,
 )
-from auth import BaseSignerT
-from typing import Protocol
-
+from transport.pagination import BasePagination, PAGINATION_DISPATCH
+from transport.ws import parse_ws_properties, ws_generator_aggregator
 
 type TransportMode = Literal["sync", "async"]
+
+
+class TransportBuilderOptions(TypedDict): ...
+
+
+class HttpTransportOptions(TransportBuilderOptions):
+    mode: TransportMode
+
+
+class WSTransportOptions(TransportBuilderOptions):
+    templates_list: list[str]
 
 
 class TransportBuilder:
     """Entry-point builder for various transport layers."""
 
     #: Config for child build (spark like syntax)
-    config: dict[str, str]
+    config: TransportBuilderOptions
 
     def __init__(self, props: dict[str, str]):
         self.properties = props
@@ -36,9 +50,11 @@ class TransportBuilder:
     # allow chaining for mode
     def build(self, name: str) -> Transport:
         if name == "http":
-            return HttpTransport(self.properties, self.config)
+            return HttpTransport(
+                self.properties, cast(HttpTransportOptions, self.config)
+            )
         elif name == "ws":
-            return WSTransport(self.properties, self.config)
+            return WSTransport(self.properties, cast(WSTransportOptions, self.config))
 
         raise ValueError(f"Unknown name: {name}")
 
@@ -55,9 +71,13 @@ class TransportT(Protocol):
 
 
 class Transport(TransportT):
-    """Runtime transport object (sync or async)."""
+    """
+    Runtime transport object (sync or async).
 
-    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
+    This inherits from TransportT to allow typing of configure() and finalize().
+    """
+
+    def __init__(self, properties: dict[str, Any], config: TransportBuilderOptions):
         self.properties = properties
         self.config = config
 
@@ -78,12 +98,10 @@ class HttpTransport(Transport):
     #: Internal configs from TransportBuilder
     mode: TransportMode
 
-    def __init__(self, properties: dict[str, Any], config: dict[str, str]):
+    def __init__(self, properties: dict[str, Any], config: HttpTransportOptions):
         super().__init__(properties, config)
 
-        # TODO: Create static typing configs per Transport
-        # Should follow pydantic Model Params syntax
-        self.mode = config["mode"]  # type: ignore
+        self.mode = config["mode"]
 
     def configure(self) -> HttpTransport:
         jq, signer, request_kwargs, meta_kwargs = parse_http_properties(self.properties)
@@ -130,7 +148,7 @@ class WSTransport(Transport):
     #: List of templates to substitute to url
     _templates_list: list[Any] = []
 
-    def __init__(self, properties: dict[str, Any], config: dict[str, Any]):
+    def __init__(self, properties: dict[str, Any], config: WSTransportOptions):
         super().__init__(properties, config)
 
         self._templates_list = config["templates_list"]
@@ -156,7 +174,9 @@ class WSTransport(Transport):
         """
         Build a websocket data generator, if multiple templates are provided
         in the templates_list, then one connection is created for each substitute
-        template. The ws_generator_aggregator for now takes care of the fan-in
+        template.
+
+        The :func:`ws_generator_aggregator` for now takes care of the fan-in
         mechanism to make sure only one single output is provided.
         This for now doesn't handle any backpressure (i.e no buffer, locks etc).
         """
@@ -175,66 +195,3 @@ class WSTransport(Transport):
         # Multiple list of properties needs one ws connection
         # This requires fan-in mechanism through aggregator
         return partial(ws_generator_aggregator, list_of_properties)
-
-
-def parse_ws_properties(properties: dict[str, str]) -> tuple[Any, str]:
-    jq = jqm.compile(properties["jq"])
-    url = properties["url"]
-    return jq, url
-
-
-async def ws_generator(
-    jq: Any, url: str, nursery: trio.Nursery, cancel_event: trio.Event
-) -> AsyncGenerator[list[dict[str, Any]], None]:
-    logger.debug("Starting websocket generator on {}", url)
-    async with open_websocket_url(url) as ws:
-        while True:
-            if cancel_event.is_set():
-                break
-            message = await ws.get_message()
-            yield parse_response(json.loads(message), jq)
-
-
-async def ws_generator_aggregator(
-    list_of_properties: list[tuple[Any, str]],
-    nursery: trio.Nursery,
-    cancel_event: trio.Event,
-) -> AsyncGenerator[list[dict[str, Any]], None]:
-    """
-    Trio version: fan-in multiple ws_generator streams into one.
-    """
-
-    # This happens when either no templating was required
-    # (no on_start_query condition) or when only 1 element
-    # in the start condition to substitute
-    if len(list_of_properties) == 1:
-        async for msg in ws_generator(
-            jq=list_of_properties[0][0],
-            url=list_of_properties[0][1],
-            nursery=nursery,
-            cancel_event=cancel_event,
-        ):
-            yield msg
-
-    # This happens when start condition has multiple
-    # values and thus creating multiple websocket
-    # to aggregate in one simple field
-    else:
-        # Locally scopped channel for agregation purposes
-        # size 0 is an attempt to not miss any event
-        # this might be blocking operation in case of backpressure
-        send, recv = trio.open_memory_channel[list[dict]](10)
-
-        # TODO: Move fan-in mechanism inside the Continuous task
-        # so we can reuse for Trasnform Task
-        async def consume(jq: Any, url: str):
-            async for msg in ws_generator(
-                jq=jq, url=url, nursery=nursery, cancel_event=cancel_event
-            ):
-                await send.send(msg)
-
-        for jq, url in list_of_properties:
-            nursery.start_soon(consume, jq, url)
-
-        async for msg in recv:
-            yield msg

@@ -9,11 +9,11 @@ format:
 sync:
 	uv sync --active
 
+# Run from shell as
+# make run
+# make run f=websocket
 run:
-	PYTHONPATH=src/ uv run --active src/main.py examples/basic.sql
-
-dev-entrypoint:
-	PYTHONPATH=src/ uv run --active src/entrypoint.py
+	sh run.sh $(f)
 
 client:
 	PYTHONPATH=src/ uv run --active src/client.py 1
