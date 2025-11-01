@@ -19,7 +19,7 @@
         },
         "method": {
           "type": "string",
-          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+          "enum": ["GET", "POST"],
           "description": "Standard HTTP methods"
         },
         "schedule": {
