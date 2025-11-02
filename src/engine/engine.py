@@ -735,7 +735,8 @@ def eval_set(conn: DuckDBPyConnection, ctx: SetContext):
     conn.sql(ctx.query)
     return "SET"
 
-# Static registration of EvaluableContext to 
+
+# Static registration of EvaluableContext to
 # their respective evaluable function
 EVALUABLE_QUERY_DISPATCH: dict[Type[EvaluableContext], Callable] = {
     CreateHTTPLookupTableContext: create_table,
