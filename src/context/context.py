@@ -3,8 +3,15 @@ from __future__ import annotations
 import polars as pl
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Type, Union
+from typing import Callable, Type, Union
 from apscheduler.triggers.cron import CronTrigger
+
+from _types.properties import (
+    SecretProperties,
+    SinkProperties,
+    SourceHttpProperties,
+    SourceWSProperties,
+)
 
 
 class ValidContext:
@@ -15,7 +22,7 @@ class ValidContext:
 
 class EvaluableContext(ValidContext):
     # Evaluable context are supposed to be run directly by the app
-    ...
+    query: str
 
 
 # --- Context definitions ---
@@ -25,15 +32,13 @@ class CreateContext(EvaluableContext):
 
 # ---------- Table Contexts ----------
 class CreateTableContext(CreateContext):
-    name: str
-    query: str
     lookup: bool
 
 
 @dataclass
 class CreateHTTPTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -49,7 +54,7 @@ class CreateHTTPTableContext(CreateTableContext):
 @dataclass
 class CreateWSTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceWSProperties
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     query: str
@@ -65,7 +70,7 @@ class CreateWSTableContext(CreateTableContext):
 @dataclass
 class CreateHTTPLookupTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     dynamic_columns: list[str]
     columns: dict[str, str]
@@ -81,7 +86,7 @@ class CreateSourceContext(CreateContext):
 @dataclass
 class CreateHTTPSourceContext(CreateSourceContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -96,7 +101,7 @@ class CreateHTTPSourceContext(CreateSourceContext):
 @dataclass
 class CreateWSSourceContext(CreateSourceContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceWSProperties
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     query: str
@@ -127,14 +132,14 @@ class CreateViewContext(CreateContext):
 class CreateSinkContext(CreateContext):
     name: str
     upstreams: list[str]
-    properties: dict[str, Any]
+    properties: SinkProperties
     subquery: str
 
 
 @dataclass
 class CreateSecretContext(CreateContext):
     name: str
-    properties: dict[str, Any]
+    properties: SecretProperties
     value: str
 
 

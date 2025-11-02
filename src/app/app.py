@@ -1,34 +1,16 @@
 import trio
-from typing import Any, Callable, Type
+from typing import Any
 from duckdb import DuckDBPyConnection, connect
 from loguru import logger
 from channel import Channel
 from context.context import (
-    CreateContext,
-    CreateHTTPTableContext,
-    CreateWSTableContext,
-    CreateHTTPLookupTableContext,
-    CommandContext,
-    CreateSecretContext,
-    CreateSinkContext,
-    CreateHTTPSourceContext,
-    CreateWSSourceContext,
-    CreateViewContext,
     EvaluableContext,
     InvalidContext,
-    SelectContext,
-    SetContext,
-    ShowContext,
     TaskContext,
     OnStartContext,
 )
-from engine.engine import eval_select, duckdb_to_dicts, duckdb_to_pl
+from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from metadata import (
-    create_secret,
-    create_sink,
-    create_source,
-    create_table,
-    create_view,
     init_metadata_store,
 )
 from server import ClientManager
@@ -45,18 +27,6 @@ ClientSQL = tuple[ClientId, SQL]
 EvaledSQL = tuple[ClientId, Evaled]
 
 __all__ = ["App"]
-
-
-CREATE_QUERY_DISPATCH: dict[Type[CreateContext], Callable] = {
-    CreateHTTPLookupTableContext: create_table,
-    CreateHTTPTableContext: create_table,
-    CreateWSTableContext: create_table,
-    CreateHTTPSourceContext: create_source,
-    CreateWSSourceContext: create_source,
-    CreateViewContext: create_view,
-    CreateSinkContext: create_sink,
-    CreateSecretContext: create_secret,
-}
 
 
 class App(Service):
@@ -167,7 +137,7 @@ class App(Service):
             # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
-                result = self._eval_ctx(client_id, ctx)
+                result = self._eval_ctx(ctx)
 
             # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):
@@ -196,25 +166,11 @@ class App(Service):
     # Client terminal gets "blocked" till response is received,
     # so it is safe to assume we can queue per client and defer
     # results to keep ordering per client
-    def _eval_ctx(self, client_id: str, ctx: EvaluableContext) -> str:
+    def _eval_ctx(self, ctx: EvaluableContext) -> str:
         try:
-            # Query with Create Context statements to eval before
-            # Task manager instanciation
-            if isinstance(ctx, CreateContext):
-                CREATE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
-            elif isinstance(ctx, CommandContext):
-                return str(duckdb_to_pl(self._conn, ctx.query))
-            elif isinstance(ctx, SetContext):
-                self._conn.sql(ctx.query)
-                return "SET"
-            elif isinstance(ctx, SelectContext) and client_id != self._internal_ref:
-                return eval_select(self._conn, ctx)
-            elif isinstance(ctx, ShowContext):
-                return str(duckdb_to_pl(self._conn, ctx.query))
+            return EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
         except Exception as e:
             return f"fail to run sql: '{ctx}': {e}"
-
-        return ""
 
 
 if __name__ == "__main__":

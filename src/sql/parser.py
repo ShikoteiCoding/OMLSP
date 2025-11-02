@@ -9,7 +9,7 @@ from enum import StrEnum
 from loguru import logger
 from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from context.context import (
     CommandContext,
@@ -34,6 +34,13 @@ from metadata.db import (
     METADATA_SECRET_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
+from _types.properties import (
+    Properties,
+    SinkProperties,
+    SourceHttpProperties,
+    SourceWSProperties,
+    SecretProperties,
+)
 
 
 class CreateKind(StrEnum):
@@ -268,7 +275,7 @@ def parse_ws_table_schema(
 
 
 def validate_create_properties(
-    properties: dict[str, str], properties_schema: dict
+    properties: Properties, properties_schema: dict[str, Any]
 ) -> str | None:
     # validate properties according to json schema
     try:
@@ -287,8 +294,8 @@ def get_duckdb_sql(statement: exp.Create | exp.Select | exp.Set | exp.Command) -
     return statement.sql("duckdb")
 
 
-def extract_create_properties(statement: exp.Create) -> dict[str, str]:
-    properties = {}
+def extract_create_properties(statement: exp.Create) -> Properties:
+    properties = Properties()
     for prop in statement.args.get("properties", []):
         # sqlglot pushes "temporary" predicate
         # in properties, needs to ignore it
@@ -302,7 +309,7 @@ def extract_create_properties(statement: exp.Create) -> dict[str, str]:
 
 
 def build_create_http_table_or_source_context(
-    statement: exp.Create, properties: dict[str, str]
+    statement: exp.Create, properties: SourceHttpProperties
 ) -> CreateHTTPTableContext | CreateHTTPSourceContext:
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
@@ -321,7 +328,7 @@ def build_create_http_table_or_source_context(
 
     # cron schedule for http
     trigger = CronTrigger.from_crontab(
-        str(properties.pop("schedule")), timezone=timezone.utc
+        str(properties["schedule"]), timezone=timezone.utc
     )
 
     # get query purged of it's omlsp specific syntax
@@ -347,7 +354,7 @@ def build_create_http_table_or_source_context(
 
 
 def build_create_http_lookup_table_context(
-    statement: exp.Create, properties: dict[str, str]
+    statement: exp.Create, properties: SourceHttpProperties
 ) -> CreateHTTPLookupTableContext:
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
@@ -372,7 +379,7 @@ def build_create_http_lookup_table_context(
 
 
 def build_create_ws_table_context(
-    statement: exp.Create, properties: dict[str, str]
+    statement: exp.Create, properties: SourceWSProperties
 ) -> CreateWSSourceContext | CreateWSTableContext:
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
@@ -387,7 +394,7 @@ def build_create_ws_table_context(
     # get query purged of omlsp-specific syntax
     clean_query = get_duckdb_sql(statement)
 
-    on_start_query = properties.pop("on_start_query", "")
+    on_start_query = properties["on_start_query"]
 
     if is_source:
         return CreateWSSourceContext(
@@ -419,7 +426,7 @@ def build_create_sink_context(
 
     # extract list of exp.Property
     # declared behind sql WITH statement
-    properties = extract_create_properties(statement)
+    properties = cast(SinkProperties, extract_create_properties(statement))
 
     # validate properties against schema
     # if not ok, return invalid context
@@ -507,12 +514,15 @@ def build_generic_create_table_or_source_context(
     connector = properties.pop("connector")
 
     if connector == SourceConnectorKind.LOOKUP_HTTP.value:
+        properties = cast(SourceHttpProperties, properties)
         return build_create_http_lookup_table_context(statement, properties)
 
     if connector == SourceConnectorKind.HTTP.value:
+        properties = cast(SourceHttpProperties, properties)
         return build_create_http_table_or_source_context(statement, properties)
 
     if connector == SourceConnectorKind.WS.value:
+        properties = cast(SourceWSProperties, properties)
         return build_create_ws_table_context(statement, properties)
 
     return InvalidContext(
@@ -534,7 +544,9 @@ def build_create_secret_context(
     value = str(statement.expression)
 
     return CreateSecretContext(
-        name=statement.name, properties=properties, value=str(value)
+        name=statement.name,
+        properties=cast(SecretProperties, properties),
+        value=str(value),
     )
 
 
