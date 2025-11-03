@@ -5,6 +5,7 @@ import polars as pl
 import pyarrow as pa
 
 from concurrent.futures import ThreadPoolExecutor
+from confluent_kafka import Producer
 from datetime import datetime, timezone
 from duckdb import DuckDBPyConnection
 from duckdb.functional import FunctionNullHandling, PythonUDFType
@@ -31,8 +32,6 @@ from context.context import (
     SelectContext,
     SetContext,
     ShowContext,
-)
-from context.context import (
     ScheduledTaskContext,
     ContinousTaskContext,
     TransformTaskContext,
@@ -55,7 +54,6 @@ from metadata import (
     create_view,
 )
 from transport.builder import TransportBuilder
-from confluent_kafka import Producer
 
 
 DUCKDB_TO_PYARROW_PYTYPE = {
