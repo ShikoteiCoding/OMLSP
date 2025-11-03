@@ -3,15 +3,8 @@ from __future__ import annotations
 import polars as pl
 
 from dataclasses import dataclass, field
-from typing import Callable, Type, Union
+from typing import Any, Callable, Type, Union
 from apscheduler.triggers.cron import CronTrigger
-
-from _types.properties import (
-    SecretProperties,
-    SinkProperties,
-    SourceHttpProperties,
-    SourceWSProperties,
-)
 
 
 class ValidContext:
@@ -38,7 +31,7 @@ class CreateTableContext(CreateContext):
 @dataclass
 class CreateHTTPTableContext(CreateTableContext):
     name: str
-    properties: SourceHttpProperties
+    properties: dict[str, Any]
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -54,7 +47,7 @@ class CreateHTTPTableContext(CreateTableContext):
 @dataclass
 class CreateWSTableContext(CreateTableContext):
     name: str
-    properties: SourceWSProperties
+    properties: dict[str, Any]
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     query: str
@@ -70,7 +63,7 @@ class CreateWSTableContext(CreateTableContext):
 @dataclass
 class CreateHTTPLookupTableContext(CreateTableContext):
     name: str
-    properties: SourceHttpProperties
+    properties: dict[str, Any]
     query: str
     dynamic_columns: list[str]
     columns: dict[str, str]
@@ -86,7 +79,7 @@ class CreateSourceContext(CreateContext):
 @dataclass
 class CreateHTTPSourceContext(CreateSourceContext):
     name: str
-    properties: SourceHttpProperties
+    properties: dict[str, Any]
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -101,7 +94,7 @@ class CreateHTTPSourceContext(CreateSourceContext):
 @dataclass
 class CreateWSSourceContext(CreateSourceContext):
     name: str
-    properties: SourceWSProperties
+    properties: dict[str, Any]
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     query: str
@@ -132,14 +125,14 @@ class CreateViewContext(CreateContext):
 class CreateSinkContext(CreateContext):
     name: str
     upstreams: list[str]
-    properties: SinkProperties
+    properties: dict[str, Any]
     subquery: str
 
 
 @dataclass
 class CreateSecretContext(CreateContext):
     name: str
-    properties: SecretProperties
+    properties: dict[str, Any]
     value: str
 
 
