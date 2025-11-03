@@ -60,12 +60,7 @@ class BaseTask(Service, Generic[T]):
 
         async def _task_runner():
             with self._cancel_scope:
-                try:
-                    await self.run()
-                except trio.Cancelled:
-                    pass  # Normal shutdown path
-                except Exception as e:
-                    logger.exception(f"[{self.task_id}] task crashed: {e}")
+                await self.run()
 
         # Start the real task inside the cancel scope
         self._nursery.start_soon(_task_runner)
