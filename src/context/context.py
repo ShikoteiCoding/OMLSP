@@ -159,6 +159,10 @@ class ShowContext(EvaluableContext):
     user_query: str
     query: str
 
+@dataclass
+class DropContext(EvaluableContext):
+    user_query: str
+    drop_type: str
 
 @dataclass
 class CommandContext(EvaluableContext):
@@ -183,6 +187,7 @@ TaskContext = Union[
     ContinousTaskContext,
     SinkTaskContext,
     TransformTaskContext,
+    DropContext,
     # TODO: I don't think this should be considered a TaskContext
     # Move the lookup registration to the app._eval_ctx and make it
     # register macro + scalar func from there

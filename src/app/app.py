@@ -14,6 +14,7 @@ from context.context import (
     CreateHTTPSourceContext,
     CreateWSSourceContext,
     CreateViewContext,
+    DropContext,
     EvaluableContext,
     InvalidContext,
     SelectContext,
@@ -167,7 +168,10 @@ class App(Service):
             # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
-                result = self._eval_ctx(client_id, ctx)
+                if isinstance(ctx, DropContext):
+                    await self._tasks_to_deploy.send(ctx)
+                else:
+                    result = self._eval_ctx(client_id, ctx)
 
             # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):

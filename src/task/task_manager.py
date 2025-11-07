@@ -14,6 +14,7 @@ from context.context import (
     ContinousTaskContext,
     TransformTaskContext,
     TaskContext,
+    DropContext
 )
 from engine.engine import (
     build_lookup_table_prehook,
@@ -165,5 +166,26 @@ class TaskManager(Service):
             self._nursery.start_soon(task.start, self._nursery)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")
 
+        elif isinstance(ctx, DropContext):
+            await self._handle_drop(ctx)
+
         if task is not None:
             self.add_dependency(task)
+
+    async def _handle_drop(self, ctx: DropContext, task_id: str):
+        name = getattr(ctx, "name", None)
+        if not name:
+            logger.warning("[TaskManager] DROP received without name: {}", ctx)
+            return
+
+        # Try stopping running task
+        stopped = self._task_id_to_task[task_id].on_stop
+
+        try:
+            self.backend_conn.sql(ctx.user_query)
+            msg = f"Dropped {ctx.drop_type.lower()} '{name}'"
+            if stopped:
+                msg += " (task stopped)"
+            logger.success(f"[TaskManager] {msg}")
+        except Exception as e:
+            logger.warning(f"[TaskManager] failed to drop '{name}': {e}")

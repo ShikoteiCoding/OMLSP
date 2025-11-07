@@ -26,12 +26,14 @@ from context.context import (
     SelectContext,
     SetContext,
     ShowContext,
+    DropContext,
 )
 from metadata.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
     METADATA_SINK_TABLE_NAME,
     METADATA_SECRET_TABLE_NAME,
+    METADATA_SOURCE_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
 
@@ -669,8 +671,25 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
     elif "SINKS" in sql:
         query += METADATA_SINK_TABLE_NAME
 
+    elif "SOURCES" in sql:
+        query += METADATA_SOURCE_TABLE_NAME
+
     return ShowContext(user_query=sql, query=query)
 
+def extract_drop_statement(statement: exp.Drop) -> DropContext:
+    sql = statement.sql(dialect=OmlspDialect)
+    drop_type = ""
+    if "TABLE" in sql:
+        drop_type = "TABLE"
+    elif "VIEW" in sql:
+        drop_type = "VIEW"
+    elif "SECRET" in sql:
+        drop_type = "SECRET"
+    elif "SINK" in sql:
+        drop_type = "SINK"
+    elif "SOURCE" in sql:
+        drop_type = "SOURCE"
+    return DropContext(user_query=sql, drop_type=drop_type)
 
 def extract_command_context(
     statement: exp.Command,
@@ -692,7 +711,10 @@ def parse_with_sqlglot(query: str) -> exp.Expression | ParseError:
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> ValidContext | InvalidContext:
+    print(query)
     parsed_statement = parse_with_sqlglot(query)
+    print(parsed_statement)
+    print(type(parsed_statement))
 
     if isinstance(parsed_statement, exp.Command):
         return extract_command_context(parsed_statement)
@@ -708,6 +730,9 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.Show):
         return extract_show_statement(parsed_statement)
+    
+    elif isinstance(parsed_statement, exp.Drop):
+        return extract_drop_statement(parsed_statement)
 
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
