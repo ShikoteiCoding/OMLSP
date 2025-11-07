@@ -22,6 +22,7 @@ from transport.http import (
 )
 from transport.pagination import BasePagination, PAGINATION_DISPATCH
 from transport.ws import parse_ws_properties, ws_generator_aggregator
+from sql.types import Properties, SourceHttpProperties, SourceWSProperties, JQ
 
 type TransportMode = Literal["sync", "async"]
 
@@ -43,18 +44,22 @@ class TransportBuilder:
     #: Config for child build (spark like syntax)
     config: TransportBuilderOptions
 
-    def __init__(self, props: dict[str, str]):
-        self.properties = props
+    def __init__(self, properties: Properties):
+        self.properties = properties
         self.config = {}
 
     # allow chaining for mode
     def build(self, name: str) -> Transport:
         if name == "http":
             return HttpTransport(
-                self.properties, cast(HttpTransportOptions, self.config)
+                cast(SourceHttpProperties, self.properties),
+                cast(HttpTransportOptions, self.config),
             )
         elif name == "ws":
-            return WSTransport(self.properties, cast(WSTransportOptions, self.config))
+            return WSTransport(
+                cast(SourceWSProperties, self.properties),
+                cast(WSTransportOptions, self.config),
+            )
 
         raise ValueError(f"Unknown name: {name}")
 
@@ -77,14 +82,14 @@ class Transport(TransportT):
     This inherits from TransportT to allow typing of configure() and finalize().
     """
 
-    def __init__(self, properties: dict[str, Any], config: TransportBuilderOptions):
+    def __init__(self, properties: Properties, config: TransportBuilderOptions):
         self.properties = properties
         self.config = config
 
 
 class HttpTransport(Transport):
     #: HTTP requires JQ to parse HTTP response
-    jq: Any
+    jq: JQ
 
     #: HTTP Auth signer with access to corresponding secrets
     signer: BaseSignerT
@@ -98,13 +103,15 @@ class HttpTransport(Transport):
     #: Internal configs from TransportBuilder
     mode: TransportMode
 
-    def __init__(self, properties: dict[str, Any], config: HttpTransportOptions):
+    def __init__(self, properties: SourceHttpProperties, config: HttpTransportOptions):
         super().__init__(properties, config)
 
         self.mode = config["mode"]
 
     def configure(self) -> HttpTransport:
-        jq, signer, request_kwargs, meta_kwargs = parse_http_properties(self.properties)
+        jq, signer, request_kwargs, meta_kwargs = parse_http_properties(
+            cast(SourceHttpProperties, self.properties)
+        )
         self.jq = jq
         self.signer = signer
         self.request_kwargs = request_kwargs
@@ -140,7 +147,7 @@ class HttpTransport(Transport):
 
 class WSTransport(Transport):
     #: WS requires JQ to parse HTTP response
-    jq: Any
+    jq: JQ
 
     #: WS url
     url: str
@@ -148,13 +155,13 @@ class WSTransport(Transport):
     #: List of templates to substitute to url
     _templates_list: list[Any] = []
 
-    def __init__(self, properties: dict[str, Any], config: WSTransportOptions):
+    def __init__(self, properties: SourceWSProperties, config: WSTransportOptions):
         super().__init__(properties, config)
 
         self._templates_list = config["templates_list"]
 
     def configure(self) -> WSTransport:
-        jq, url = parse_ws_properties(self.properties)
+        jq, url = parse_ws_properties(cast(SourceWSProperties, self.properties))
         self.jq = jq
         self.url = url
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import trio
-import jq as jqm
 import httpx
 import time
 from duckdb import DuckDBPyConnection
@@ -12,26 +11,32 @@ from transport.utils import jq_dict
 from transport.pagination import BasePagination
 from loguru import logger
 
+from sql.types import SourceHttpProperties, JQ
+
 
 MAX_RETRIES = 5
 
 
 def parse_http_properties(
-    properties: dict[str, str],
-) -> tuple[Any, BaseSignerT, dict[str, Any], dict[str, Any]]:
+    properties: SourceHttpProperties,
+) -> tuple[JQ, BaseSignerT, dict[str, Any], dict[str, Any]]:
     """Parse property dict provided by context and get required http parameters."""
     # Build kwargs dict compatible with both httpx or requests
-    requests_kwargs: dict[str, Any] = {
-        "headers": {},
-        "json": {},
-        "params": {},
-    }
+    # leverage dict update to avoid empty values
+    requests_kwargs: dict[str, Any] = (
+        {
+            "url": properties.url,
+            "method": properties.method,
+        }
+        | {"headers": properties.headers}
+        if properties.headers
+        else {} | {"json": properties.json}
+        if properties.json
+        else {} | {"params": properties.params}
+        if properties.params
+        else {}
+    )
     meta_kwargs = {"type": "no-pagination"}
-
-    # Manually extract standard values
-    requests_kwargs["url"] = properties["url"]
-    requests_kwargs["method"] = properties["method"]
-    jq = jqm.compile(properties["jq"])
 
     # TODO: Move this the same way as Pagination in the
     # TransportBuilder layer -> We should align dynamic
@@ -43,40 +48,30 @@ def parse_http_properties(
 
     # Build "dict" kwargs dynamically
     # TODO: improve with defaultdict(dict)
-    for key, value in properties.items():
-        # Handle headers, will always be a dict
-        if key.startswith("headers."):
-            # TODO: Implement more robust link between executable and SECRET.
-            subkey = key.split(".", 1)[1]
-            if "SECRET" in value:
-                # Get secret_name from value which should respect format:
-                # SECRET secret_name
-                value = value.split(" ")[1]
-                secrets_handler.add(subkey, value)
-            requests_kwargs["headers"][subkey] = value
+    # for key, value in properties.items():
+    #     # Handle headers, will always be a dict
+    #     if key.startswith("headers."):
+    #         # TODO: Implement more robust link between executable and SECRET.
+    #         subkey = key.split(".", 1)[1]
+    #         if "SECRET" in value:
+    #             # Get secret_name from value which should respect format:
+    #             # SECRET secret_name
+    #             value = value.split(" ")[1]
+    #             secrets_handler.add(subkey, value)
+    #         requests_kwargs["headers"][subkey] = value
 
-        elif key.startswith("json."):
-            requests_kwargs["json"][key.split(".", 1)[1]] = value
-            # TODO: handle bytes, form
+    #     elif key.startswith("json."):
+    #         requests_kwargs["json"][key.split(".", 1)[1]] = value
+    #         # TODO: handle bytes, form
 
-        elif key.startswith("params."):
-            requests_kwargs["params"][key.split(".", 1)[1]] = value
+    #     elif key.startswith("params."):
+    #         requests_kwargs["params"][key.split(".", 1)[1]] = value
 
-        elif key.startswith("pagination."):
-            subkey = key.split(".", 1)[1]
-            meta_kwargs[subkey] = value
+    #     elif key.startswith("pagination."):
+    #         subkey = key.split(".", 1)[1]
+    #         meta_kwargs[subkey] = value
 
-    # httpx consider empty headers or json as an actual headers or json
-    # that it will encode to the server. Some API do not like this and
-    # will issue 403 malformed error code. Let's just pop them.
-    if requests_kwargs["headers"] == {}:
-        requests_kwargs.pop("headers")
-    if requests_kwargs["json"] == {}:
-        requests_kwargs.pop("json")
-    if requests_kwargs["params"] == {}:
-        requests_kwargs.pop("params")
-
-    return jq, signer_class, requests_kwargs, meta_kwargs
+    return properties.jq, signer_class, requests_kwargs, meta_kwargs
 
 
 async def async_request(

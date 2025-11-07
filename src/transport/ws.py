@@ -1,4 +1,3 @@
-import jq as jqm
 import json
 import trio
 
@@ -7,12 +6,11 @@ from trio_websocket import open_websocket_url
 from typing import Any, AsyncGenerator
 
 from transport.utils import jq_dict
+from sql.types import SourceWSProperties, JQ
 
 
-def parse_ws_properties(properties: dict[str, str]) -> tuple[Any, str]:
-    jq = jqm.compile(properties["jq"])
-    url = properties["url"]
-    return jq, url
+def parse_ws_properties(properties: SourceWSProperties) -> tuple[JQ, str]:
+    return properties.jq, properties.url
 
 
 async def ws_generator(

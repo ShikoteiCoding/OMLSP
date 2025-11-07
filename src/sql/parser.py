@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import jq as jqm
 import jsonschema
 import polars as pl
 
@@ -9,7 +10,7 @@ from enum import StrEnum
 from loguru import logger
 from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from context.context import (
     CommandContext,
@@ -34,6 +35,13 @@ from metadata.db import (
     METADATA_SECRET_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
+from sql.types import (
+    SourceHttpProperties,
+    SourceWSProperties,
+    HttpMethod,
+    JQ,
+)
+from utils import unnest_dict
 
 
 class CreateKind(StrEnum):
@@ -301,6 +309,21 @@ def extract_create_properties(statement: exp.Create) -> dict[str, str]:
     return properties
 
 
+def build_create_http_properties(properties: dict[str, str]) -> SourceHttpProperties:
+    unnested_properties = unnest_dict(properties)
+
+    return SourceHttpProperties(
+        url=str(unnested_properties["url"]),
+        method=cast(HttpMethod, unnested_properties["method"]),
+        # schedule = str(unnested_properties["schedule"]),
+        jq=cast(JQ, jqm.compile(unnested_properties["jq"])),
+        pagination=cast(dict, unnested_properties.get("pagination", {})),
+        headers=cast(dict, unnested_properties.get("headers", {})),
+        json=cast(dict, unnested_properties.get("json", {})),
+        params=cast(dict, unnested_properties.get("params", {})),
+    )
+
+
 def build_create_http_table_or_source_context(
     statement: exp.Create, properties: dict[str, str]
 ) -> CreateHTTPTableContext | CreateHTTPSourceContext:
@@ -330,7 +353,7 @@ def build_create_http_table_or_source_context(
     if is_source:
         return CreateHTTPSourceContext(
             name=table_name,
-            properties=properties,
+            properties=build_create_http_properties(properties),
             query=duckdb_query,
             column_types=column_types,
             generated_columns=generated_columns,
@@ -338,7 +361,7 @@ def build_create_http_table_or_source_context(
         )
     return CreateHTTPTableContext(
         name=table_name,
-        properties=properties,
+        properties=build_create_http_properties(properties),
         query=duckdb_query,
         column_types=column_types,
         generated_columns=generated_columns,
@@ -364,10 +387,20 @@ def build_create_http_lookup_table_context(
 
     return CreateHTTPLookupTableContext(
         name=table_name,
-        properties=properties,
+        properties=build_create_http_properties(properties),
         query=get_duckdb_sql(statement),
         dynamic_columns=dynamic_columns,
         columns=columns,
+    )
+
+
+def build_create_ws_properties(properties: dict[str, str]) -> SourceWSProperties:
+    unnested_properties = unnest_dict(properties)
+
+    return SourceWSProperties(
+        url=str(unnested_properties["url"]),
+        jq=cast(JQ, jqm.compile(unnested_properties["jq"])),
+        on_start_query=str(unnested_properties.get("on_start_query", "")),
     )
 
 
@@ -392,7 +425,7 @@ def build_create_ws_table_context(
     if is_source:
         return CreateWSSourceContext(
             name=table_name,
-            properties=properties,
+            properties=build_create_ws_properties(properties),
             column_types=column_types,
             generated_columns=generated_columns,
             query=clean_query,
@@ -401,7 +434,7 @@ def build_create_ws_table_context(
 
     return CreateWSTableContext(
         name=table_name,
-        properties=properties,
+        properties=build_create_ws_properties(properties),
         column_types=column_types,
         generated_columns=generated_columns,
         query=clean_query,
