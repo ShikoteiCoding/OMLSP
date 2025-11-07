@@ -19,32 +19,32 @@ PROPERTIES_SCHEMA = json.loads(
 
 
 async def main():
-    pl.Config.set_fmt_str_lengths(900)  # TODO: expose as configuration available in SET
+    # TODO: expose as configuration available in SET
+    pl.Config.set_fmt_str_lengths(900)
     parser = argparse.ArgumentParser("Run a SQL file")
     parser.add_argument("file")
     args = parser.parse_args()
     sql_filepath = Path(args.file)
 
+    # For now we manage state with the backend
+    # To be ultimately changed for obvious reasons
     backend_conn: DuckDBPyConnection = connect(database=":memory:")
     transform_conn: DuckDBPyConnection = backend_conn
 
-    scheduler = TrioScheduler()
-    task_manager = TaskManager(backend_conn, transform_conn)
-    client_manager = ClientManager(backend_conn)
     app = App(backend_conn, PROPERTIES_SCHEMA)
 
-    # TODO: Not the most elegant, baby steps
-    # towards full actor model to polish
-
     # Connect ClientManager to App
+    client_manager = ClientManager(backend_conn)
     app.add_dependency(client_manager)
     app.connect_client_manager(client_manager)
 
     # Connect TaskManager to App
+    task_manager = TaskManager(backend_conn, transform_conn)
     app.add_dependency(task_manager)
     app.connect_task_manager(task_manager)
 
     # Connect Scheduler to TaskManager
+    scheduler = TrioScheduler()
     task_manager.add_dependency(scheduler)
     task_manager.connect_scheduler(scheduler)
 
@@ -59,10 +59,10 @@ async def main():
             logger.warning(
                 "KeyboardInterrupt received! Stopping services gracefully..."
             )
-            # This will set `_stopped` and trigger orderly shutdown
+            # Set App._stopped and trigger orderly shutdown
             await app.stop()
 
-            # Now wait for all dependencies to shut down
+            # Now wait for all dependencies for full shut down
             await app._shutdown.wait()
             logger.success("All services shut down gracefully!")
 

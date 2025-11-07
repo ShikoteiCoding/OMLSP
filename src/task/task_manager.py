@@ -8,12 +8,14 @@ from apscheduler.triggers.base import BaseTrigger
 from channel import Channel
 from scheduler import TrioScheduler
 from context.context import (
+    CreateContext,
+    CreateHTTPSourceContext,
+    CreateHTTPTableContext,
     CreateHTTPLookupTableContext,
-    SinkTaskContext,
-    ScheduledTaskContext,
-    ContinousTaskContext,
-    TransformTaskContext,
-    TaskContext,
+    CreateSinkContext,
+    CreateViewContext,
+    CreateWSSourceContext,
+    CreateWSTableContext,
 )
 from engine.engine import (
     build_lookup_table_prehook,
@@ -58,7 +60,7 @@ class TaskManager(Service):
     _task_id_to_task: dict[TaskId, BaseTaskT] = {}
 
     #: Outgoing Task context to be orchestrated
-    _tasks_to_deploy: Channel[TaskContext]
+    _tasks_to_deploy: Channel[CreateContext]
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
@@ -68,13 +70,12 @@ class TaskManager(Service):
     ):
         super().__init__(name="TaskManager")
         self.backend_conn = backend_conn
-        # created once and lives until tasks stop
         self.transform_conn = transform_conn
         self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](
             100
         )
 
-    def add_taskctx_channel(self, channel: Channel[TaskContext]):
+    def add_taskctx_channel(self, channel: Channel[CreateContext]):
         self._tasks_to_deploy = channel
 
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
@@ -100,14 +101,14 @@ class TaskManager(Service):
         async for taskctx in self._tasks_to_deploy:
             await self._register_one_task(taskctx)
 
-    async def _register_one_task(self, ctx: TaskContext) -> None:
+    async def _register_one_task(self, ctx: CreateContext) -> None:
         task_id = ctx.name
         task = None
 
-        if isinstance(ctx, SinkTaskContext):
+        if isinstance(ctx, CreateSinkContext):
             # TODO: add Transform task to handle subqueries
             # TODO: subscribe to many upstreams
-            task = SinkTask(task_id, self.transform_conn)
+            task = SinkTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
             self._task_id_to_task[task_id] = task.register(
@@ -116,7 +117,7 @@ class TaskManager(Service):
             self._nursery.start_soon(task.start, self._nursery)
             logger.success(f"[TaskManager] registered sink task '{task_id}'")
 
-        elif isinstance(ctx, ScheduledTaskContext):
+        elif isinstance(ctx, CreateHTTPTableContext | CreateHTTPSourceContext):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             task = ScheduledSourceTask[ctx._out_type](
@@ -130,7 +131,7 @@ class TaskManager(Service):
                 f"[TaskManager] registered scheduled source task '{task_id}'"
             )
 
-        elif isinstance(ctx, ContinousTaskContext):
+        elif isinstance(ctx, CreateWSTableContext | CreateWSSourceContext):
             # Executable could be attached to context
             # But we might want it dynamic later (i.e built at run time)
             task = ContinuousSourceTask[ctx._out_type](
@@ -154,7 +155,7 @@ class TaskManager(Service):
             build_lookup_table_prehook(ctx, self.backend_conn)
             logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
 
-        elif isinstance(ctx, TransformTaskContext):
+        elif isinstance(ctx, CreateViewContext):
             task = TransformTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())

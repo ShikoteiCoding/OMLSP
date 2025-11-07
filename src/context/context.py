@@ -123,6 +123,8 @@ class CreateViewContext(CreateContext):
     transform_ctx: SelectContext
     materialized: bool
 
+    # executable of ws table context
+    # returns a polars dataframe
     _out_type: Type = field(default=pl.DataFrame)
 
 
@@ -132,6 +134,10 @@ class CreateSinkContext(CreateContext):
     upstreams: list[str]
     properties: dict[str, Any]
     subquery: str
+
+    # executable of ws table context
+    # returns a polars dataframe
+    _out_type: Type = field(default=pl.DataFrame)
 
 
 @dataclass
@@ -171,23 +177,3 @@ class CommandContext(EvaluableContext):
 @dataclass
 class InvalidContext:
     reason: str
-
-
-OnStartContext = CreateWSTableContext
-
-# Context part of task flow
-# TODO: change union for mixin dependencies
-ScheduledTaskContext = Union[CreateHTTPSourceContext, CreateHTTPTableContext]
-ContinousTaskContext = Union[CreateWSSourceContext, CreateWSTableContext]
-SinkTaskContext = Union[CreateSinkContext]
-TransformTaskContext = Union[CreateViewContext]
-TaskContext = Union[
-    ScheduledTaskContext,
-    ContinousTaskContext,
-    SinkTaskContext,
-    TransformTaskContext,
-    # TODO: I don't think this should be considered a TaskContext
-    # Move the lookup registration to the app._eval_ctx and make it
-    # register macro + scalar func from there
-    CreateHTTPLookupTableContext,
-]

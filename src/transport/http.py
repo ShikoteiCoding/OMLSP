@@ -41,35 +41,11 @@ def parse_http_properties(
     # TODO: Move this the same way as Pagination in the
     # TransportBuilder layer -> We should align dynamic
     # dispatched instanciation.
+    # Restore signer class in http params
     secrets_handler = SecretsHandler()
     signer_class = AUTH_DISPATCHER[requests_kwargs.get("signer_class", "NoSigner")](
         secrets_handler
     )
-
-    # Build "dict" kwargs dynamically
-    # TODO: improve with defaultdict(dict)
-    # for key, value in properties.items():
-    #     # Handle headers, will always be a dict
-    #     if key.startswith("headers."):
-    #         # TODO: Implement more robust link between executable and SECRET.
-    #         subkey = key.split(".", 1)[1]
-    #         if "SECRET" in value:
-    #             # Get secret_name from value which should respect format:
-    #             # SECRET secret_name
-    #             value = value.split(" ")[1]
-    #             secrets_handler.add(subkey, value)
-    #         requests_kwargs["headers"][subkey] = value
-
-    #     elif key.startswith("json."):
-    #         requests_kwargs["json"][key.split(".", 1)[1]] = value
-    #         # TODO: handle bytes, form
-
-    #     elif key.startswith("params."):
-    #         requests_kwargs["params"][key.split(".", 1)[1]] = value
-
-    #     elif key.startswith("pagination."):
-    #         subkey = key.split(".", 1)[1]
-    #         meta_kwargs[subkey] = value
 
     return properties.jq, signer_class, requests_kwargs, meta_kwargs
 
