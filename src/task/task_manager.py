@@ -34,6 +34,8 @@ from task.task import (
     SinkTask,
     TransformTask,
 )
+from task.task_supervisor import TaskSupervisor
+
 from services import Service
 
 from typing import Callable
@@ -51,6 +53,8 @@ class TaskManager(Service):
     #: Scheduler (trio compatible) to register
     #: short lived or long lived processes
     scheduler: TrioScheduler
+    #: Supervisor to restart tasks
+    supervisor: TaskSupervisor
 
     #: Reference to all sources by task id
     #: TODO: to deprecate for below mapping
@@ -91,6 +95,8 @@ class TaskManager(Service):
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
+        # TODO: change to inheritance later
+        self.supervisor = TaskSupervisor(self._nursery)
         self._nursery.start_soon(self._process)
 
     async def on_stop(self):
@@ -114,7 +120,7 @@ class TaskManager(Service):
             self._task_id_to_task[task_id] = task.register(
                 build_sink_executable(ctx, self.backend_conn)
             )
-            self._nursery.start_soon(task.start, self._nursery)
+            self._nursery.start_soon(self.supervisor.supervise, task)
             logger.success(f"[TaskManager] registered sink task '{task_id}'")
 
         elif isinstance(ctx, CreateHTTPTableContext | CreateHTTPSourceContext):
@@ -145,7 +151,7 @@ class TaskManager(Service):
             self._sources[task_id] = task.register(
                 build_continuous_source_executable(ctx, self.backend_conn)
             )
-            self._nursery.start_soon(task.start, self._nursery)
+            self._nursery.start_soon(self.supervisor.supervise, task)
             logger.success(
                 f"[TaskManager] registered continuous source task '{task_id}'"
             )
@@ -163,7 +169,7 @@ class TaskManager(Service):
             self._task_id_to_task[task_id] = task.register(
                 build_transform_executable(ctx, self.backend_conn)
             )
-            self._nursery.start_soon(task.start, self._nursery)
+            self._nursery.start_soon(self.supervisor.supervise, task)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")
 
         if task is not None:

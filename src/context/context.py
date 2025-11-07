@@ -3,7 +3,7 @@ from __future__ import annotations
 import polars as pl
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Type, Union
+from typing import Any, Callable, Type
 from apscheduler.triggers.cron import CronTrigger
 from sql.types import (
     Properties,

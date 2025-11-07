@@ -1,4 +1,4 @@
-from typing import Any, Type
+from typing import Any
 from duckdb import DuckDBPyConnection
 from loguru import logger
 from channel import Channel
