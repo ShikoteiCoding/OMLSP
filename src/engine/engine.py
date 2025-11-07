@@ -53,6 +53,7 @@ from metadata import (
     create_table,
     create_view,
 )
+from sql.types import SourceHttpProperties
 from transport.builder import TransportBuilder
 
 
@@ -98,18 +99,18 @@ DUCKDB_TO_POLARS: dict[str, Any] = {
 }
 
 
-def build_lookup_properties(
-    properties: dict[str, str], context: dict[str, Any]
-) -> dict[str, str]:
-    new_props = {}
-
-    for key, value in properties.items():
-        if key in ["method"]:  # TODO: ignore jq for now
-            new_props[key] = value
-            continue
-        new_props[key] = Template(value).substitute(context)
-
-    return new_props
+def substitute_http_properties(
+    properties: SourceHttpProperties, context: dict[str, Any]
+) -> SourceHttpProperties:
+    return SourceHttpProperties(
+        url=Template(properties.url).substitute(context),
+        method=properties.method,
+        jq=properties.jq,
+        pagination=properties.pagination,
+        headers=properties.headers,
+        json=properties.json,
+        params=properties.params,
+    )
 
 
 def _coerce_result_dict(
@@ -181,7 +182,7 @@ def _coerce_result_dict(
 
 
 def build_scalar_udf(
-    properties: dict[str, str],
+    properties: SourceHttpProperties,
     dynamic_columns: list[str],
     return_type: DuckDBPyType,
     conn: DuckDBPyConnection,
@@ -212,11 +213,11 @@ def build_scalar_udf(
     # Threadpool http wrapper which process elements
     def process_elements(
         rows: Iterable[tuple[Any, ...]],
-        properties: dict[str, str],
+        properties: SourceHttpProperties,
     ) -> pa.Array:
         def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
             context = dict(zip(dynamic_columns, row))
-            lookup_properties = build_lookup_properties(properties, context)
+            lookup_properties = substitute_http_properties(properties, context)
             default_response = context.copy()
             requester = (
                 TransportBuilder(lookup_properties)

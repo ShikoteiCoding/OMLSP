@@ -1,10 +1,15 @@
-from typing import Literal, TypedDict
+from typing import Literal, Protocol
+from dataclasses import dataclass
 
 type HttpMethod = Literal["GET", "POST"]
 type SourceConnectorName = Literal["http", "lookup-http", "ws"]
 
 
-class Properties(TypedDict):
+class JQ(Protocol):
+    def input(self, data: dict): ...
+
+
+class Properties:
     """
     Base Properties class, can be freely used as an untyped dictionnary.
 
@@ -14,19 +19,18 @@ class Properties(TypedDict):
     ...
 
 
-class SinkProperties(Properties, TypedDict):
-    connector: SourceConnectorName
+@dataclass
+class SinkProperties(Properties):
     topic: str
     server: str
     format: str
 
 
-class SourceHttpProperties(Properties, TypedDict):
-    connector: SourceConnectorName
+@dataclass
+class SourceHttpProperties(Properties):
     url: str
     method: HttpMethod
-    schedule: str
-    jq: str
+    jq: JQ
 
     # TODO: type those properties
     pagination: dict
@@ -35,12 +39,13 @@ class SourceHttpProperties(Properties, TypedDict):
     params: dict
 
 
-class SourceWSProperties(Properties, TypedDict):
-    connector: SourceConnectorName
+@dataclass
+class SourceWSProperties(Properties):
     url: str
-    jq: str
+    jq: JQ
     on_start_query: str
 
 
-class SecretProperties(Properties, TypedDict):
+@dataclass
+class SecretProperties(Properties):
     backend: Literal["meta"]

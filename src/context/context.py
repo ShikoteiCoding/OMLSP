@@ -5,6 +5,11 @@ import polars as pl
 from dataclasses import dataclass, field
 from typing import Any, Callable, Type, Union
 from apscheduler.triggers.cron import CronTrigger
+from sql.types import (
+    Properties,
+    SourceHttpProperties,
+    SourceWSProperties,
+)
 
 
 class ValidContext:
@@ -18,20 +23,21 @@ class EvaluableContext(ValidContext):
     query: str
 
 
-# --- Context definitions ---
+# ------- Context definitions -------
 class CreateContext(EvaluableContext):
     name: str
 
 
 # ---------- Table Contexts ----------
 class CreateTableContext(CreateContext):
+    properties: Properties
     lookup: bool
 
 
 @dataclass
 class CreateHTTPTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -47,10 +53,10 @@ class CreateHTTPTableContext(CreateTableContext):
 @dataclass
 class CreateWSTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceWSProperties
+    query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
-    query: str
     on_start_query: str
     lookup: bool = False
     source: bool = False
@@ -63,7 +69,7 @@ class CreateWSTableContext(CreateTableContext):
 @dataclass
 class CreateHTTPLookupTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     dynamic_columns: list[str]
     columns: dict[str, str]
@@ -72,14 +78,13 @@ class CreateHTTPLookupTableContext(CreateTableContext):
 
 # ---------- Source Contexts ----------
 class CreateSourceContext(CreateContext):
-    name: str
-    query: str
+    properties: Properties
 
 
 @dataclass
 class CreateHTTPSourceContext(CreateSourceContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -94,7 +99,7 @@ class CreateHTTPSourceContext(CreateSourceContext):
 @dataclass
 class CreateWSSourceContext(CreateSourceContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceWSProperties
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     query: str
