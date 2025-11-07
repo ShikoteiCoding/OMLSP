@@ -51,7 +51,7 @@ class TaskManager(Service):
     #: Scheduler (trio compatible) to register
     #: short lived or long lived processes
     scheduler: TrioScheduler
-
+    #: Supervisor to restart tasks
     supervisor: TaskSupervisor
 
     #: Reference to all sources by task id
@@ -94,6 +94,7 @@ class TaskManager(Service):
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
+        #TODO: change to inheritance later
         self.supervisor = TaskSupervisor(self._nursery)
         self._nursery.start_soon(self._process)
 
