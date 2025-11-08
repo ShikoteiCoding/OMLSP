@@ -676,6 +676,7 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
 
     return ShowContext(user_query=sql, query=query)
 
+
 def extract_drop_statement(statement: exp.Drop) -> DropContext:
     sql = statement.sql(dialect=OmlspDialect)
     drop_type = ""
@@ -733,7 +734,7 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.Show):
         return extract_show_statement(parsed_statement)
-    
+
     elif isinstance(parsed_statement, exp.Drop):
         return extract_drop_statement(parsed_statement)
 

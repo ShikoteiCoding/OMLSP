@@ -18,6 +18,7 @@ DEFAULT_CAPACITY = 100
 
 T = TypeVar("T")
 
+
 class BaseSourceTaskT(Generic[T], Protocol):
     def register(self, executable: Callable[..., Any]) -> BaseSourceTaskT[T]: ...
 
@@ -28,6 +29,7 @@ class BaseSourceTaskT(Generic[T], Protocol):
     async def on_start(self) -> None: ...
 
     async def on_stop(self) -> None: ...
+
 
 class BaseSourceTask(Service, BaseSourceTaskT):
     """Common base for all tasks."""
@@ -81,6 +83,7 @@ class BaseSourceTask(Service, BaseSourceTaskT):
         if hasattr(self, "_sender"):
             await self._sender.aclose()
         self._cancel_scope.cancel()
+
 
 class ScheduledSourceTask(BaseSourceTask, Generic[T]):
     _sender: Channel

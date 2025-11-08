@@ -319,21 +319,32 @@ def resolve_schema(con, relation: str | SelectContext):
         schema = get_table_schema(con, relation)
     return sql, schema
 
+
 def delete_table_metadata(conn: DuckDBPyConnection, table_name: str) -> None:
-    conn.execute(f"DELETE FROM {METADATA_TABLE_TABLE_NAME} WHERE table_name = '{table_name}';")
+    conn.execute(
+        f"DELETE FROM {METADATA_TABLE_TABLE_NAME} WHERE table_name = '{table_name}';"
+    )
 
 
 def delete_source_metadata(conn: DuckDBPyConnection, source_name: str) -> None:
-    conn.execute(f"DELETE FROM {METADATA_SOURCE_TABLE_NAME} WHERE source_name = '{source_name}';")
+    conn.execute(
+        f"DELETE FROM {METADATA_SOURCE_TABLE_NAME} WHERE source_name = '{source_name}';"
+    )
 
 
 def delete_view_metadata(conn: DuckDBPyConnection, view_name: str) -> None:
-    conn.execute(f"DELETE FROM {METADATA_VIEW_TABLE_NAME} WHERE view_name = '{view_name}';")
+    conn.execute(
+        f"DELETE FROM {METADATA_VIEW_TABLE_NAME} WHERE view_name = '{view_name}';"
+    )
 
 
 def delete_sink_metadata(conn: DuckDBPyConnection, sink_name: str) -> None:
-    conn.execute(f"DELETE FROM {METADATA_SINK_TABLE_NAME} WHERE sink_name = '{sink_name}';")
+    conn.execute(
+        f"DELETE FROM {METADATA_SINK_TABLE_NAME} WHERE sink_name = '{sink_name}';"
+    )
 
 
 def delete_secret_metadata(conn: DuckDBPyConnection, secret_name: str) -> None:
-    conn.execute(f"DELETE FROM {METADATA_SECRET_TABLE_NAME} WHERE secret_name = '{secret_name}';")
+    conn.execute(
+        f"DELETE FROM {METADATA_SECRET_TABLE_NAME} WHERE secret_name = '{secret_name}';"
+    )

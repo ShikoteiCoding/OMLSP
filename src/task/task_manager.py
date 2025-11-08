@@ -14,7 +14,7 @@ from context.context import (
     ContinousTaskContext,
     TransformTaskContext,
     TaskContext,
-    DropContext
+    DropContext,
 )
 from engine.engine import (
     build_lookup_table_prehook,
@@ -66,7 +66,7 @@ class TaskManager(Service):
     _task_id_to_task: dict[TaskId, BaseSourceTaskT] = {}
 
     #: Outgoing Task context to be orchestrated
-    _tasks_to_deploy: Channel[TaskContext|DropContext]
+    _tasks_to_deploy: Channel[TaskContext | DropContext]
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
@@ -82,7 +82,7 @@ class TaskManager(Service):
             100
         )
 
-    def add_taskctx_channel(self, channel: Channel[TaskContext|DropContext]):
+    def add_taskctx_channel(self, channel: Channel[TaskContext | DropContext]):
         self._tasks_to_deploy = channel
 
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
@@ -144,14 +144,13 @@ class TaskManager(Service):
                 delete_sink_metadata(self.backend_conn, name)
             elif drop_type == "secret":
                 delete_secret_metadata(self.backend_conn, name)
-            
+
             msg = f"Dropped {ctx.drop_type.lower()} '{name}'"
             if stopped:
                 msg += " (task stopped)"
             logger.success(f"[TaskManager] {msg}")
         except Exception as e:
             logger.warning(f"[TaskManager] Failed to drop '{name}': {e}")
-
 
     async def _register_one_task(self, ctx: TaskContext) -> None:
         task_id = ctx.name

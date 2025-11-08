@@ -159,11 +159,13 @@ class ShowContext(EvaluableContext):
     user_query: str
     query: str
 
+
 @dataclass
 class DropContext(EvaluableContext):
     user_query: str
     drop_type: str
     name: str
+
 
 @dataclass
 class CommandContext(EvaluableContext):
