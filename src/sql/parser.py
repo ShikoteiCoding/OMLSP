@@ -715,10 +715,7 @@ def parse_with_sqlglot(query: str) -> exp.Expression | ParseError:
 def extract_one_query_context(
     query: str, properties_schema: dict
 ) -> ValidContext | InvalidContext:
-    print(query)
     parsed_statement = parse_with_sqlglot(query)
-    print(parsed_statement)
-    print(type(parsed_statement))
 
     if isinstance(parsed_statement, exp.Command):
         return extract_command_context(parsed_statement)
