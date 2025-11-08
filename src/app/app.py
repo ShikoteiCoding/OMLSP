@@ -1,3 +1,4 @@
+from numpy import isin
 import trio
 from typing import Any, Callable, Type
 from duckdb import DuckDBPyConnection, connect
@@ -82,7 +83,7 @@ class App(Service):
     _evaled_sql: Channel[EvaledSQL]
 
     #: Outgoing Task context to be orchestrated by TaskManager
-    _tasks_to_deploy: Channel[TaskContext]
+    _tasks_to_deploy: Channel[TaskContext|DropContext]
 
     def __init__(
         self,
@@ -98,7 +99,7 @@ class App(Service):
         # becomes more mature.
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
-        self._tasks_to_deploy = Channel[TaskContext](100)
+        self._tasks_to_deploy = Channel[TaskContext|DropContext](100)
 
     def connect_client_manager(self, client_manager: ClientManager) -> None:
         """
@@ -168,9 +169,6 @@ class App(Service):
             # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
-                if isinstance(ctx, DropContext):
-                    await self._tasks_to_deploy.send(ctx)
-                else:
                     result = self._eval_ctx(client_id, ctx)
 
             # Warn of invalid context for tracing.
@@ -189,7 +187,7 @@ class App(Service):
                 await self._evaled_sql.send((client_id, result))
 
             # Dispatch TaskContext to task manager
-            if isinstance(ctx, TaskContext):
+            if isinstance(ctx, TaskContext) or isinstance(ctx, DropContext):
                 await self._tasks_to_deploy.send(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")

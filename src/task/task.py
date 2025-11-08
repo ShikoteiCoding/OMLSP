@@ -18,33 +18,38 @@ DEFAULT_CAPACITY = 100
 
 T = TypeVar("T")
 
-
-class BaseTaskT(Protocol, Generic[T]):
-    def register(self, executable: Callable[..., Any]) -> BaseTaskT[T]: ...
-
-    async def run(self) -> None: ...
-
-
-class BaseSourceTaskT(BaseTaskT[T], Protocol):
+class BaseSourceTaskT(Generic[T], Protocol):
     def register(self, executable: Callable[..., Any]) -> BaseSourceTaskT[T]: ...
 
     def get_sender(self) -> Channel[T]: ...
 
+    async def run(self) -> None: ...
 
-class BaseTask(Service, Generic[T]):
+    async def on_start(self) -> None: ...
+
+    async def on_stop(self) -> None: ...
+
+class BaseSourceTask(Service, BaseSourceTaskT):
     """Common base for all tasks."""
 
     task_id: TaskId
     conn: DuckDBPyConnection
     _executable: Callable[..., Any]
     _cancel_scope: trio.CancelScope
+    _sender: Channel
+    _cancel_event: trio.Event
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(name=task_id)
         self.task_id = task_id
         self._conn = conn
+        self._sender = Channel[T]()
+        self._cancel_event = trio.Event()
 
-    def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
+    def get_sender(self) -> Channel[T]:
+        return self._sender
+
+    def register(self, executable: Callable[..., Any]) -> BaseSourceTask[T]:
         """Attach the executable coroutine or function to this task."""
         self._executable = executable
         return self
@@ -72,30 +77,10 @@ class BaseTask(Service, Generic[T]):
 
     async def on_stop(self) -> None:
         logger.info(f"[{self.task_id}] task stopping")
-        self._cancel_scope.cancel()
-
-
-class BaseSourceTask(BaseTask, Generic[T]):
-    """A base task that produces output through a Channel."""
-
-    _sender: Channel
-    _cancel_event: trio.Event
-
-    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
-        super().__init__(task_id, conn)
-        self._sender = Channel[T]()
-        self._cancel_event = trio.Event()
-
-    def get_sender(self) -> Channel[T]:
-        return self._sender
-
-    async def on_stop(self) -> None:
-        logger.info(f"[{self.task_id}] task stopping")
         self._cancel_event.set()
         if hasattr(self, "_sender"):
             await self._sender.aclose()
         self._cancel_scope.cancel()
-
 
 class ScheduledSourceTask(BaseSourceTask, Generic[T]):
     _sender: Channel
@@ -174,7 +159,7 @@ class ContinuousSourceTask(BaseSourceTask, Generic[T]):
             await self._sender.send(result)
 
 
-class SinkTask(BaseTask, Generic[T]):
+class SinkTask(BaseSourceTask, Generic[T]):
     _receivers: list[Channel[T]]
 
     def __init__(self, task_id: str, conn: DuckDBPyConnection):

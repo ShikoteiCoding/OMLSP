@@ -689,7 +689,10 @@ def extract_drop_statement(statement: exp.Drop) -> DropContext:
         drop_type = "SINK"
     elif "SOURCE" in sql:
         drop_type = "SOURCE"
-    return DropContext(user_query=sql, drop_type=drop_type)
+
+    name = sql.replace(";", "").split()[-1]
+    return DropContext(user_query=sql, drop_type=drop_type, name=name)
+
 
 def extract_command_context(
     statement: exp.Command,

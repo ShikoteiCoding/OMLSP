@@ -18,6 +18,11 @@ from metadata.db import (
     resolve_schema,
     update_batch_id_in_source_metadata,
     update_batch_id_in_table_metadata,
+    delete_table_metadata,
+    delete_view_metadata,
+    delete_source_metadata,
+    delete_sink_metadata,
+    delete_secret_metadata,
 )
 
 __all__ = [
@@ -40,4 +45,9 @@ __all__ = [
     "resolve_schema",
     "update_batch_id_in_source_metadata",
     "update_batch_id_in_table_metadata",
+    "delete_table_metadata",
+    "delete_view_metadata",
+    "delete_source_metadata",
+    "delete_sink_metadata",
+    "delete_secret_metadata",
 ]
