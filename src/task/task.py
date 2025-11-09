@@ -3,7 +3,6 @@ from __future__ import annotations
 import polars as pl
 import trio
 
-from typing import Protocol
 from duckdb import DuckDBPyConnection
 from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
 from apscheduler.triggers.cron import CronTrigger
@@ -19,39 +18,26 @@ DEFAULT_CAPACITY = 100
 T = TypeVar("T")
 
 
-class BaseTaskT(Protocol):
-    def register(self, executable: Callable[..., Any]) -> BaseTaskT: ...
-
-    async def run(self) -> None: ...
-
-
-class BaseSourceTaskT(BaseTaskT, Protocol, Generic[T]):
-    def register(self, executable: Callable[..., Any]) -> BaseSourceTaskT[T]: ...
-
-    def get_sender(self) -> Channel[T]: ...
-
-
 class BaseTask(Service, Generic[T]):
     """Common base for all tasks."""
 
+    #: TaskId for now being mostly SQL artifact name
     task_id: TaskId
+
+    #: DuckDB Connection
     conn: DuckDBPyConnection
+
+    #: The executable function, core logic of the Task
     _executable: Callable[..., Any]
+
+    #: Cancel scope for structured concurrency
     _cancel_scope: trio.CancelScope
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(name=task_id)
         self.task_id = task_id
-        self._conn = conn
-
-    def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
-        """Attach the executable coroutine or function to this task."""
-        self._executable = executable
-        return self
-
-    async def run(self) -> None:
-        """Override in subclasses."""
-        await self._executable()
+        self.conn = conn
+        self._cancel_event = trio.Event()
 
     async def on_start(self) -> None:
         logger.info(f"[{self.task_id}] task running")
@@ -69,19 +55,45 @@ class BaseTask(Service, Generic[T]):
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_scope.cancel()
 
+    async def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
+        """Attach the executable coroutine or function to this task."""
+        self._executable = executable
+        return self
+
+    async def run(self) -> None:
+        """Override in subclasses."""
+        await self._executable()
+
 
 class BaseSourceTask(BaseTask, Generic[T]):
-    """A base task that produces output through a Channel."""
+    """
+    BaseSourceTask implementation of :class:`BaseTask`.
 
-    _sender: Channel
-    _cancel_event: trio.Event
+    A SourceTask does produces data and send it through _sender channel.
+    """
+
+    #: Sender channel, where data is sent after _executable()
+    _sender: Channel[T]
+
+    #: Sender watchguard
+    _has_sender: bool = False
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
-        self._sender = Channel[T]()
-        self._cancel_event = trio.Event()
 
     def get_sender(self) -> Channel[T]:
+        """
+        Get sender when asked. If doesn't exist, creates one.
+
+        NOTE: This implementation isn't very robust, we are
+         assuming that any resuester of :meth:`get_sender` will
+         succeed and that we indeed instanciate a sender. This
+         could lead to stuck Tasks if a sender channel is created
+         without anyt true consummer on the other side.
+        """
+        if not self._has_sender:
+            self._sender = Channel[T](100)
+            self._has_sender = True
         return self._sender
 
     async def on_stop(self) -> None:
@@ -93,9 +105,6 @@ class BaseSourceTask(BaseTask, Generic[T]):
 
 
 class ScheduledSourceTask(BaseSourceTask, Generic[T]):
-    _sender: Channel
-    _executable: Callable
-
     def __init__(
         self,
         task_id: TaskId,
@@ -104,7 +113,6 @@ class ScheduledSourceTask(BaseSourceTask, Generic[T]):
         trigger: CronTrigger,
     ):
         super().__init__(task_id, conn)
-        self._sender = Channel[T](DEFAULT_CAPACITY)
         self.scheduled_executables = scheduled_executables
         self.trigger = trigger
 
@@ -128,22 +136,17 @@ class ScheduledSourceTask(BaseSourceTask, Generic[T]):
         self._executable = executable
         return self
 
-    def get_sender(self) -> Channel:
-        return self._sender
-
     async def run(self):
         if not self._cancel_event.is_set():
-            result = await self._executable(task_id=self.task_id, conn=self._conn)
-            await self._sender.send(result)
+            result = await self._executable(task_id=self.task_id, conn=self.conn)
+
+            if self._has_sender:
+                await self._sender.send(result)
 
 
 class ContinuousSourceTask(BaseSourceTask, Generic[T]):
-    _sender: Channel[T]
-    _executable: Callable
-
     def __init__(self, task_id: str, conn: DuckDBPyConnection, nursery: trio.Nursery):
         super().__init__(task_id, conn)
-        self._sender = Channel[T](DEFAULT_CAPACITY)
         self.nursery = nursery
 
     def register(
@@ -156,17 +159,15 @@ class ContinuousSourceTask(BaseSourceTask, Generic[T]):
         self._executable = executable
         return self
 
-    def get_sender(self) -> Channel[T]:
-        return self._sender
-
     async def run(self):
         async for result in self._executable(
             task_id=self.task_id,
-            conn=self._conn,
+            conn=self.conn,
             nursery=self.nursery,
             cancel_event=self._cancel_event,
         ):
-            await self._sender.send(result)
+            if self._has_sender:
+                await self._sender.send(result)
 
 
 class SinkTask(BaseTask, Generic[T]):
@@ -185,6 +186,7 @@ class SinkTask(BaseTask, Generic[T]):
         self._executable = executable
         return self
 
+    # TODO: move towards SinkBaseTask
     def subscribe(self, recv: Channel):
         self._receivers.append(recv.clone())
 
@@ -216,12 +218,9 @@ class TransformTask(BaseSourceTask, Generic[T]):
     def subscribe(self, recv: Channel):
         self._receivers.append(recv.clone())
 
-    def get_sender(self) -> Channel:
-        return self._sender
-
     async def run(self):
         receiver = self._receivers[0]
         async for df in receiver:
-            result = await self._executable(self.task_id, self._conn, df)
-            if hasattr(self, "_sender"):
+            result = await self._executable(self.task_id, self.conn, df)
+            if self._has_sender:
                 await self._sender.send(result)
