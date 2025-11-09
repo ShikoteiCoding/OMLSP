@@ -27,8 +27,8 @@ from engine.engine import (
 
 from task.task import (
     TaskId,
-    BaseTaskT,
-    BaseSourceTaskT,
+    BaseTask,
+    BaseSourceTask,
     ContinuousSourceTask,
     ScheduledSourceTask,
     SinkTask,
@@ -58,10 +58,10 @@ class TaskManager(Service):
 
     #: Reference to all sources by task id
     #: TODO: to deprecate for below mapping
-    _sources: dict[TaskId, BaseSourceTaskT] = {}
+    _sources: dict[TaskId, BaseSourceTask] = {}
 
     #: Reference to all tasks by task id
-    _task_id_to_task: dict[TaskId, BaseTaskT] = {}
+    _task_id_to_task: dict[TaskId, BaseTask] = {}
 
     #: Outgoing Task context to be orchestrated
     _tasks_to_deploy: Channel[CreateContext]
@@ -132,6 +132,9 @@ class TaskManager(Service):
             self._sources[task_id] = task.register(
                 build_scheduled_source_executable(ctx)
             )
+
+            # Scheduled task is unsupervised. When one batch fails, the
+            # Scheduler will re instanciate in next trigger time
             self._nursery.start_soon(task.start, self._nursery)
             logger.success(
                 f"[TaskManager] registered scheduled source task '{task_id}'"

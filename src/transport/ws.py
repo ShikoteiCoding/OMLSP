@@ -46,20 +46,20 @@ async def ws_generator(
 
     This function runs until cancelled by trio.Event.
     """
-    async with open_websocket_url(url) as ws:
-        id = ws._id
-        logger.debug("[WS{{{}}}] Starting websocket generator on {}", id, url)
+    try:
+        async with open_websocket_url(url) as ws:
+            id = ws._id
+            logger.debug("[WS{{{}}}] Starting websocket generator on {}", id, url)
 
-        # Handle WS heartbeat
-        nursery.start_soon(heartbeat, ws, id, 10, 10, cancel_event)
+            # Main message loop
+            while not cancel_event.is_set():
+                message = await ws.get_message()
+                yield jq_dict(json.loads(message), jq)
 
-        # Main message loop
-        while not cancel_event.is_set():
-            message = await ws.get_message()
-            yield jq_dict(json.loads(message), jq)
-
-        logger.debug("[WS{{{}}}] Received cancel event", id)
-        await ws.aclose()
+            logger.debug("[WS{{{}}}] Received cancel event", id)
+            await ws.aclose()
+    except Exception as e:
+        logger.error("ERROR HERE {}", e)
 
 
 async def ws_generator_aggregator(
