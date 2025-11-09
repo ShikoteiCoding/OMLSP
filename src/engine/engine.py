@@ -32,10 +32,6 @@ from context.context import (
     SelectContext,
     SetContext,
     ShowContext,
-    ScheduledTaskContext,
-    ContinousTaskContext,
-    TransformTaskContext,
-    SinkTaskContext,
 )
 from inout import cache
 from metadata import (
@@ -390,7 +386,7 @@ async def ws_source_executable(
 
 
 def build_scheduled_source_executable(
-    ctx: ScheduledTaskContext,
+    ctx: CreateHTTPSourceContext | CreateHTTPTableContext,
 ) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
     requester = (
         TransportBuilder(ctx.properties)
@@ -411,7 +407,7 @@ def build_scheduled_source_executable(
 
 
 def build_continuous_source_executable(
-    ctx: ContinousTaskContext, conn: DuckDBPyConnection
+    ctx: CreateWSSourceContext | CreateWSTableContext, conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, trio.Nursery, trio.Event],
     AsyncGenerator[pl.DataFrame, None],
@@ -600,7 +596,7 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
 
 
 def build_sink_executable(
-    ctx: SinkTaskContext, backend_conn: DuckDBPyConnection
+    ctx: CreateSinkContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
@@ -643,7 +639,7 @@ async def kafka_sink(
 
 
 def build_transform_executable(
-    ctx: TransformTaskContext, backend_conn: DuckDBPyConnection
+    ctx: CreateViewContext, backend_conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
 ]:

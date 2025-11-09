@@ -1,30 +1,22 @@
-import trio
 from typing import Any
-from duckdb import DuckDBPyConnection, connect
+from duckdb import DuckDBPyConnection
 from loguru import logger
 from channel import Channel
 from context.context import (
+    CreateContext,
     EvaluableContext,
     InvalidContext,
-    TaskContext,
-    OnStartContext,
+    CreateWSTableContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from metadata import (
     init_metadata_store,
 )
 from server import ClientManager
-from sql.file.reader import iter_sql_statements
 from sql.parser import extract_one_query_context
-from scheduler import TrioScheduler
 from task import TaskManager
 from services import Service
-
-ClientId = str
-Evaled = str
-SQL = str
-ClientSQL = tuple[ClientId, SQL]
-EvaledSQL = tuple[ClientId, Evaled]
+from app.types import ClientSQL, EvaledSQL
 
 __all__ = ["App"]
 
@@ -51,7 +43,7 @@ class App(Service):
     _evaled_sql: Channel[EvaledSQL]
 
     #: Outgoing Task context to be orchestrated by TaskManager
-    _tasks_to_deploy: Channel[TaskContext]
+    _tasks_to_deploy: Channel[CreateContext]
 
     def __init__(
         self,
@@ -67,7 +59,7 @@ class App(Service):
         # becomes more mature.
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
-        self._tasks_to_deploy = Channel[TaskContext](100)
+        self._tasks_to_deploy = Channel[CreateContext](100)
 
     def connect_client_manager(self, client_manager: ClientManager) -> None:
         """
@@ -94,6 +86,9 @@ class App(Service):
         task_manager.add_taskctx_channel(self._tasks_to_deploy)
 
     async def on_start(self):
+        """
+        Callaback for parent Service class during :meth:`App.start`.
+        """
         # Init metastore backend
         init_metadata_store(self._conn)
 
@@ -101,6 +96,9 @@ class App(Service):
         self._nursery.start_soon(self._handle_messages)
 
     async def on_stop(self):
+        """
+        Callaback for parent Service class during :meth:`App.stop`.
+        """
         logger.success("[App] stopping.")
         await self._sql_to_eval.aclose()
         await self._evaled_sql.aclose()
@@ -126,7 +124,7 @@ class App(Service):
             ctx = extract_one_query_context(sql, self._properties_schema)
 
             # Handle context with on_start eval conditions
-            if isinstance(ctx, OnStartContext) and ctx.on_start_query != "":
+            if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query != "":
                 on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
                 if len(on_start_result) == 0:
                     # Override context to bypass next
@@ -155,7 +153,7 @@ class App(Service):
                 await self._evaled_sql.send((client_id, result))
 
             # Dispatch TaskContext to task manager
-            if isinstance(ctx, TaskContext):
+            if isinstance(ctx, CreateContext):
                 await self._tasks_to_deploy.send(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
@@ -170,35 +168,4 @@ class App(Service):
         try:
             return EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
         except Exception as e:
-            return f"fail to run sql: '{ctx}': {e}"
-
-
-if __name__ == "__main__":
-    import json
-    from pathlib import Path
-
-    with open(Path("src/properties.schema.json"), "rb") as fo:
-        properties_schema = json.loads(fo.read().decode("utf-8"))
-    backend_conn: DuckDBPyConnection = connect(database=":memory:")
-    transform_conn: DuckDBPyConnection = backend_conn
-    scheduler = TrioScheduler()
-    task_manager = TaskManager(backend_conn, transform_conn)
-    client_manager = ClientManager(backend_conn)
-    runner = App(backend_conn, properties_schema)
-
-    async def main():
-        # preload file mSQLs
-        for sql in iter_sql_statements("examples/basic.sql"):
-            await runner.submit(sql)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(runner.start, nursery)
-
-            # simulate console input
-            await trio.sleep(1)
-            await runner.submit("SELECT * FROM my_table;")
-
-            await trio.sleep(5)
-
-        logger.info(task_manager)
-
-    trio.run(main)
+            return f"Fail to run sql: '{ctx}': {e}"
