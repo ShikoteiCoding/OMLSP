@@ -24,13 +24,7 @@ from engine.engine import (
     build_transform_executable,
 )
 
-from metadata import (
-    delete_table_metadata,
-    delete_source_metadata,
-    delete_view_metadata,
-    delete_sink_metadata,
-    delete_secret_metadata,
-)
+from metadata import delete_metadata
 
 from task.task import (
     TaskId,
@@ -66,7 +60,9 @@ class TaskManager(Service):
     _task_id_to_task: dict[TaskId, BaseSourceTaskT] = {}
 
     #: Outgoing Task context to be orchestrated
-    _tasks_to_deploy: Channel[TaskContext | DropContext]
+    _tasks_to_deploy: Channel[TaskContext]
+    _tasks_to_cancel: Channel[DropContext]
+
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
@@ -82,8 +78,11 @@ class TaskManager(Service):
             100
         )
 
-    def add_taskctx_channel(self, channel: Channel[TaskContext | DropContext]):
+    def add_taskctx_channel(self, channel: Channel[TaskContext]):
         self._tasks_to_deploy = channel
+
+    def add_task_cancel_channel(self, channel: Channel[DropContext]):
+        self._tasks_to_cancel = channel
 
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
         """
@@ -112,14 +111,10 @@ class TaskManager(Service):
                 await self._handle_drop(ctx)
 
     async def _handle_drop(self, ctx: DropContext):
-        name = getattr(ctx, "name", None)
-        if not name:
-            logger.warning("[TaskManager] DROP received without name: {}", ctx)
-            return
-
+        name = ctx.name
         # Stop task if running
-        stopped = False
         task = self._task_id_to_task.get(name)
+        stopped = False
         if task:
             try:
                 await task.on_stop()
@@ -127,30 +122,9 @@ class TaskManager(Service):
             except Exception as e:
                 logger.warning(f"[TaskManager] Failed to stop task '{name}': {e}")
 
-        # Drop from DuckDB backend
-        try:
-            # TODO remove from metadata
+        if stopped is True:
             self.backend_conn.sql(ctx.user_query)
-
-            # Delete metadata entry
-            drop_type = ctx.drop_type.lower()
-            if drop_type == "table":
-                delete_table_metadata(self.backend_conn, name)
-            elif drop_type == "source":
-                delete_source_metadata(self.backend_conn, name)
-            elif drop_type == "view":
-                delete_view_metadata(self.backend_conn, name)
-            elif drop_type == "sink":
-                delete_sink_metadata(self.backend_conn, name)
-            elif drop_type == "secret":
-                delete_secret_metadata(self.backend_conn, name)
-
-            msg = f"Dropped {ctx.drop_type.lower()} '{name}'"
-            if stopped:
-                msg += " (task stopped)"
-            logger.success(f"[TaskManager] {msg}")
-        except Exception as e:
-            logger.warning(f"[TaskManager] Failed to drop '{name}': {e}")
+            delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
 
     async def _register_one_task(self, ctx: TaskContext) -> None:
         task_id = ctx.name
@@ -174,7 +148,7 @@ class TaskManager(Service):
             task = ScheduledSourceTask[ctx._out_type](
                 task_id, self.backend_conn, self._scheduled_executables, ctx.trigger
             )
-            self._sources[task_id] = task.register(
+            self._task_id_to_task[task_id] = task.register(
                 build_scheduled_source_executable(ctx)
             )
             self._nursery.start_soon(task.start, self._nursery)
@@ -193,7 +167,7 @@ class TaskManager(Service):
             # design idea, make the continuous source executable return
             # on_start func and on_run func. on_start will have "waiters"
             # and timeout logic
-            self._sources[task_id] = task.register(
+            self._task_id_to_task[task_id] = task.register(
                 build_continuous_source_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(task.start, self._nursery)

@@ -680,19 +680,36 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
 def extract_drop_statement(statement: exp.Drop) -> DropContext:
     sql = statement.sql(dialect=OmlspDialect)
     drop_type = ""
+    metadata = ""
+    metadata_column = ""
     if "TABLE" in sql:
+        metadata = METADATA_TABLE_TABLE_NAME
+        metadata_column = "table_name"
         drop_type = "TABLE"
+
     elif "VIEW" in sql:
+        metadata += METADATA_VIEW_TABLE_NAME
+        metadata_column = "view_name"
         drop_type = "VIEW"
+
     elif "SECRET" in sql:
+        metadata += METADATA_SECRET_TABLE_NAME
+        metadata_column = "secret_name"
         drop_type = "SECRET"
+
     elif "SINK" in sql:
+        metadata += METADATA_SINK_TABLE_NAME
+        metadata_column = "sink_name"
         drop_type = "SINK"
+
     elif "SOURCE" in sql:
+        metadata += METADATA_SOURCE_TABLE_NAME
+        metadata_column = "source_name"
         drop_type = "SOURCE"
 
     name = sql.replace(";", "").split()[-1]
-    return DropContext(user_query=sql, drop_type=drop_type, name=name)
+
+    return DropContext(drop_type=drop_type, metadata=metadata, metadata_column=metadata_column, name=name, user_query= sql)
 
 
 def extract_command_context(

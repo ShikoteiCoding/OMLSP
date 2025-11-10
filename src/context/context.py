@@ -162,9 +162,11 @@ class ShowContext(EvaluableContext):
 
 @dataclass
 class DropContext(EvaluableContext):
-    user_query: str
     drop_type: str
+    metadata: str
+    metadata_column: str
     name: str
+    user_query: str
 
 
 @dataclass
