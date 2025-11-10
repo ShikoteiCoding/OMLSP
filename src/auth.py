@@ -3,7 +3,7 @@ from __future__ import annotations
 from duckdb import DuckDBPyConnection
 from typing import Any, Type
 
-from _types import BaseSignerT, SecretsHandlerT
+from _types._types import BaseSignerT, SecretsHandlerT
 from metadata import get_secret_value_by_name
 
 __all__ = ["NoSigner", "HMACSHA256", "OAuth2", "AUTH_DISPATCHER"]

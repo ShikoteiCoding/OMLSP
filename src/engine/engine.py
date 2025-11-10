@@ -5,24 +5,33 @@ import polars as pl
 import pyarrow as pa
 
 from concurrent.futures import ThreadPoolExecutor
+from confluent_kafka import Producer
 from datetime import datetime, timezone
 from duckdb import DuckDBPyConnection
 from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
-from typing import Any, AsyncGenerator, Callable, Coroutine, Iterable
+from typing import Any, AsyncGenerator, Callable, Coroutine, Iterable, Type
 
 from duckdb import struct_type
 from loguru import logger
 
+
 from context.context import (
+    CommandContext,
+    CreateHTTPTableContext,
+    CreateWSTableContext,
     CreateHTTPLookupTableContext,
+    CreateSecretContext,
+    CreateSinkContext,
+    CreateHTTPSourceContext,
+    CreateWSSourceContext,
+    CreateViewContext,
+    EvaluableContext,
     SelectContext,
-    ScheduledTaskContext,
-    ContinousTaskContext,
-    TransformTaskContext,
-    SinkTaskContext,
+    SetContext,
+    ShowContext,
 )
 from inout import cache
 from metadata import (
@@ -34,9 +43,14 @@ from metadata import (
     get_tables,
     get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
+    create_secret,
+    create_sink,
+    create_source,
+    create_table,
+    create_view,
 )
-from transport import TransportBuilder
-from confluent_kafka import Producer
+from sql.types import SourceHttpProperties
+from transport.builder import TransportBuilder
 
 
 DUCKDB_TO_PYARROW_PYTYPE = {
@@ -81,18 +95,18 @@ DUCKDB_TO_POLARS: dict[str, Any] = {
 }
 
 
-def build_lookup_properties(
-    properties: dict[str, str], context: dict[str, Any]
-) -> dict[str, str]:
-    new_props = {}
-
-    for key, value in properties.items():
-        if key in ["method"]:  # TODO: ignore jq for now
-            new_props[key] = value
-            continue
-        new_props[key] = Template(value).substitute(context)
-
-    return new_props
+def substitute_http_properties(
+    properties: SourceHttpProperties, context: dict[str, Any]
+) -> SourceHttpProperties:
+    return SourceHttpProperties(
+        url=Template(properties.url).substitute(context),
+        method=properties.method,
+        jq=properties.jq,
+        pagination=properties.pagination,
+        headers=properties.headers,
+        json=properties.json,
+        params=properties.params,
+    )
 
 
 def _coerce_result_dict(
@@ -164,7 +178,7 @@ def _coerce_result_dict(
 
 
 def build_scalar_udf(
-    properties: dict[str, str],
+    properties: SourceHttpProperties,
     dynamic_columns: list[str],
     return_type: DuckDBPyType,
     conn: DuckDBPyConnection,
@@ -195,11 +209,11 @@ def build_scalar_udf(
     # Threadpool http wrapper which process elements
     def process_elements(
         rows: Iterable[tuple[Any, ...]],
-        properties: dict[str, str],
+        properties: SourceHttpProperties,
     ) -> pa.Array:
         def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
             context = dict(zip(dynamic_columns, row))
-            lookup_properties = build_lookup_properties(properties, context)
+            lookup_properties = substitute_http_properties(properties, context)
             default_response = context.copy()
             requester = (
                 TransportBuilder(lookup_properties)
@@ -343,13 +357,13 @@ async def http_source_executable(
 async def ws_source_executable(
     task_id: str,
     conn: DuckDBPyConnection,
+    nursery: trio.Nursery,
     table_name: str,
     column_types: dict[str, str],
     is_source: bool,
     ws_generator_func: Callable[
         [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
     ],
-    nursery: trio.Nursery,
     cancel_event: trio.Event,
     *args,
     **kwargs,
@@ -372,7 +386,7 @@ async def ws_source_executable(
 
 
 def build_scheduled_source_executable(
-    ctx: ScheduledTaskContext,
+    ctx: CreateHTTPSourceContext | CreateHTTPTableContext,
 ) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
     requester = (
         TransportBuilder(ctx.properties)
@@ -393,7 +407,7 @@ def build_scheduled_source_executable(
 
 
 def build_continuous_source_executable(
-    ctx: ContinousTaskContext, conn: DuckDBPyConnection
+    ctx: CreateWSSourceContext | CreateWSTableContext, conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, trio.Nursery, trio.Event],
     AsyncGenerator[pl.DataFrame, None],
@@ -582,7 +596,7 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
 
 
 def build_sink_executable(
-    ctx: SinkTaskContext, backend_conn: DuckDBPyConnection
+    ctx: CreateSinkContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
@@ -625,7 +639,7 @@ async def kafka_sink(
 
 
 def build_transform_executable(
-    ctx: TransformTaskContext, backend_conn: DuckDBPyConnection
+    ctx: CreateViewContext, backend_conn: DuckDBPyConnection
 ) -> Callable[
     [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
 ]:
@@ -710,3 +724,26 @@ def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
 
     duckdb_sql = substitute_sql_template(conn, ctx, substitute_mapping)
     return str(duckdb_to_pl(conn, duckdb_sql))
+
+
+def eval_set(conn: DuckDBPyConnection, ctx: SetContext):
+    conn.sql(ctx.query)
+    return "SET"
+
+
+# Static registration of EvaluableContext to
+# their respective evaluable function
+EVALUABLE_QUERY_DISPATCH: dict[Type[EvaluableContext], Callable] = {
+    CreateHTTPLookupTableContext: create_table,
+    CreateHTTPTableContext: create_table,
+    CreateWSTableContext: create_table,
+    CreateHTTPSourceContext: create_source,
+    CreateWSSourceContext: create_source,
+    CreateViewContext: create_view,
+    CreateSinkContext: create_sink,
+    CreateSecretContext: create_secret,
+    CommandContext: lambda conn, ctx: str(duckdb_to_pl(conn, ctx.query)),
+    SetContext: eval_set,
+    ShowContext: lambda conn, ctx: str(duckdb_to_pl(conn, ctx.query)),
+    SelectContext: eval_select,
+}

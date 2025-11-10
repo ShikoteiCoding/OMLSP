@@ -1,63 +1,25 @@
-import trio
-from typing import Any, Callable, Type
-from duckdb import DuckDBPyConnection, connect
+from typing import Any
+from duckdb import DuckDBPyConnection
 from loguru import logger
 from channel import Channel
 from context.context import (
     CreateContext,
-    CreateHTTPTableContext,
-    CreateWSTableContext,
-    CreateHTTPLookupTableContext,
-    CommandContext,
-    CreateSecretContext,
-    CreateSinkContext,
-    CreateHTTPSourceContext,
-    CreateWSSourceContext,
-    CreateViewContext,
-    DropContext,
     EvaluableContext,
     InvalidContext,
-    SelectContext,
-    SetContext,
-    ShowContext,
-    TaskContext,
-    OnStartContext,
+    CreateWSTableContext,
+    DropContext,
 )
-from engine.engine import eval_select, duckdb_to_dicts, duckdb_to_pl
+from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from metadata import (
-    create_secret,
-    create_sink,
-    create_source,
-    create_table,
-    create_view,
     init_metadata_store,
 )
 from server import ClientManager
-from sql.file.reader import iter_sql_statements
 from sql.parser import extract_one_query_context
-from scheduler import TrioScheduler
 from task import TaskManager
 from services import Service
-
-ClientId = str
-Evaled = str
-SQL = str
-ClientSQL = tuple[ClientId, SQL]
-EvaledSQL = tuple[ClientId, Evaled]
+from app.types import ClientSQL, EvaledSQL
 
 __all__ = ["App"]
-
-
-CREATE_QUERY_DISPATCH: dict[Type[CreateContext], Callable] = {
-    CreateHTTPLookupTableContext: create_table,
-    CreateHTTPTableContext: create_table,
-    CreateWSTableContext: create_table,
-    CreateHTTPSourceContext: create_source,
-    CreateWSSourceContext: create_source,
-    CreateViewContext: create_view,
-    CreateSinkContext: create_sink,
-    CreateSecretContext: create_secret,
-}
 
 
 class App(Service):
@@ -82,7 +44,7 @@ class App(Service):
     _evaled_sql: Channel[EvaledSQL]
 
     #: Outgoing Task context to be orchestrated by TaskManager
-    _tasks_to_deploy: Channel[TaskContext]
+    _tasks_to_deploy: Channel[CreateContext]
 
     _tasks_to_cancel: Channel[DropContext]
 
@@ -100,7 +62,7 @@ class App(Service):
         # becomes more mature.
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
-        self._tasks_to_deploy = Channel[TaskContext](100)
+        self._tasks_to_deploy = Channel[CreateContext](100)
         self._tasks_to_cancel = Channel[DropContext](100)
 
 
@@ -130,6 +92,9 @@ class App(Service):
         task_manager.add_task_cancel_channel(self._tasks_to_cancel)
 
     async def on_start(self):
+        """
+        Callaback for parent Service class during :meth:`App.start`.
+        """
         # Init metastore backend
         init_metadata_store(self._conn)
 
@@ -137,6 +102,9 @@ class App(Service):
         self._nursery.start_soon(self._handle_messages)
 
     async def on_stop(self):
+        """
+        Callaback for parent Service class during :meth:`App.stop`.
+        """
         logger.success("[App] stopping.")
         await self._sql_to_eval.aclose()
         await self._evaled_sql.aclose()
@@ -162,7 +130,7 @@ class App(Service):
             ctx = extract_one_query_context(sql, self._properties_schema)
 
             # Handle context with on_start eval conditions
-            if isinstance(ctx, OnStartContext) and ctx.on_start_query != "":
+            if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query != "":
                 on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
                 if len(on_start_result) == 0:
                     # Override context to bypass next
@@ -173,7 +141,7 @@ class App(Service):
             # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
-                result = self._eval_ctx(client_id, ctx)
+                result = self._eval_ctx(ctx)
 
             # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):
@@ -191,7 +159,7 @@ class App(Service):
                 await self._evaled_sql.send((client_id, result))
 
             # Dispatch TaskContext to task manager
-            if isinstance(ctx, TaskContext):
+            if isinstance(ctx, CreateContext):
                 await self._tasks_to_deploy.send(ctx)
 
             # Dispatch DropContext to task manager
@@ -206,53 +174,8 @@ class App(Service):
     # Client terminal gets "blocked" till response is received,
     # so it is safe to assume we can queue per client and defer
     # results to keep ordering per client
-    def _eval_ctx(self, client_id: str, ctx: EvaluableContext) -> str:
+    def _eval_ctx(self, ctx: EvaluableContext) -> str:
         try:
-            # Query with Create Context statements to eval before
-            # Task manager instanciation
-            if isinstance(ctx, CreateContext):
-                CREATE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
-            elif isinstance(ctx, CommandContext):
-                return str(duckdb_to_pl(self._conn, ctx.query))
-            elif isinstance(ctx, SetContext):
-                self._conn.sql(ctx.query)
-                return "SET"
-            elif isinstance(ctx, SelectContext) and client_id != self._internal_ref:
-                return eval_select(self._conn, ctx)
-            elif isinstance(ctx, ShowContext):
-                return str(duckdb_to_pl(self._conn, ctx.query))
+            return EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
         except Exception as e:
-            return f"fail to run sql: '{ctx}': {e}"
-
-        return ""
-
-
-if __name__ == "__main__":
-    import json
-    from pathlib import Path
-
-    with open(Path("src/properties.schema.json"), "rb") as fo:
-        properties_schema = json.loads(fo.read().decode("utf-8"))
-    backend_conn: DuckDBPyConnection = connect(database=":memory:")
-    transform_conn: DuckDBPyConnection = backend_conn
-    scheduler = TrioScheduler()
-    task_manager = TaskManager(backend_conn, transform_conn)
-    client_manager = ClientManager(backend_conn)
-    runner = App(backend_conn, properties_schema)
-
-    async def main():
-        # preload file mSQLs
-        for sql in iter_sql_statements("examples/basic.sql"):
-            await runner.submit(sql)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(runner.start, nursery)
-
-            # simulate console input
-            await trio.sleep(1)
-            await runner.submit("SELECT * FROM my_table;")
-
-            await trio.sleep(5)
-
-        logger.info(task_manager)
-
-    trio.run(main)
+            return f"Fail to run sql: '{ctx}': {e}"

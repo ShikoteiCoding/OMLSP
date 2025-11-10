@@ -3,8 +3,13 @@ from __future__ import annotations
 import polars as pl
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Type, Union
+from typing import Any, Callable, Type
 from apscheduler.triggers.cron import CronTrigger
+from sql.types import (
+    Properties,
+    SourceHttpProperties,
+    SourceWSProperties,
+)
 
 
 class ValidContext:
@@ -15,25 +20,24 @@ class ValidContext:
 
 class EvaluableContext(ValidContext):
     # Evaluable context are supposed to be run directly by the app
-    ...
+    query: str
 
 
-# --- Context definitions ---
+# ------- Context definitions -------
 class CreateContext(EvaluableContext):
     name: str
 
 
 # ---------- Table Contexts ----------
 class CreateTableContext(CreateContext):
-    name: str
-    query: str
+    properties: Properties
     lookup: bool
 
 
 @dataclass
 class CreateHTTPTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -49,10 +53,10 @@ class CreateHTTPTableContext(CreateTableContext):
 @dataclass
 class CreateWSTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceWSProperties
+    query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
-    query: str
     on_start_query: str
     lookup: bool = False
     source: bool = False
@@ -65,7 +69,7 @@ class CreateWSTableContext(CreateTableContext):
 @dataclass
 class CreateHTTPLookupTableContext(CreateTableContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     dynamic_columns: list[str]
     columns: dict[str, str]
@@ -74,14 +78,13 @@ class CreateHTTPLookupTableContext(CreateTableContext):
 
 # ---------- Source Contexts ----------
 class CreateSourceContext(CreateContext):
-    name: str
-    query: str
+    properties: Properties
 
 
 @dataclass
 class CreateHTTPSourceContext(CreateSourceContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceHttpProperties
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
@@ -96,7 +99,7 @@ class CreateHTTPSourceContext(CreateSourceContext):
 @dataclass
 class CreateWSSourceContext(CreateSourceContext):
     name: str
-    properties: dict[str, Any]
+    properties: SourceWSProperties
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     query: str
@@ -120,6 +123,8 @@ class CreateViewContext(CreateContext):
     transform_ctx: SelectContext
     materialized: bool
 
+    # executable of ws table context
+    # returns a polars dataframe
     _out_type: Type = field(default=pl.DataFrame)
 
 
@@ -129,6 +134,10 @@ class CreateSinkContext(CreateContext):
     upstreams: list[str]
     properties: dict[str, Any]
     subquery: str
+
+    # executable of ws table context
+    # returns a polars dataframe
+    _out_type: Type = field(default=pl.DataFrame)
 
 
 @dataclass
@@ -177,23 +186,3 @@ class CommandContext(EvaluableContext):
 @dataclass
 class InvalidContext:
     reason: str
-
-
-OnStartContext = CreateWSTableContext
-
-# Context part of task flow
-# TODO: change union for mixin dependencies
-ScheduledTaskContext = Union[CreateHTTPSourceContext, CreateHTTPTableContext]
-ContinousTaskContext = Union[CreateWSSourceContext, CreateWSTableContext]
-SinkTaskContext = Union[CreateSinkContext]
-TransformTaskContext = Union[CreateViewContext]
-TaskContext = Union[
-    ScheduledTaskContext,
-    ContinousTaskContext,
-    SinkTaskContext,
-    TransformTaskContext,
-    # TODO: I don't think this should be considered a TaskContext
-    # Move the lookup registration to the app._eval_ctx and make it
-    # register macro + scalar func from there
-    CreateHTTPLookupTableContext,
-]
