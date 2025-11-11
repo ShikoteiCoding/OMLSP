@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import polars as pl
 import trio
 
 from duckdb import DuckDBPyConnection
@@ -15,13 +14,14 @@ from task.types import TaskId, T
 
 DEFAULT_CAPACITY = 100
 
+
 class BaseTask(Service, Generic[T]):
     #: TaskId for now being mostly SQL artifact name
     task_id: TaskId
-    
+
     #: DuckDB Connection
     conn: DuckDBPyConnection
-    
+
     #: The executable function, core logic of the Task
     _executable: Callable[..., Any]
 
@@ -47,15 +47,18 @@ class BaseTask(Service, Generic[T]):
     async def on_start(self) -> None:
         logger.info(f"[{self.task_id}] task running")
         self._cancel_scope = trio.CancelScope()
+
         async def _task_runner():
             with self._cancel_scope:
                 await self.run()
+
         # Start the real task inside the cancel scope
         self._nursery.start_soon(_task_runner)
-        
+
     async def run(self) -> None:
         """Override in subclasses."""
         await self._executable()
+
 
 class BaseTaskSender(BaseTask[T]):
     #: Sender watchguard
@@ -84,6 +87,7 @@ class BaseTaskSender(BaseTask[T]):
         if hasattr(self, "_sender"):
             await self._sender.aclose()
         self._cancel_scope.cancel()
+
 
 class BaseTaskReceiver(BaseTask[T]):
     # Channel to receive subscribers

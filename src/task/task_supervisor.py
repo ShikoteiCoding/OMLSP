@@ -2,6 +2,7 @@ import trio
 from loguru import logger
 from task.task import BaseTask
 
+
 class TaskSupervisor:
     """Lightweight supervisor to restart failed tasks"""
 
@@ -25,7 +26,9 @@ class TaskSupervisor:
 
             except Exception as e:
                 if getattr(task, "stopped", False):
-                    logger.info(f"[{task.task_id}] dropped intentionally — not restarting")
+                    logger.info(
+                        f"[{task.task_id}] dropped intentionally — not restarting"
+                    )
                     break
                 if attempt > max_retries:
                     logger.error(f"[{task.task_id}] exceeded max retries: {e}")

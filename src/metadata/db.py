@@ -320,7 +320,12 @@ def resolve_schema(con, relation: str | SelectContext):
     return sql, schema
 
 
-def delete_metadata(conn: DuckDBPyConnection, kind: str, column: str, name,) -> None:
+def delete_metadata(
+    conn: DuckDBPyConnection,
+    kind: str,
+    column: str,
+    name,
+) -> None:
     """
     Delete a metadata entry of the given kind, name and column
     """

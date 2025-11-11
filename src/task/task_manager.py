@@ -34,8 +34,7 @@ from task.task import (
     SinkTask,
     TransformTask,
     ScheduledSourceTask,
-    ContinuousSourceTask
-
+    ContinuousSourceTask,
 )
 from task.types import TaskId
 
@@ -72,7 +71,6 @@ class TaskManager(Service):
     #: Outgoing Task context to be orchestrated
     _tasks_to_deploy: Channel[CreateContext]
     _tasks_to_cancel: Channel[DropContext]
-
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
@@ -111,7 +109,6 @@ class TaskManager(Service):
         self._nursery.start_soon(self._process)
         self._nursery.start_soon(self._drop)
 
-
     async def on_stop(self):
         """Close channel."""
         await self._scheduled_executables.aclose()
@@ -124,7 +121,7 @@ class TaskManager(Service):
     async def _drop(self):
         async for ctx in self._tasks_to_cancel:
             if isinstance(ctx, DropContext):
-                await self._handle_drop(ctx)           
+                await self._handle_drop(ctx)
 
     async def _handle_drop(self, ctx: DropContext):
         name = ctx.name

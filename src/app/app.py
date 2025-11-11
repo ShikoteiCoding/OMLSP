@@ -65,7 +65,6 @@ class App(Service):
         self._tasks_to_deploy = Channel[CreateContext](100)
         self._tasks_to_cancel = Channel[DropContext](100)
 
-
     def connect_client_manager(self, client_manager: ClientManager) -> None:
         """
         Connect App and ClientManager through Channels.
