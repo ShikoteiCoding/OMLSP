@@ -170,7 +170,7 @@ class ShowContext(EvaluableContext):
 
 
 @dataclass
-class DropContext(EvaluableContext):
+class DropContext(ValidContext):
     drop_type: str
     metadata: str
     metadata_column: str

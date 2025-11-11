@@ -4,36 +4,34 @@ import polars as pl
 import trio
 
 from duckdb import DuckDBPyConnection
-from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
+from typing import Any, AsyncGenerator, Callable, Coroutine, Generic
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from services import Service
 
 from channel import Channel
 
-TaskOutput: TypeAlias = Any
-TaskId = str
+from task.types import TaskId, T
+
 DEFAULT_CAPACITY = 100
 
-T = TypeVar("T")
-
-
 class BaseTask(Service, Generic[T]):
-    """Common base for all tasks."""
-
     #: TaskId for now being mostly SQL artifact name
     task_id: TaskId
-
+    
     #: DuckDB Connection
     conn: DuckDBPyConnection
-
+    
     #: The executable function, core logic of the Task
     _executable: Callable[..., Any]
 
     #: Cancel scope for structured concurrency
     _cancel_scope: trio.CancelScope
-    _sender: Channel
+    _sender: Channel[T]
     _cancel_event: trio.Event
+
+    #: flag
+    stopped: bool = False
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(name=task_id)
@@ -41,47 +39,27 @@ class BaseTask(Service, Generic[T]):
         self.conn = conn
         self._cancel_event = trio.Event()
 
-    async def on_start(self) -> None:
-        logger.info(f"[{self.task_id}] task running")
-
-        self._cancel_scope = trio.CancelScope()
-
-        async def _task_runner():
-            with self._cancel_scope:
-                await self.run()
-
-        # Start the real task inside the cancel scope
-        self._nursery.start_soon(_task_runner)
-
-    async def on_stop(self) -> None:
-        logger.info(f"[{self.task_id}] task stopping")
-        self._cancel_scope.cancel()
-
-    async def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
+    async def register(self, executable: Callable[..., Any]) -> BaseTask:
         """Attach the executable coroutine or function to this task."""
         self._executable = executable
         return self
 
+    async def on_start(self) -> None:
+        logger.info(f"[{self.task_id}] task running")
+        self._cancel_scope = trio.CancelScope()
+        async def _task_runner():
+            with self._cancel_scope:
+                await self.run()
+        # Start the real task inside the cancel scope
+        self._nursery.start_soon(_task_runner)
+        
     async def run(self) -> None:
         """Override in subclasses."""
         await self._executable()
 
-
-class BaseSourceTask(BaseTask, Generic[T]):
-    """
-    BaseSourceTask implementation of :class:`BaseTask`.
-
-    A SourceTask does produces data and send it through _sender channel.
-    """
-
-    #: Sender channel, where data is sent after _executable()
-    _sender: Channel[T]
-
+class BaseTaskSender(BaseTask[T]):
     #: Sender watchguard
     _has_sender: bool = False
-
-    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
-        super().__init__(task_id, conn)
 
     def get_sender(self) -> Channel[T]:
         """
@@ -99,14 +77,29 @@ class BaseSourceTask(BaseTask, Generic[T]):
         return self._sender
 
     async def on_stop(self) -> None:
+        if self.stopped:
+            return
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_event.set()
         if hasattr(self, "_sender"):
             await self._sender.aclose()
         self._cancel_scope.cancel()
 
+class BaseTaskReceiver(BaseTask[T]):
+    # Channel to receive subscribers
+    _receivers: list[Channel[T]]
 
-class ScheduledSourceTask(BaseSourceTask, Generic[T]):
+    async def on_stop(self) -> None:
+        if self.stopped:
+            return
+        logger.info(f"[{self.task_id}] task stopping")
+        self._cancel_scope.cancel()
+
+    def subscribe(self, recv: Channel):
+        self._receivers.append(recv.clone())
+
+
+class ScheduledSourceTask(BaseTaskSender, Generic[T]):
     def __init__(
         self,
         task_id: TaskId,
@@ -146,7 +139,7 @@ class ScheduledSourceTask(BaseSourceTask, Generic[T]):
                 await self._sender.send(result)
 
 
-class ContinuousSourceTask(BaseSourceTask, Generic[T]):
+class ContinuousSourceTask(BaseTaskSender, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection, nursery: trio.Nursery):
         super().__init__(task_id, conn)
         self.nursery = nursery
@@ -172,25 +165,10 @@ class ContinuousSourceTask(BaseSourceTask, Generic[T]):
                 await self._sender.send(result)
 
 
-class SinkTask(BaseSourceTask, Generic[T]):
-    _receivers: list[Channel[T]]
-
+class SinkTask(BaseTaskReceiver, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
-
-    def register(
-        self,
-        executable: Callable[
-            [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, T]
-        ],
-    ) -> SinkTask[T]:
-        self._executable = executable
-        return self
-
-    # TODO: move towards SinkBaseTask
-    def subscribe(self, recv: Channel):
-        self._receivers.append(recv.clone())
 
     async def run(self):
         # TODO: receive many upstreams
@@ -200,25 +178,11 @@ class SinkTask(BaseSourceTask, Generic[T]):
             # await self._executable(self.task_id, self._conn, df)
 
 
-class TransformTask(BaseSourceTask, Generic[T]):
-    _sender: Channel[T]
-    _receivers: list[Channel[T]]
-    _executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]]
-
+class TransformTask(BaseTaskSender, BaseTaskReceiver, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
         self._receivers: list[Channel[T]] = []
         self._sender = Channel[T](DEFAULT_CAPACITY)
-
-    def register(
-        self,
-        executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]],
-    ) -> TransformTask[T]:
-        self._executable = executable
-        return self
-
-    def subscribe(self, recv: Channel):
-        self._receivers.append(recv.clone())
 
     async def run(self):
         receiver = self._receivers[0]

@@ -741,8 +741,9 @@ def extract_drop_statement(statement: exp.Drop) -> DropContext:
         drop_type = "SOURCE"
 
     name = sql.replace(";", "").split()[-1]
+    user_query = sql.replace(drop_type, "TABLE")
 
-    return DropContext(drop_type=drop_type, metadata=metadata, metadata_column=metadata_column, name=name, user_query= sql)
+    return DropContext(drop_type=drop_type, metadata=metadata, metadata_column=metadata_column, name=name, user_query=user_query)
 
 
 def extract_command_context(

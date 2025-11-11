@@ -29,19 +29,21 @@ from engine.engine import (
 from metadata import delete_metadata
 
 from task.task import (
-    TaskId,
-    BaseSourceTask,
+    BaseTask,
+    BaseTaskSender,
     SinkTask,
     TransformTask,
     ScheduledSourceTask,
     ContinuousSourceTask
 
 )
+from task.types import TaskId
+
 from task.task_supervisor import TaskSupervisor
 
 from services import Service
 
-from typing import Callable
+from typing import Callable, Any
 
 from loguru import logger
 
@@ -61,10 +63,11 @@ class TaskManager(Service):
 
     #: Reference to all sources by task id
     #: TODO: to deprecate for below mapping
-    _sources: dict[TaskId, BaseSourceTask] = {}
+    _sources: dict[TaskId, BaseTaskSender] = {}
+    _sinks: dict[TaskId, Any] = {}
 
     #: Reference to all tasks by task id
-    _task_id_to_task: dict[TaskId, BaseSourceTask] = {}
+    _task_id_to_task: dict[TaskId, BaseTask] = {}
 
     #: Outgoing Task context to be orchestrated
     _tasks_to_deploy: Channel[CreateContext]
@@ -106,6 +109,8 @@ class TaskManager(Service):
         # TODO: change to inheritance later
         self.supervisor = TaskSupervisor(self._nursery)
         self._nursery.start_soon(self._process)
+        self._nursery.start_soon(self._drop)
+
 
     async def on_stop(self):
         """Close channel."""
@@ -115,24 +120,21 @@ class TaskManager(Service):
         async for ctx in self._tasks_to_deploy:
             if isinstance(ctx, CreateContext):
                 await self._register_one_task(ctx)
-            elif isinstance(ctx, DropContext):
-                await self._handle_drop(ctx)
+
+    async def _drop(self):
+        async for ctx in self._tasks_to_cancel:
+            if isinstance(ctx, DropContext):
+                await self._handle_drop(ctx)           
 
     async def _handle_drop(self, ctx: DropContext):
         name = ctx.name
         # Stop task if running
         task = self._task_id_to_task.get(name)
-        stopped = False
         if task:
-            try:
-                await task.on_stop()
-                stopped = True
-            except Exception as e:
-                logger.warning(f"[TaskManager] Failed to stop task '{name}': {e}")
-
-        if stopped is True:
-            self.backend_conn.sql(ctx.user_query)
-            delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
+            await task.on_stop()
+            task.stopped = True
+        self.backend_conn.sql(ctx.user_query)
+        delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
 
     async def _register_one_task(self, ctx: CreateContext) -> None:
         task_id = ctx.name
@@ -144,7 +146,7 @@ class TaskManager(Service):
             task = SinkTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
-            self._task_id_to_task[task_id] = task.register(
+            self._sinks[task_id] = task.register(
                 build_sink_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(self.supervisor.supervise, task)
@@ -156,7 +158,7 @@ class TaskManager(Service):
             task = ScheduledSourceTask[ctx._out_type](
                 task_id, self.backend_conn, self._scheduled_executables, ctx.trigger
             )
-            self._task_id_to_task[task_id] = task.register(
+            self._sources[task_id] = task.register(
                 build_scheduled_source_executable(ctx)
             )
 
@@ -178,7 +180,7 @@ class TaskManager(Service):
             # design idea, make the continuous source executable return
             # on_start func and on_run func. on_start will have "waiters"
             # and timeout logic
-            self._task_id_to_task[task_id] = task.register(
+            self._sources[task_id] = task.register(
                 build_continuous_source_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(self.supervisor.supervise, task)
@@ -196,11 +198,12 @@ class TaskManager(Service):
             for name in ctx.upstreams:
                 task.subscribe(self._sources[name].get_sender())
 
-            self._task_id_to_task[task_id] = task.register(
+            self._sinks[task_id] = task.register(
                 build_transform_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(self.supervisor.supervise, task)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")
 
         if task is not None:
+            self._task_id_to_task[task_id] = task
             self.add_dependency(task)
