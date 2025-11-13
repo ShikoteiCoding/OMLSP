@@ -1,6 +1,7 @@
 from typing import Literal, Protocol
 from dataclasses import dataclass
 
+
 type HttpMethod = Literal["GET", "POST"]
 type SourceConnectorName = Literal["http", "lookup-http", "ws"]
 
@@ -31,6 +32,7 @@ class SourceHttpProperties(Properties):
     url: str
     method: HttpMethod
     jq: JQ
+    signer_class: str
 
     # TODO: type those properties
     pagination: dict

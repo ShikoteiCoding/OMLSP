@@ -10,7 +10,7 @@ __all__ = ["BaseSignerT"]
 
 class SecretsHandlerT(abc.ABC):
     @abc.abstractmethod
-    def add(self):
+    def _add(self):
         pass
 
     @abc.abstractmethod

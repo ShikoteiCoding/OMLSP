@@ -12,7 +12,7 @@ from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
-from typing import Any, AsyncGenerator, Callable, Coroutine, Iterable, Type
+from typing import Any, AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Type
 
 from duckdb import struct_type
 from loguru import logger
@@ -102,6 +102,7 @@ def substitute_http_properties(
         url=Template(properties.url).substitute(context),
         method=properties.method,
         jq=properties.jq,
+        signer_class=properties.signer_class,
         pagination=properties.pagination,
         headers=properties.headers,
         json=properties.json,
@@ -308,7 +309,7 @@ async def http_source_executable(
     column_types: dict[str, str],
     dynamic_columns: dict[str, Callable],
     is_source: bool,
-    http_requester_func: Callable,
+    http_requester_func: Callable[[DuckDBPyConnection], Awaitable[list[dict]]],
 ) -> pl.DataFrame:
     # Create generated column context (to be applied upon at exec time)
     # Some SQL functions in generated columns might use or not use this context
