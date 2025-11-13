@@ -15,6 +15,9 @@ class TaskSupervisor:
         attempt = 1
 
         while True:
+            if getattr(task, "stopped", False):
+                logger.info(f"[{task.task_id}] dropped intentionally — not restarting")
+                break
             try:
                 async with trio.open_nursery() as n:
                     task._nursery = n  # rebind nursery each cycle

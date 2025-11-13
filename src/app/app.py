@@ -7,6 +7,7 @@ from context.context import (
     EvaluableContext,
     InvalidContext,
     CreateWSTableContext,
+    DropContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from metadata import (
@@ -45,6 +46,8 @@ class App(Service):
     #: Outgoing Task context to be orchestrated by TaskManager
     _tasks_to_deploy: Channel[CreateContext]
 
+    _tasks_to_cancel: Channel[DropContext]
+
     def __init__(
         self,
         conn: DuckDBPyConnection,
@@ -60,6 +63,7 @@ class App(Service):
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
         self._tasks_to_deploy = Channel[CreateContext](100)
+        self._tasks_to_cancel = Channel[DropContext](100)
 
     def connect_client_manager(self, client_manager: ClientManager) -> None:
         """
@@ -84,6 +88,7 @@ class App(Service):
         See channel.py for Channel implementation.
         """
         task_manager.add_taskctx_channel(self._tasks_to_deploy)
+        task_manager.add_task_cancel_channel(self._tasks_to_cancel)
 
     async def on_start(self):
         """
@@ -122,6 +127,8 @@ class App(Service):
         async for client_id, sql in self._sql_to_eval:
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
+            print(ctx)
+            print(type(ctx))
 
             # Handle context with on_start eval conditions
             if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query != "":
@@ -155,6 +162,10 @@ class App(Service):
             # Dispatch TaskContext to task manager
             if isinstance(ctx, CreateContext):
                 await self._tasks_to_deploy.send(ctx)
+
+            # Dispatch DropContext to task manager
+            if isinstance(ctx, DropContext):
+                await self._tasks_to_cancel.send(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return

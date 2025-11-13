@@ -71,6 +71,7 @@ class OmlspDialect(Dialect):
             "MATERIALIZED VIEWS": _show_parser("MATERIALIZED VIEWS"),
             "SECRETS": _show_parser("SECRETS"),
             "SINKS": _show_parser("SINKS"),
+            "SOURCES": _show_parser("SOURCES"),
         }
 
         STATEMENT_PARSERS = {

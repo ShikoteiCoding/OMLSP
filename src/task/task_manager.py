@@ -16,6 +16,7 @@ from context.context import (
     CreateViewContext,
     CreateWSSourceContext,
     CreateWSTableContext,
+    DropContext,
 )
 from engine.engine import (
     build_lookup_table_prehook,
@@ -25,20 +26,23 @@ from engine.engine import (
     build_transform_executable,
 )
 
+from metadata import delete_metadata
+
 from task.task import (
-    TaskId,
     BaseTask,
-    BaseSourceTask,
-    ContinuousSourceTask,
-    ScheduledSourceTask,
+    BaseTaskSender,
     SinkTask,
     TransformTask,
+    ScheduledSourceTask,
+    ContinuousSourceTask,
 )
+from task.types import TaskId
+
 from task.task_supervisor import TaskSupervisor
 
 from services import Service
 
-from typing import Callable
+from typing import Callable, Any
 
 from loguru import logger
 
@@ -58,13 +62,15 @@ class TaskManager(Service):
 
     #: Reference to all sources by task id
     #: TODO: to deprecate for below mapping
-    _sources: dict[TaskId, BaseSourceTask] = {}
+    _sources: dict[TaskId, BaseTaskSender] = {}
+    _sinks: dict[TaskId, Any] = {}
 
     #: Reference to all tasks by task id
     _task_id_to_task: dict[TaskId, BaseTask] = {}
 
     #: Outgoing Task context to be orchestrated
     _tasks_to_deploy: Channel[CreateContext]
+    _tasks_to_cancel: Channel[DropContext]
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
@@ -82,6 +88,9 @@ class TaskManager(Service):
     def add_taskctx_channel(self, channel: Channel[CreateContext]):
         self._tasks_to_deploy = channel
 
+    def add_task_cancel_channel(self, channel: Channel[DropContext]):
+        self._tasks_to_cancel = channel
+
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
         """
         Connect TaskManager and Scheduler through one Channel.
@@ -98,14 +107,38 @@ class TaskManager(Service):
         # TODO: change to inheritance later
         self.supervisor = TaskSupervisor(self._nursery)
         self._nursery.start_soon(self._process)
+        self._nursery.start_soon(self._drop)
 
     async def on_stop(self):
         """Close channel."""
         await self._scheduled_executables.aclose()
 
     async def _process(self):
-        async for taskctx in self._tasks_to_deploy:
-            await self._register_one_task(taskctx)
+        async for ctx in self._tasks_to_deploy:
+            if isinstance(ctx, CreateContext):
+                await self._register_one_task(ctx)
+
+    async def _drop(self):
+        async for ctx in self._tasks_to_cancel:
+            if isinstance(ctx, DropContext):
+                await self._handle_drop(ctx)
+
+    async def _handle_drop(self, ctx: DropContext):
+        name = ctx.name
+        # Stop task if running
+        task = self._task_id_to_task.get(name)
+        if task:
+            # Stop dependents first
+            for dep_id in list(task._dependents):
+                dep_task = self._task_id_to_task.get(dep_id)
+                if dep_task:
+                    dep_task.stopped = True
+                    await dep_task.on_stop()
+            task.stopped = True
+            await task.on_stop()
+
+        self.backend_conn.sql(ctx.user_query)
+        delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
 
     async def _register_one_task(self, ctx: CreateContext) -> None:
         task_id = ctx.name
@@ -116,8 +149,8 @@ class TaskManager(Service):
             # TODO: subscribe to many upstreams
             task = SinkTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
-                task.subscribe(self._sources[name].get_sender())
-            self._task_id_to_task[task_id] = task.register(
+                task.subscribe(self._sources[name])
+            self._sinks[task_id] = task.register(
                 build_sink_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(self.supervisor.supervise, task)
@@ -167,13 +200,14 @@ class TaskManager(Service):
         elif isinstance(ctx, CreateViewContext):
             task = TransformTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
-                task.subscribe(self._sources[name].get_sender())
+                task.subscribe(self._sources[name])
 
-            self._task_id_to_task[task_id] = task.register(
+            self._sinks[task_id] = task.register(
                 build_transform_executable(ctx, self.backend_conn)
             )
             self._nursery.start_soon(self.supervisor.supervise, task)
             logger.success(f"[TaskManager] registered transform task '{task_id}'")
 
         if task is not None:
+            self._task_id_to_task[task_id] = task
             self.add_dependency(task)

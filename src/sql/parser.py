@@ -27,12 +27,14 @@ from context.context import (
     SelectContext,
     SetContext,
     ShowContext,
+    DropContext,
 )
 from metadata.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
     METADATA_SINK_TABLE_NAME,
     METADATA_SECRET_TABLE_NAME,
+    METADATA_SOURCE_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
 from sql.types import (
@@ -702,7 +704,52 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
     elif "SINKS" in sql:
         query += METADATA_SINK_TABLE_NAME
 
+    elif "SOURCES" in sql:
+        query += METADATA_SOURCE_TABLE_NAME
+
     return ShowContext(user_query=sql, query=query)
+
+
+def extract_drop_statement(statement: exp.Drop) -> DropContext:
+    sql = statement.sql(dialect=OmlspDialect)
+    drop_type = ""
+    metadata = ""
+    metadata_column = ""
+    if "TABLE" in sql:
+        metadata = METADATA_TABLE_TABLE_NAME
+        metadata_column = "table_name"
+        drop_type = "TABLE"
+
+    elif "VIEW" in sql:
+        metadata += METADATA_VIEW_TABLE_NAME
+        metadata_column = "view_name"
+        drop_type = "VIEW"
+
+    elif "SECRET" in sql:
+        metadata += METADATA_SECRET_TABLE_NAME
+        metadata_column = "secret_name"
+        drop_type = "SECRET"
+
+    elif "SINK" in sql:
+        metadata += METADATA_SINK_TABLE_NAME
+        metadata_column = "sink_name"
+        drop_type = "SINK"
+
+    elif "SOURCE" in sql:
+        metadata += METADATA_SOURCE_TABLE_NAME
+        metadata_column = "source_name"
+        drop_type = "SOURCE"
+
+    name = sql.replace(";", "").split()[-1]
+    user_query = sql.replace(drop_type, "TABLE")
+
+    return DropContext(
+        drop_type=drop_type,
+        metadata=metadata,
+        metadata_column=metadata_column,
+        name=name,
+        user_query=user_query,
+    )
 
 
 def extract_command_context(
@@ -741,6 +788,9 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.Show):
         return extract_show_statement(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.Drop):
+        return extract_drop_statement(parsed_statement)
 
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
