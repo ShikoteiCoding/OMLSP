@@ -315,7 +315,7 @@ def build_create_http_properties(properties: dict[str, str]) -> SourceHttpProper
     return SourceHttpProperties(
         url=str(unnested_properties["url"]),
         method=cast(HttpMethod, unnested_properties["method"]),
-        # schedule = str(unnested_properties["schedule"]),
+        signer_class=str(unnested_properties.get("signer_class", "")),
         jq=cast(JQ, jqm.compile(unnested_properties["jq"])),
         pagination=cast(dict, unnested_properties.get("pagination", {})),
         headers=cast(dict, unnested_properties.get("headers", {})),

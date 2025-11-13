@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import re
+
 from duckdb import DuckDBPyConnection
-from typing import Any, Type
+from typing import Any
 
-from _types._types import BaseSignerT, SecretsHandlerT
+from auth.types import SecretsHandlerT
 from metadata import get_secret_value_by_name
-
-__all__ = ["NoSigner", "HMACSHA256", "OAuth2", "AUTH_DISPATCHER"]
 
 
 class SecretsHandler(SecretsHandlerT):
@@ -17,7 +17,7 @@ class SecretsHandler(SecretsHandlerT):
     """
 
     #: List of headers key to render
-    paths: list[tuple[str, str]]
+    paths: list[tuple[str, str]] = []
 
     #: If the secrets handler is already rendered
     is_rendered: bool = False
@@ -26,10 +26,23 @@ class SecretsHandler(SecretsHandlerT):
     #: TODO: carry cache to all metadata functions with TTL
     cache: dict[str, str] = {}
 
-    def __init__(self):
-        self.paths: list[tuple[str, str]] = []
+    @classmethod
+    def init(cls, headers: dict[str, str]) -> SecretsHandler:
+        new = cls.__new__(cls)
+        pattern = re.compile(r"^SECRET\s+(.+)$")
 
-    def add(self, header_subkey: str, secret_name: str):
+        # NOTE: For now we assume the secret exists and is
+        # valid and has not been removed in-between. Which
+        # also means this headers parsing could be moved
+        # elsewhere instead
+        for key, value in headers.items():
+            if match := re.match(pattern, value.strip()):
+                if match:
+                    new._add(key, str(match.group(1)))
+
+        return new
+
+    def _add(self, header_subkey: str, secret_name: str):
         self.paths.append((header_subkey, secret_name))
 
     def render(self, conn: DuckDBPyConnection, request_kwargs: dict[str, Any]):
@@ -48,36 +61,3 @@ class SecretsHandler(SecretsHandlerT):
         for header_key, secret_name in self.paths:
             request_kwargs["headers"][header_key] = self.cache[header_key]
         return request_kwargs
-
-
-class NoSigner(BaseSignerT):
-    def __init__(self, secret_handler: SecretsHandlerT):
-        super().__init__(secret_handler)
-
-    def sign(
-        self, conn: DuckDBPyConnection, request_kwargs: dict[str, Any]
-    ) -> dict[str, Any]:
-        return self.secret_handler.render(conn, request_kwargs)
-
-
-class HMACSHA256(BaseSignerT):
-    # TODO: implement HMAC-SHA256 signing
-
-    def __init__(self): ...
-
-    def sign(self, request_kwargs: dict[str, Any]) -> dict[str, Any]: ...
-
-
-class OAuth2(BaseSignerT):
-    # TODO: implement OAuth2 signing
-
-    def __init__(self): ...
-
-    def sign(self, request_kwargs: dict[str, Any]) -> dict[str, Any]: ...
-
-
-AUTH_DISPATCHER: dict[str, Type[BaseSignerT]] = {
-    "NoSigner": NoSigner,
-    "HMACSHA256": HMACSHA256,
-    "OAuth2": OAuth2,
-}

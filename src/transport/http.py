@@ -6,7 +6,7 @@ import time
 from duckdb import DuckDBPyConnection
 from typing import Any
 
-from auth import AUTH_DISPATCHER, BaseSignerT, SecretsHandler
+from auth.types import BaseSignerT
 from transport.utils import jq_dict
 from transport.pagination import BasePagination
 from loguru import logger
@@ -17,9 +17,9 @@ from sql.types import SourceHttpProperties, JQ
 MAX_RETRIES = 5
 
 
-def parse_http_properties(
+def extract_http_properties(
     properties: SourceHttpProperties,
-) -> tuple[JQ, BaseSignerT, dict[str, Any], dict[str, Any]]:
+) -> tuple[JQ, dict[str, Any], dict[str, Any]]:
     """Parse property dict provided by context and get required http parameters."""
     # Build kwargs dict compatible with both httpx or requests
     # leverage dict update to avoid empty values
@@ -28,26 +28,15 @@ def parse_http_properties(
             "url": properties.url,
             "method": properties.method,
         }
-        | {"headers": properties.headers}
-        if properties.headers
-        else {} | {"json": properties.json}
-        if properties.json
-        else {} | {"params": properties.params}
-        if properties.params
-        else {}
-    )
-    meta_kwargs = {"type": "no-pagination"}
-
-    # TODO: Move this the same way as Pagination in the
-    # TransportBuilder layer -> We should align dynamic
-    # dispatched instanciation.
-    # Restore signer class in http params
-    secrets_handler = SecretsHandler()
-    signer_class = AUTH_DISPATCHER[requests_kwargs.get("signer_class", "NoSigner")](
-        secrets_handler
+        | ({"headers": properties.headers} if properties.headers else {})
+        | ({"json": properties.json} if properties.json else {})
+        | ({"params": properties.params} if properties.params else {})
     )
 
-    return properties.jq, signer_class, requests_kwargs, meta_kwargs
+    # Handle pagination parameters
+    pagination_kwargs = {"type": "no-pagination"} | properties.pagination
+
+    return properties.jq, requests_kwargs, pagination_kwargs
 
 
 async def async_request(
@@ -101,7 +90,7 @@ def sync_request(
 
 async def async_http_requester(
     jq,
-    base_signer: BaseSignerT,
+    signer: BaseSignerT,
     request_kwargs: dict[str, Any],
     pagination_strategy: BasePagination,
     conn: DuckDBPyConnection,
@@ -109,8 +98,7 @@ async def async_http_requester(
     async with httpx.AsyncClient() as client:
         logger.debug(f"running async request with {request_kwargs}")
         results, cursor = [], None
-        base_params = request_kwargs.get("params", {}).copy()
-        limit = int(base_params.get("limit", 100))
+        base_params: dict = request_kwargs.get("params", {}).copy()
 
         while True:
             params = pagination_strategy.update_params(cursor, base_params.copy())
@@ -118,7 +106,7 @@ async def async_http_requester(
             if req["params"] == {}:
                 req.pop("params")
 
-            response = await async_request(client, base_signer, req, conn)
+            response = await async_request(client, signer, req, conn)
             if not response:
                 break
 
@@ -127,15 +115,13 @@ async def async_http_requester(
                 break
 
             results.extend(batch)
-            if len(batch) < limit:
+            if len(batch) == 0:
                 break
 
             if pagination_strategy.has_cursor():
                 cursor = pagination_strategy.extract_next_cursor(batch, response)
                 if cursor is None:
                     break
-            else:
-                break
 
         return results
 

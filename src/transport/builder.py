@@ -14,15 +14,18 @@ from typing import (
     TypedDict,
 )
 
-from auth import BaseSignerT
+from auth.secret_handler import SecretsHandler
+from auth.signer import AUTH_DISPATCHER, NoSigner
+from auth.types import BaseSignerT
 from transport.http import (
-    parse_http_properties,
+    extract_http_properties,
     async_http_requester,
     sync_http_requester,
 )
 from transport.pagination import BasePagination, PAGINATION_DISPATCH
 from transport.ws import parse_ws_properties, ws_generator_aggregator
 from sql.types import Properties, SourceHttpProperties, SourceWSProperties, JQ
+
 
 type TransportMode = Literal["sync", "async"]
 
@@ -108,17 +111,23 @@ class HttpTransport(Transport):
 
         self.mode = config["mode"]
 
+        # Cast properties
+        self.properties = cast(SourceHttpProperties, self.properties)
+
     def configure(self) -> HttpTransport:
-        jq, signer, request_kwargs, meta_kwargs = parse_http_properties(
-            cast(SourceHttpProperties, self.properties)
+        # Configure SecretsHandler
+        self.signer = AUTH_DISPATCHER.get(self.properties.signer_class, NoSigner)(
+            SecretsHandler.init(self.properties.headers)
         )
+
+        # Initialize http specific
+        jq, request_kwargs, pagination_kwargs = extract_http_properties(self.properties)
         self.jq = jq
-        self.signer = signer
         self.request_kwargs = request_kwargs
 
         # Pagination strategy get pre-compiled as a callable
-        pagination_type = meta_kwargs.pop("type")
-        self.strategy = PAGINATION_DISPATCH[pagination_type](meta_kwargs)
+        pagination_type = pagination_kwargs.pop("type")
+        self.strategy = PAGINATION_DISPATCH[pagination_type](pagination_kwargs)
         return self
 
     def finalize(
