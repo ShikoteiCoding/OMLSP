@@ -128,8 +128,15 @@ class TaskManager(Service):
         # Stop task if running
         task = self._task_id_to_task.get(name)
         if task:
-            await task.on_stop()
+            # Stop dependents first
+            for dep_id in list(task._dependents):
+                dep_task = self._task_id_to_task.get(dep_id)
+                if dep_task:
+                    dep_task.stopped = True
+                    await dep_task.on_stop()
             task.stopped = True
+            await task.on_stop()
+
         self.backend_conn.sql(ctx.user_query)
         delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
 
@@ -142,7 +149,7 @@ class TaskManager(Service):
             # TODO: subscribe to many upstreams
             task = SinkTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
-                task.subscribe(self._sources[name].get_sender())
+                task.subscribe(self._sources[name])
             self._sinks[task_id] = task.register(
                 build_sink_executable(ctx, self.backend_conn)
             )
@@ -193,7 +200,7 @@ class TaskManager(Service):
         elif isinstance(ctx, CreateViewContext):
             task = TransformTask[ctx._out_type](task_id, self.transform_conn)
             for name in ctx.upstreams:
-                task.subscribe(self._sources[name].get_sender())
+                task.subscribe(self._sources[name])
 
             self._sinks[task_id] = task.register(
                 build_transform_executable(ctx, self.backend_conn)

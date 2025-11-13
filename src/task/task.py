@@ -33,13 +33,18 @@ class BaseTask(Service, Generic[T]):
     #: flag
     stopped: bool = False
 
+    _subscribed_to: set[TaskId]  # upstreams
+    _dependents: set[TaskId]  # downstreams
+
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(name=task_id)
         self.task_id = task_id
         self.conn = conn
         self._cancel_event = trio.Event()
+        self._subscribed_to = set()  # upstreams
+        self._dependents = set()  # downstreams
 
-    async def register(self, executable: Callable[..., Any]) -> BaseTask:
+    def register(self, executable: Callable[..., Any]) -> BaseTask:
         """Attach the executable coroutine or function to this task."""
         self._executable = executable
         return self
@@ -99,8 +104,10 @@ class BaseTaskReceiver(BaseTask[T]):
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_scope.cancel()
 
-    def subscribe(self, recv: Channel):
-        self._receivers.append(recv.clone())
+    def subscribe(self, sender: "BaseTaskSender"):
+        self._receivers.append(sender.get_sender().clone())
+        self._subscribed_to.add(sender.task_id)
+        sender._dependents.add(self.task_id)
 
 
 class ScheduledSourceTask(BaseTaskSender, Generic[T]):
