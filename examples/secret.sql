@@ -16,5 +16,5 @@ WITH (
     schedule = '*/1 * * * *',
     jq = '.data.ticker[:2][] | {symbol, symbolName, buy, sell}',
     'headers.Content-Type' = 'application/json',
-    'headers.X-API-Key' = 'SECRET kucoin_api_key' 
+    'headers.X-API-Key' = 'SECRET kucoin_api_key'
 );
