@@ -114,13 +114,18 @@ async def async_http_requester(
             if not batch:
                 break
 
-            results.extend(batch)
+            # Condition to exit Page Based Pagination
             if len(batch) == 0:
                 break
 
-            if pagination_strategy.has_cursor():
-                cursor = pagination_strategy.extract_next_cursor(batch, response)
-                if cursor is None:
+            else:
+                results.extend(batch)
+
+                # Condition to continue as Cursor Based Pagination or exit
+                if (
+                    cursor := pagination_strategy.extract_next_cursor(batch, response)
+                    is None
+                ):
                     break
 
         return results
@@ -137,7 +142,6 @@ def sync_http_requester(
         logger.debug(f"running sync request with {request_kwargs}")
         results, cursor = [], None
         base_params = request_kwargs.get("params", {}).copy()
-        limit = int(base_params.get("limit", 100))
 
         while True:
             params = pagination_strategy.update_params(cursor, base_params.copy())
@@ -153,13 +157,18 @@ def sync_http_requester(
             if not batch:
                 break
 
-            results.extend(batch)
-            if len(batch) < limit:
+            # Condition to exit Page Based Pagination
+            if len(batch) == 0:
                 break
 
-            if pagination_strategy.has_cursor():
-                cursor = pagination_strategy.extract_next_cursor(batch, response)
-                if cursor is None:
+            else:
+                results.extend(batch)
+
+                # Condition to continue as Cursor Based Pagination or exit
+                if (
+                    cursor := pagination_strategy.extract_next_cursor(batch, response)
+                    is None
+                ):
                     break
 
         return results
