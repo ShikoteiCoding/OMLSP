@@ -5,8 +5,8 @@ from functools import partial
 from string import Template
 from typing import (
     Any,
+    Awaitable,
     Callable,
-    Coroutine,
     AsyncGenerator,
     Literal,
     cast,
@@ -132,7 +132,7 @@ class HttpTransport(Transport):
 
     def finalize(
         self,
-    ) -> Callable[[Any], list[dict]] | Callable[[Any], Coroutine[Any, Any, list[dict]]]:
+    ) -> Callable[[Any], list[dict]] | Callable[[Any], Awaitable[list[dict]]]:
         if self.mode == "async":
 
             async def async_requester(conn):

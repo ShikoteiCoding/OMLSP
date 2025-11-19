@@ -4,14 +4,13 @@ import polars as pl
 import trio
 
 from duckdb import DuckDBPyConnection
-from typing import Any, AsyncGenerator, Callable, TypeAlias, Coroutine, TypeVar, Generic
+from typing import AsyncGenerator, Awaitable, Callable, TypeVar, Generic
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from services import Service
 
 from channel import Channel
 
-TaskOutput: TypeAlias = Any
 TaskId = str
 DEFAULT_CAPACITY = 100
 
@@ -28,7 +27,7 @@ class BaseTask(Service, Generic[T]):
     conn: DuckDBPyConnection
 
     #: The executable function, core logic of the Task
-    _executable: Callable[..., Any]
+    _executable: Callable[..., Awaitable]
 
     #: Cancel scope for structured concurrency
     _cancel_scope: trio.CancelScope
@@ -55,8 +54,8 @@ class BaseTask(Service, Generic[T]):
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_scope.cancel()
 
-    async def register(self, executable: Callable[..., Any]) -> BaseTask[T]:
-        """Attach the executable coroutine or function to this task."""
+    async def register(self, executable: Callable[..., Awaitable]) -> BaseTask[T]:
+        """Attach the executable awaitable or function to this task."""
         self._executable = executable
         return self
 
@@ -109,7 +108,7 @@ class ScheduledSourceTask(BaseSourceTask, Generic[T]):
         self,
         task_id: TaskId,
         conn: DuckDBPyConnection,
-        scheduled_executables: Channel[Callable | tuple[Callable, Any]],
+        scheduled_executables: Channel[tuple[Callable, CronTrigger]],
         trigger: CronTrigger,
     ):
         super().__init__(task_id, conn)
@@ -131,7 +130,7 @@ class ScheduledSourceTask(BaseSourceTask, Generic[T]):
         self._nursery.start_soon(_task_runner)
 
     def register(
-        self, executable: Callable[[TaskId, DuckDBPyConnection], Coroutine[Any, Any, T]]
+        self, executable: Callable[[TaskId, DuckDBPyConnection], Awaitable[T]]
     ) -> ScheduledSourceTask[T]:
         self._executable = executable
         return self
@@ -153,14 +152,14 @@ class ContinuousSourceTask(BaseSourceTask, Generic[T]):
         self,
         executable: Callable[
             [str, DuckDBPyConnection, trio.Nursery, trio.Event],
-            AsyncGenerator[Any, T],
+            AsyncGenerator[T, None],
         ],
     ) -> ContinuousSourceTask[T]:
-        self._executable = executable
+        self._executable = executable  # type: ignore
         return self
 
     async def run(self):
-        async for result in self._executable(
+        async for result in self._executable(  # type: ignore
             task_id=self.task_id,
             conn=self.conn,
             nursery=self.nursery,
@@ -179,9 +178,7 @@ class SinkTask(BaseTask, Generic[T]):
 
     def register(
         self,
-        executable: Callable[
-            [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, T]
-        ],
+        executable: Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[None]],
     ) -> SinkTask[T]:
         self._executable = executable
         return self
@@ -201,7 +198,7 @@ class SinkTask(BaseTask, Generic[T]):
 class TransformTask(BaseSourceTask, Generic[T]):
     _sender: Channel[T]
     _receivers: list[Channel[T]]
-    _executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]]
+    _executable: Callable[[TaskId, DuckDBPyConnection, T], Awaitable[T]]
 
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
@@ -210,7 +207,7 @@ class TransformTask(BaseSourceTask, Generic[T]):
 
     def register(
         self,
-        executable: Callable[[TaskId, DuckDBPyConnection, T], Coroutine[Any, Any, T]],
+        executable: Callable[[TaskId, DuckDBPyConnection, T], Awaitable[T]],
     ) -> TransformTask[T]:
         self._executable = executable
         return self
