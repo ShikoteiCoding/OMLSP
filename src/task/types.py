@@ -2,7 +2,7 @@ from typing import Any, TypeAlias, TypeVar
 
 TaskOutput: TypeAlias = Any
 TaskId = str
-HasMetadata = bool
+HasData = bool
 T = TypeVar("T")
 
 
