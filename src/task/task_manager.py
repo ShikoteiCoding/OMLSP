@@ -47,9 +47,9 @@ class TaskManager(Service):
     scheduler: TrioScheduler
     #: Supervisor to restart tasks
     supervisor: TaskSupervisor
-    # Catalog of running tasks
+    #: Catalog of running tasks
     catalog: TaskCatalog
-    # Graph of dependancy between running taks
+    #: Graph of dependancy between running taks
     graph: TaskGraph
 
     #: Reference to all sources by task id
@@ -135,10 +135,9 @@ class TaskManager(Service):
             self.graph.add_vertex(parent, ctx.name)
 
         # Start supervised
-        # Scheduled tasks return None → nothing to supervise
         if task:
             self.catalog.add(task, ctx.has_data)
-            # scheduled tasks run unsupervised
+            # Scheduled tasks run unsupervised
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
             else:
