@@ -3,7 +3,7 @@ Task Manager managing registration and running of Tasks.
 """
 
 from duckdb import DuckDBPyConnection
-from apscheduler.triggers.base import BaseTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from channel import Channel
 from scheduler import TrioScheduler
@@ -67,7 +67,7 @@ class TaskManager(Service):
     _tasks_to_deploy: Channel[CreateContext]
 
     #: Outgoing channel to send jobs to scheduler
-    _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
+    _scheduled_executables: Channel[tuple[Callable, CronTrigger]]
 
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
@@ -75,9 +75,7 @@ class TaskManager(Service):
         super().__init__(name="TaskManager")
         self.backend_conn = backend_conn
         self.transform_conn = transform_conn
-        self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](
-            100
-        )
+        self._scheduled_executables = Channel[tuple[Callable, CronTrigger]](100)
 
     def add_taskctx_channel(self, channel: Channel[CreateContext]):
         self._tasks_to_deploy = channel
