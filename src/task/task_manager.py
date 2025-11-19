@@ -3,46 +3,31 @@ Task Manager managing registration and running of Tasks.
 """
 
 from duckdb import DuckDBPyConnection
-from apscheduler.triggers.base import BaseTrigger
 
 from channel import Channel
-from scheduler import TrioScheduler
+from scheduler.scheduler import TrioScheduler
+from scheduler.types import SchedulerCommand
 from context.context import (
     CreateContext,
-    CreateHTTPSourceContext,
-    CreateHTTPTableContext,
-    CreateHTTPLookupTableContext,
-    CreateSinkContext,
-    CreateViewContext,
-    CreateWSSourceContext,
-    CreateWSTableContext,
     DropContext,
 )
-from engine.engine import (
-    build_lookup_table_prehook,
-    build_continuous_source_executable,
-    build_scheduled_source_executable,
-    build_sink_executable,
-    build_transform_executable,
-)
-
-from metadata import delete_metadata
 
 from task.task import (
     BaseTask,
     BaseTaskSender,
-    SinkTask,
-    TransformTask,
     ScheduledSourceTask,
-    ContinuousSourceTask,
 )
 from task.types import TaskId
 
+
 from task.task_supervisor import TaskSupervisor
+from task.task_graph import TaskGraph
+from task.task_registry import TaskRegistry
+from task.task_builders import TASK_BUILDERS
 
 from services import Service
 
-from typing import Callable, Any
+from typing import Any
 
 from loguru import logger
 
@@ -73,7 +58,7 @@ class TaskManager(Service):
     _tasks_to_cancel: Channel[DropContext]
 
     #: Outgoing channel to send jobs to scheduler
-    _scheduled_executables: Channel[Callable | tuple[Callable, BaseTrigger]]
+    _scheduled_executables: Channel[tuple[SchedulerCommand, Any]]
 
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
@@ -81,9 +66,10 @@ class TaskManager(Service):
         super().__init__(name="TaskManager")
         self.backend_conn = backend_conn
         self.transform_conn = transform_conn
-        self._scheduled_executables = Channel[Callable | tuple[Callable, BaseTrigger]](
-            100
-        )
+        self._scheduled_executables = Channel[tuple[SchedulerCommand, Any]](100)
+        self.registry = TaskRegistry()
+        self.graph = TaskGraph()
+        self.supervisor = TaskSupervisor()
 
     def add_taskctx_channel(self, channel: Channel[CreateContext]):
         self._tasks_to_deploy = channel
@@ -105,7 +91,7 @@ class TaskManager(Service):
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
         # TODO: change to inheritance later
-        self.supervisor = TaskSupervisor(self._nursery)
+        self.supervisor = TaskSupervisor()
         self._nursery.start_soon(self._process)
         self._nursery.start_soon(self._drop)
 
@@ -123,91 +109,56 @@ class TaskManager(Service):
             if isinstance(ctx, DropContext):
                 await self._handle_drop(ctx)
 
+    async def _register_one_task(self, ctx: CreateContext):
+        """Create a task from context, register it, add graph deps, start supervisor."""
+        builder = TASK_BUILDERS.get(type(ctx))
+
+        if not builder:
+            logger.error(f"No task builder for context type: {type(ctx).__name__}")
+            return
+        # Register the task
+        task = builder(self, ctx)
+
+        # TODO: include scheduled task
+        self.graph.ensure_vertex(ctx.name)
+        # Register dependencies in the graph
+        for parent in getattr(ctx, "upstreams", []):
+            self.graph.add_vertex(parent, ctx.name)
+
+        # Start supervised
+        # Scheduled tasks return None → nothing to supervise
+        if task:
+            self.registry.register(task)
+            self._nursery.start_soon(self.supervisor.supervise, task)
+            self._task_id_to_task[ctx.name] = task
+
+            logger.success(f"[TaskManager] registered task '{ctx.name}'")
+
     async def _handle_drop(self, ctx: DropContext):
         name = ctx.name
-        # Stop task if running
-        task = self._task_id_to_task.get(name)
-        if task:
-            # Stop dependents first
-            for dep_id in list(task._dependents):
-                dep_task = self._task_id_to_task.get(dep_id)
-                if dep_task:
-                    dep_task.stopped = True
-                    await dep_task.on_stop()
-            task.stopped = True
-            await task.on_stop()
 
-        self.backend_conn.sql(ctx.user_query)
-        delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
+        to_drop = self.graph.drop_recursive(name)
+        if not to_drop:
+            logger.warning(f"[TaskManager] nothing to drop for '{name}'")
+            return
 
-    async def _register_one_task(self, ctx: CreateContext) -> None:
-        task_id = ctx.name
-        task = None
+        for n in to_drop:
+            task = self.registry.get(n)
+            if task:
+                task.stopped = True
+                self.registry.unregister(task)
+                await task.on_stop()
+                # remove from scheduler
+                if isinstance(task, ScheduledSourceTask):
+                    await self._scheduled_executables.send(
+                        (SchedulerCommand.EVICT, task.task_id)
+                    )
 
-        if isinstance(ctx, CreateSinkContext):
-            # TODO: add Transform task to handle subqueries
-            # TODO: subscribe to many upstreams
-            task = SinkTask[ctx._out_type](task_id, self.transform_conn)
-            for name in ctx.upstreams:
-                task.subscribe(self._sources[name])
-            self._sinks[task_id] = task.register(
-                build_sink_executable(ctx, self.backend_conn)
-            )
-            self._nursery.start_soon(self.supervisor.supervise, task)
-            logger.success(f"[TaskManager] registered sink task '{task_id}'")
+        # TODO: implement later
+        # Cleanup metadata
+        # for n in to_drop:
+        #     if ctx.has_metadata:
+        #         delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, n)
+        #         self.backend_conn.sql(ctx.user_query)
 
-        elif isinstance(ctx, CreateHTTPTableContext | CreateHTTPSourceContext):
-            # Executable could be attached to context
-            # But we might want it dynamic later (i.e built at run time)
-            task = ScheduledSourceTask[ctx._out_type](
-                task_id, self.backend_conn, self._scheduled_executables, ctx.trigger
-            )
-            self._sources[task_id] = task.register(
-                build_scheduled_source_executable(ctx)
-            )
-
-            # Scheduled task is unsupervised. When one batch fails, the
-            # Scheduler will re instanciate in next trigger time
-            self._nursery.start_soon(task.start, self._nursery)
-            logger.success(
-                f"[TaskManager] registered scheduled source task '{task_id}'"
-            )
-
-        elif isinstance(ctx, CreateWSTableContext | CreateWSSourceContext):
-            # Executable could be attached to context
-            # But we might want it dynamic later (i.e built at run time)
-            task = ContinuousSourceTask[ctx._out_type](
-                task_id, self.backend_conn, self._nursery
-            )
-
-            # TODO: make WS Task dynamic by registering the on_start function
-            # design idea, make the continuous source executable return
-            # on_start func and on_run func. on_start will have "waiters"
-            # and timeout logic
-            self._sources[task_id] = task.register(
-                build_continuous_source_executable(ctx, self.backend_conn)
-            )
-            self._nursery.start_soon(self.supervisor.supervise, task)
-            logger.success(
-                f"[TaskManager] registered continuous source task '{task_id}'"
-            )
-
-        elif isinstance(ctx, CreateHTTPLookupTableContext):
-            # TODO: is this the place to build lookup ? grr
-            build_lookup_table_prehook(ctx, self.backend_conn)
-            logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
-
-        elif isinstance(ctx, CreateViewContext):
-            task = TransformTask[ctx._out_type](task_id, self.transform_conn)
-            for name in ctx.upstreams:
-                task.subscribe(self._sources[name])
-
-            self._sinks[task_id] = task.register(
-                build_transform_executable(ctx, self.backend_conn)
-            )
-            self._nursery.start_soon(self.supervisor.supervise, task)
-            logger.success(f"[TaskManager] registered transform task '{task_id}'")
-
-        if task is not None:
-            self._task_id_to_task[task_id] = task
-            self.add_dependency(task)
+        logger.success(f"[TaskManager] dropped tasks: {to_drop}")

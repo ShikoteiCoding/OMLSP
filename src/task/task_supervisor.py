@@ -6,9 +6,6 @@ from task.task import BaseTask
 class TaskSupervisor:
     """Lightweight supervisor to restart failed tasks"""
 
-    def __init__(self, nursery: trio.Nursery):
-        self.nursery = nursery
-
     async def supervise(self, task: BaseTask):
         max_retries = 3
         backoff_base = 2.0

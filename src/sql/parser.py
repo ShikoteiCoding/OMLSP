@@ -474,7 +474,7 @@ def build_create_sink_context(
         return InvalidContext(reason=f"Unsupported sink query: {expr}")
 
     return CreateSinkContext(
-        name=statement.this,
+        name=statement.this.name,
         upstreams=upstreams,
         properties=properties,
         subquery=ctx.query,

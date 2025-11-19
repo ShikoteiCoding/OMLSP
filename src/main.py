@@ -8,7 +8,7 @@ from loguru import logger
 from pathlib import Path
 
 from app import App
-from scheduler import TrioScheduler
+from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
 from task import TaskManager

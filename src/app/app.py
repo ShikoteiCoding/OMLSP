@@ -127,8 +127,6 @@ class App(Service):
         async for client_id, sql in self._sql_to_eval:
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
-            print(ctx)
-            print(type(ctx))
 
             # Handle context with on_start eval conditions
             if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query != "":

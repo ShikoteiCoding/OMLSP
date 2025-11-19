@@ -10,6 +10,7 @@ from services import Service
 
 from channel import Channel
 
+from scheduler.types import SchedulerCommand
 from task.types import TaskId, T
 
 DEFAULT_CAPACITY = 100
@@ -115,7 +116,7 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         self,
         task_id: TaskId,
         conn: DuckDBPyConnection,
-        scheduled_executables: Channel[Callable | tuple[Callable, Any]],
+        scheduled_executables: Channel[tuple[SchedulerCommand, Any]],
         trigger: CronTrigger,
     ):
         super().__init__(task_id, conn)
@@ -129,7 +130,9 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         async def _task_runner():
             with self._cancel_scope:
                 try:
-                    await self.scheduled_executables.send((self.run, self.trigger))
+                    await self.scheduled_executables.send(
+                        (SchedulerCommand.ADD, (self.task_id, self.trigger, self.run))
+                    )
                 except trio.Cancelled:
                     pass  # Normal shutdown path
 
