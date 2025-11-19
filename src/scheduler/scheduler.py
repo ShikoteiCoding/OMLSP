@@ -4,11 +4,14 @@ import trio
 from apscheduler.schedulers.base import BaseScheduler
 from services import Service
 from channel import Channel
-from typing import Any
+from typing import Callable
 
 
 from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
 from apscheduler.util import iscoroutinefunction_partial
+from apscheduler.triggers.cron import CronTrigger
+
+from task.types import TaskId
 
 from scheduler.types import SchedulerCommand
 
@@ -118,7 +121,9 @@ class TrioScheduler(Service, BaseScheduler):
     _timer_cancel_scope: trio.CancelScope | None = None
 
     #: Executable receiver from TaskManager
-    _executable_receiver: Channel[tuple[SchedulerCommand, Any]]
+    _executable_receiver: Channel[
+        tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
+    ]
     #: Trio token to keep track of threaded tasks
     _trio_token: trio.lowlevel.TrioToken | None
 
@@ -128,7 +133,12 @@ class TrioScheduler(Service, BaseScheduler):
         self._trio_token = trio.lowlevel.current_trio_token()
         self._is_shutting_down = False
 
-    def add_executable_channel(self, channel: Channel[tuple[SchedulerCommand, Any]]):
+    def add_executable_channel(
+        self,
+        channel: Channel[
+            tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
+        ],
+    ):
         self._executable_receiver = channel
 
     async def on_start(self):
@@ -253,7 +263,7 @@ class TrioScheduler(Service, BaseScheduler):
         Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
         """
 
-    def evict_job_by_id(self, job_id: str):
+    def evict_job_by_id(self, job_id: TaskId):
         """
         Immediately remove a job and cancel any pending executions.
         """

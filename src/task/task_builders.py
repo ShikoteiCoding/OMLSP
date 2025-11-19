@@ -53,9 +53,7 @@ def build_sink(manager, ctx: CreateSinkContext):
     for upstream in ctx.upstreams:
         task.subscribe(manager._sources[upstream])
 
-    manager._sinks[ctx.name] = task.register(
-        build_sink_executable(ctx, manager.backend_conn)
-    )
+    task.register(build_sink_executable(ctx, manager.backend_conn))
     logger.warning(f"Registering task={ctx.name}, upstreams={ctx.upstreams}")
     return task
 
@@ -72,9 +70,7 @@ def build_http_scheduled(manager, ctx):
 
     manager._sources[ctx.name] = task.register(build_scheduled_source_executable(ctx))
 
-    # scheduled tasks run unsupervised
-    manager._nursery.start_soon(task.start, manager._nursery)
-    return None
+    return task
 
 
 @task_builder(CreateWSTableContext)
@@ -105,7 +101,5 @@ def build_view(manager, ctx):
     for upstream in ctx.upstreams:
         task.subscribe(manager._sources[upstream])
 
-    manager._sinks[ctx.name] = task.register(
-        build_transform_executable(ctx, manager.backend_conn)
-    )
+    task.register(build_transform_executable(ctx, manager.backend_conn))
     return task

@@ -324,7 +324,7 @@ def delete_metadata(
     conn: DuckDBPyConnection,
     kind: str,
     column: str,
-    name,
+    name: str,
 ) -> None:
     """
     Delete a metadata entry of the given kind, name and column

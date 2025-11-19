@@ -11,6 +11,7 @@ from context.context import (
     CreateContext,
     DropContext,
 )
+from apscheduler.triggers.cron import CronTrigger
 
 from task.task import (
     BaseTask,
@@ -22,12 +23,14 @@ from task.types import TaskId
 
 from task.task_supervisor import TaskSupervisor
 from task.task_graph import TaskGraph
-from task.task_registry import TaskRegistry
+from task.task_catalog import TaskCatalog
 from task.task_builders import TASK_BUILDERS
+
+from metadata import delete_metadata
 
 from services import Service
 
-from typing import Any
+from typing import Callable
 
 from loguru import logger
 
@@ -44,21 +47,26 @@ class TaskManager(Service):
     scheduler: TrioScheduler
     #: Supervisor to restart tasks
     supervisor: TaskSupervisor
+    # Catalog of running tasks
+    catalog: TaskCatalog
+    # Graph of dependancy between running taks
+    graph: TaskGraph
 
     #: Reference to all sources by task id
     #: TODO: to deprecate for below mapping
     _sources: dict[TaskId, BaseTaskSender] = {}
-    _sinks: dict[TaskId, Any] = {}
 
     #: Reference to all tasks by task id
-    _task_id_to_task: dict[TaskId, BaseTask] = {}
+    _task_id_to_task: dict[TaskId, tuple[BaseTask, bool]] = {}
 
     #: Outgoing Task context to be orchestrated
     _tasks_to_deploy: Channel[CreateContext]
     _tasks_to_cancel: Channel[DropContext]
 
     #: Outgoing channel to send jobs to scheduler
-    _scheduled_executables: Channel[tuple[SchedulerCommand, Any]]
+    _scheduled_executables: Channel[
+        tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
+    ]
 
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
@@ -66,8 +74,10 @@ class TaskManager(Service):
         super().__init__(name="TaskManager")
         self.backend_conn = backend_conn
         self.transform_conn = transform_conn
-        self._scheduled_executables = Channel[tuple[SchedulerCommand, Any]](100)
-        self.registry = TaskRegistry()
+        self._scheduled_executables = Channel[
+            tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
+        ](100)
+        self.catalog = TaskCatalog()
         self.graph = TaskGraph()
         self.supervisor = TaskSupervisor()
 
@@ -119,7 +129,6 @@ class TaskManager(Service):
         # Register the task
         task = builder(self, ctx)
 
-        # TODO: include scheduled task
         self.graph.ensure_vertex(ctx.name)
         # Register dependencies in the graph
         for parent in getattr(ctx, "upstreams", []):
@@ -128,10 +137,12 @@ class TaskManager(Service):
         # Start supervised
         # Scheduled tasks return None → nothing to supervise
         if task:
-            self.registry.register(task)
-            self._nursery.start_soon(self.supervisor.supervise, task)
-            self._task_id_to_task[ctx.name] = task
-
+            self.catalog.add(task, ctx.has_data)
+            # scheduled tasks run unsupervised
+            if isinstance(task, ScheduledSourceTask):
+                self._nursery.start_soon(task.start, self._nursery)
+            else:
+                self._nursery.start_soon(self.supervisor.supervise, task)
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
     async def _handle_drop(self, ctx: DropContext):
@@ -143,22 +154,19 @@ class TaskManager(Service):
             return
 
         for n in to_drop:
-            task = self.registry.get(n)
+            task, has_data = self.catalog.get(n)
             if task:
-                task.stopped = True
-                self.registry.unregister(task)
+                task.stop_requested = True
                 await task.on_stop()
                 # remove from scheduler
                 if isinstance(task, ScheduledSourceTask):
                     await self._scheduled_executables.send(
                         (SchedulerCommand.EVICT, task.task_id)
                     )
-
-        # TODO: implement later
-        # Cleanup metadata
-        # for n in to_drop:
-        #     if ctx.has_metadata:
-        #         delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, n)
-        #         self.backend_conn.sql(ctx.user_query)
+                self.catalog.remove(task)
+            # TODO: refactor later, need to delete dependencies metadata
+            delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, n)
+            if has_data:
+                self.backend_conn.sql(ctx.user_query)
 
         logger.success(f"[TaskManager] dropped tasks: {to_drop}")

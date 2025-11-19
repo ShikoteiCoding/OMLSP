@@ -12,7 +12,7 @@ class TaskSupervisor:
         attempt = 1
 
         while True:
-            if getattr(task, "stopped", False):
+            if getattr(task, "stop_requested", False):
                 logger.info(f"[{task.task_id}] dropped intentionally — not restarting")
                 break
             try:

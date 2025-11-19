@@ -36,10 +36,6 @@ class TaskGraph:
         else:
             self.add_edge(parent, child)
 
-    def can_drop(self, name: str) -> bool:
-        """Only leaves may be dropped."""
-        return name in self.leaves
-
     # ──────────────────────────────────────────────
     # RECURSIVE DROP
     # ──────────────────────────────────────────────

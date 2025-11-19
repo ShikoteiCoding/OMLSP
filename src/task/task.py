@@ -31,8 +31,8 @@ class BaseTask(Service, Generic[T]):
     _sender: Channel[T]
     _cancel_event: trio.Event
 
-    #: flag
-    stopped: bool = False
+    #: flag to inform supervisor
+    stop_requested: bool = False
 
     _subscribed_to: set[TaskId]  # upstreams
     _dependents: set[TaskId]  # downstreams
@@ -86,8 +86,6 @@ class BaseTaskSender(BaseTask[T]):
         return self._sender
 
     async def on_stop(self) -> None:
-        if self.stopped:
-            return
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_event.set()
         if hasattr(self, "_sender"):
@@ -100,8 +98,6 @@ class BaseTaskReceiver(BaseTask[T]):
     _receivers: list[Channel[T]]
 
     async def on_stop(self) -> None:
-        if self.stopped:
-            return
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_scope.cancel()
 
@@ -116,7 +112,9 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         self,
         task_id: TaskId,
         conn: DuckDBPyConnection,
-        scheduled_executables: Channel[tuple[SchedulerCommand, Any]],
+        scheduled_executables: Channel[
+            tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
+        ],
         trigger: CronTrigger,
     ):
         super().__init__(task_id, conn)
