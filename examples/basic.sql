@@ -15,7 +15,6 @@ WITH (
 );
 
 -- Get ohlc data provided symbols
--- TODO: handle dynamic arguments
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
     start_time TIMESTAMP_MS,
