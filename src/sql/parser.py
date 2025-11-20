@@ -710,35 +710,35 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
     return ShowContext(user_query=sql, query=query)
 
 
-def extract_drop_statement(statement: exp.Drop) -> DropContext:
+def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
     sql = statement.sql(dialect=OmlspDialect)
-    drop_type = ""
+    drop_type = statement.kind
     metadata = ""
     metadata_column = ""
-    if "TABLE" in sql:
-        metadata = METADATA_TABLE_TABLE_NAME
-        metadata_column = "table_name"
-        drop_type = "TABLE"
 
-    elif "VIEW" in sql:
-        metadata += METADATA_VIEW_TABLE_NAME
-        metadata_column = "view_name"
-        drop_type = "VIEW"
+    match drop_type:
+        case "TABLE":
+            metadata = METADATA_TABLE_TABLE_NAME
+            metadata_column = "table_name"
 
-    elif "SECRET" in sql:
-        metadata += METADATA_SECRET_TABLE_NAME
-        metadata_column = "secret_name"
-        drop_type = "SECRET"
+        case "VIEW":
+            metadata = METADATA_VIEW_TABLE_NAME
+            metadata_column = "view_name"
 
-    elif "SINK" in sql:
-        metadata += METADATA_SINK_TABLE_NAME
-        metadata_column = "sink_name"
-        drop_type = "SINK"
+        case "SECRET":
+            metadata = METADATA_SECRET_TABLE_NAME
+            metadata_column = "secret_name"
 
-    elif "SOURCE" in sql:
-        metadata += METADATA_SOURCE_TABLE_NAME
-        metadata_column = "source_name"
-        drop_type = "SOURCE"
+        case "SINK":
+            metadata = METADATA_SINK_TABLE_NAME
+            metadata_column = "sink_name"
+
+        case "SOURCE":
+            metadata = METADATA_SOURCE_TABLE_NAME
+            metadata_column = "source_name"
+
+        case _:
+            return InvalidContext(reason=f"Unknown drop type - {drop_type}")
 
     name = sql.replace(";", "").split()[-1]
     user_query = sql.replace(drop_type, "TABLE")

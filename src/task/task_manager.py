@@ -60,8 +60,7 @@ class TaskManager(Service):
     _task_id_to_task: dict[TaskId, tuple[BaseTask, bool]] = {}
 
     #: Outgoing Task context to be orchestrated
-    _tasks_to_deploy: Channel[CreateContext]
-    _tasks_to_cancel: Channel[DropContext]
+    _task_events: Channel[CreateContext | DropContext]
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[
@@ -81,11 +80,8 @@ class TaskManager(Service):
         self.graph = TaskGraph()
         self.supervisor = TaskSupervisor()
 
-    def add_taskctx_channel(self, channel: Channel[CreateContext]):
-        self._tasks_to_deploy = channel
-
-    def add_task_cancel_channel(self, channel: Channel[DropContext]):
-        self._tasks_to_cancel = channel
+    def add_taskctx_channel(self, channel: Channel[CreateContext | DropContext]):
+        self._task_events = channel
 
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
         """
@@ -102,22 +98,18 @@ class TaskManager(Service):
         """Main loop for the TaskManager, runs forever."""
         # TODO: change to inheritance later
         self.supervisor = TaskSupervisor()
-        self._nursery.start_soon(self._process)
-        self._nursery.start_soon(self._drop)
+        self._nursery.start_soon(self._create)
 
     async def on_stop(self):
         """Close channel."""
         await self._scheduled_executables.aclose()
 
-    async def _process(self):
-        async for ctx in self._tasks_to_deploy:
+    async def _create(self):
+        async for ctx in self._task_events:
             if isinstance(ctx, CreateContext):
                 await self._register_one_task(ctx)
-
-    async def _drop(self):
-        async for ctx in self._tasks_to_cancel:
-            if isinstance(ctx, DropContext):
-                await self._handle_drop(ctx)
+            elif isinstance(ctx, DropContext):
+                await self._delete(ctx)
 
     async def _register_one_task(self, ctx: CreateContext):
         """Create a task from context, register it, add graph deps, start supervisor."""
@@ -144,15 +136,15 @@ class TaskManager(Service):
                 self._nursery.start_soon(self.supervisor.supervise, task)
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
-    async def _handle_drop(self, ctx: DropContext):
+    async def _delete(self, ctx: DropContext):
         name = ctx.name
 
-        to_drop = self.graph.drop_recursive(name)
-        if not to_drop:
+        dropped_from_graph = self.graph.drop_recursive(name)
+        if not dropped_from_graph:
             logger.warning(f"[TaskManager] nothing to drop for '{name}'")
             return
 
-        for n in to_drop:
+        for n in dropped_from_graph:
             task, has_data = self.catalog.get(n)
             if task:
                 task.stop_requested = True
@@ -165,7 +157,7 @@ class TaskManager(Service):
                 self.catalog.remove(task)
             # TODO: refactor later, need to delete dependencies metadata
             delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, n)
-            if has_data:
-                self.backend_conn.sql(ctx.user_query)
+            # if has_data:
+            #     self.backend_conn.sql(ctx.user_query)
 
-        logger.success(f"[TaskManager] dropped tasks: {to_drop}")
+        logger.success(f"[TaskManager] dropped tasks: {dropped_from_graph}")

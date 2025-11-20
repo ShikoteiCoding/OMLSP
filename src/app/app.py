@@ -44,9 +44,7 @@ class App(Service):
     _evaled_sql: Channel[EvaledSQL]
 
     #: Outgoing Task context to be orchestrated by TaskManager
-    _tasks_to_deploy: Channel[CreateContext]
-
-    _tasks_to_cancel: Channel[DropContext]
+    _task_events: Channel[CreateContext | DropContext]
 
     def __init__(
         self,
@@ -62,8 +60,7 @@ class App(Service):
         # becomes more mature.
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
-        self._tasks_to_deploy = Channel[CreateContext](100)
-        self._tasks_to_cancel = Channel[DropContext](100)
+        self._task_events = Channel[CreateContext | DropContext](100)
 
     def connect_client_manager(self, client_manager: ClientManager) -> None:
         """
@@ -87,8 +84,7 @@ class App(Service):
 
         See channel.py for Channel implementation.
         """
-        task_manager.add_taskctx_channel(self._tasks_to_deploy)
-        task_manager.add_task_cancel_channel(self._tasks_to_cancel)
+        task_manager.add_taskctx_channel(self._task_events)
 
     async def on_start(self):
         """
@@ -107,7 +103,7 @@ class App(Service):
         logger.success("[App] stopping.")
         await self._sql_to_eval.aclose()
         await self._evaled_sql.aclose()
-        await self._tasks_to_deploy.aclose()
+        await self._task_events.aclose()
 
     async def submit(self, sql: str) -> None:
         """
@@ -157,13 +153,9 @@ class App(Service):
             if client_id != self._internal_ref:
                 await self._evaled_sql.send((client_id, result))
 
-            # Dispatch TaskContext to task manager
-            if isinstance(ctx, CreateContext):
-                await self._tasks_to_deploy.send(ctx)
-
-            # Dispatch DropContext to task manager
-            if isinstance(ctx, DropContext):
-                await self._tasks_to_cancel.send(ctx)
+            # Dispatch CreateContext and DropContext to task manager
+            if isinstance(ctx, CreateContext | DropContext):
+                await self._task_events.send(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return

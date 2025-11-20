@@ -28,7 +28,6 @@ class BaseTask(Service, Generic[T]):
 
     #: Cancel scope for structured concurrency
     _cancel_scope: trio.CancelScope
-    _sender: Channel[T]
     _cancel_event: trio.Event
 
     #: flag to inform supervisor
@@ -67,6 +66,7 @@ class BaseTask(Service, Generic[T]):
 
 
 class BaseTaskSender(BaseTask[T]):
+    _sender: Channel[T]
     #: Sender watchguard
     _has_sender: bool = False
 
