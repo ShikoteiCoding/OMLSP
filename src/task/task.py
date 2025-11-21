@@ -31,9 +31,6 @@ class BaseTask(Service, Generic[T]):
     #: Cancel event allows other tasks to be notified when this task is being stopped
     _cancel_event: trio.Event
 
-    #: flag to inform supervisor
-    stop_requested: bool = False
-
     _subscribed_to: set[TaskId]  # upstreams
     _dependents: set[TaskId]  # downstreams
 
@@ -73,6 +70,7 @@ class BaseTaskSender(BaseTask[T]):
 
     def get_sender(self) -> Channel[T]:
         """
+        Lazily create and return the sender channel
         Get sender when asked. If doesn't exist, creates one.
 
         NOTE: This implementation isn't very robust, we are
@@ -82,7 +80,7 @@ class BaseTaskSender(BaseTask[T]):
          without anyt true consummer on the other side.
         """
         if not self._has_sender:
-            self._sender = Channel[T](100)
+            self._sender = Channel[T](100)  # first-time creation
             self._has_sender = True
         return self._sender
 

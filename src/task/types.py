@@ -1,4 +1,5 @@
 from typing import Any, TypeAlias, TypeVar
+from enum import Enum
 
 TaskOutput: TypeAlias = Any
 TaskId = str
@@ -6,7 +7,6 @@ HasData = bool
 T = TypeVar("T")
 
 
-class TaskCancelled(Exception):
-    """Raised when a task is intentionally stopped or dropped."""
-
-    pass
+class SupervisorCommand(Enum):
+    START = "start"
+    STOP = "stop"

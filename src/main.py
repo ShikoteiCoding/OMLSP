@@ -11,7 +11,9 @@ from app import App
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
-from task import TaskManager
+from task.task_manager import TaskManager
+from task.task_supervisor import TaskSupervisor
+
 
 PROPERTIES_SCHEMA = json.loads(
     open(Path("src/properties.schema.json"), "rb").read().decode("utf-8")
@@ -47,6 +49,10 @@ async def main():
     scheduler = TrioScheduler()
     task_manager.add_dependency(scheduler)
     task_manager.connect_scheduler(scheduler)
+    # Connect TaskSupervisor to TaskManager
+    supervisor = TaskSupervisor()
+    task_manager.add_dependency(supervisor)
+    task_manager.connect_supervisor(supervisor)
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(app.start, nursery)

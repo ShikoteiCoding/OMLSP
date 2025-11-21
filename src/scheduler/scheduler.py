@@ -153,7 +153,7 @@ class TrioScheduler(Service, BaseScheduler):
             # TODO EVICT should not be included in on_start
             elif cmd is SchedulerCommand.EVICT:
                 job_id = payload
-                existed = self.evict_job_by_id(job_id)
+                existed = self.evict_job_by_id(job_id)  # type ignore
                 if existed:
                     logger.info(f"[Scheduler] Evicted job {job_id}")
                 else:

@@ -18,7 +18,7 @@ from task.task import (
     BaseTaskSender,
     ScheduledSourceTask,
 )
-from task.types import TaskId
+from task.types import TaskId, SupervisorCommand
 
 
 from task.task_supervisor import TaskSupervisor
@@ -67,6 +67,9 @@ class TaskManager(Service):
         tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
     ]
 
+    #: Outgoing channel to send task to supervisor
+    _tasks_to_supervise: Channel[tuple[SupervisorCommand, BaseTask]]
+
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
     ):
@@ -76,9 +79,9 @@ class TaskManager(Service):
         self._scheduled_executables = Channel[
             tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
         ](100)
+        self._tasks_to_supervise = Channel[tuple[SupervisorCommand, BaseTask]](100)
         self.catalog = TaskCatalog()
         self.graph = TaskGraph()
-        self.supervisor = TaskSupervisor()
 
     def add_taskctx_channel(self, channel: Channel[CreateContext | DropContext]):
         self._task_events = channel
@@ -94,15 +97,25 @@ class TaskManager(Service):
         """
         scheduler.add_executable_channel(self._scheduled_executables)
 
+    def connect_supervisor(self, supervisor: TaskSupervisor) -> None:
+        """
+        Connect TaskManager and TaskSupervisor through one Channel.
+
+        Channel:
+            - Task Channel
+
+        See channel.py for Channel implementation.
+        """
+        supervisor.add_tasks_to_supervise_channel(self._tasks_to_supervise)
+
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
-        # TODO: change to inheritance later
-        self.supervisor = TaskSupervisor()
         self._nursery.start_soon(self._create)
 
     async def on_stop(self):
         """Close channel."""
         await self._scheduled_executables.aclose()
+        await self._tasks_to_supervise.aclose()
 
     async def _create(self):
         async for ctx in self._task_events:
@@ -133,7 +146,7 @@ class TaskManager(Service):
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
             else:
-                self._nursery.start_soon(self.supervisor.supervise, task)
+                await self._tasks_to_supervise.send((SupervisorCommand.START, task))
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
     async def _delete(self, ctx: DropContext):
@@ -147,14 +160,16 @@ class TaskManager(Service):
         for n in dropped_from_graph:
             task, has_data = self.catalog.get(n)
             if task:
-                task.stop_requested = True
-                await task.on_stop()
-                # remove from scheduler
+                # remove from scheduler or supervisor
                 if isinstance(task, ScheduledSourceTask):
                     await self._scheduled_executables.send(
                         (SchedulerCommand.EVICT, task.task_id)
                     )
+                else:
+                    await self._tasks_to_supervise.send((SupervisorCommand.STOP, task))
+                await task.on_stop()
                 self.catalog.remove(task)
+                del task
             # TODO: refactor later, need to delete dependencies metadata
             delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, n)
             # if has_data:
