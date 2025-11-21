@@ -28,6 +28,7 @@ class BaseTask(Service, Generic[T]):
 
     #: Cancel scope for structured concurrency
     _cancel_scope: trio.CancelScope
+    #: Cancel event allows other tasks to be notified when this task is being stopped
     _cancel_event: trio.Event
 
     #: flag to inform supervisor
