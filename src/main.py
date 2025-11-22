@@ -50,7 +50,7 @@ async def main():
     task_manager.add_dependency(scheduler)
     task_manager.connect_scheduler(scheduler)
     # Connect TaskSupervisor to TaskManager
-    supervisor = TaskSupervisor()
+    supervisor = TaskSupervisor(catalog=task_manager.catalog)
     task_manager.add_dependency(supervisor)
     task_manager.connect_supervisor(supervisor)
 

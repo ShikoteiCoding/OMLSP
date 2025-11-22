@@ -24,3 +24,7 @@ class TaskCatalog:
     def get(self, task_id: str) -> tuple[BaseTask | None, HasData]:
         """Retrieve a task by ID."""
         return self._task_id_to_task.get(task_id, (None, False))
+
+    def has_task(self, task_id: str) -> bool:
+        """Check if the task is in the catalog."""
+        return task_id in self._task_id_to_task

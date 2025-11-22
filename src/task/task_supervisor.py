@@ -4,7 +4,7 @@ from task.task import BaseTask
 from channel import Channel
 from services import Service
 
-from task.types import SupervisorCommand
+from task.task_catalog import TaskCatalog
 
 
 class TaskSupervisor(Service):
@@ -13,48 +13,30 @@ class TaskSupervisor(Service):
     Receives (cmd, payload) from a Channel
     """
 
-    _active: dict[str, BaseTask]
-    _tasks_to_supervise: Channel[tuple[SupervisorCommand, BaseTask]]
+    _catalog: TaskCatalog
+    _tasks_to_supervise: Channel[BaseTask]
 
-    def __init__(self):
+    def __init__(self, catalog: TaskCatalog):
         super().__init__(name="TaskSupervisor")
         # Map of active supervised tasks: task_id → BaseTask instance
-        self._active: dict[str, BaseTask] = {}
+        self._catalog: TaskCatalog = catalog
 
-    def add_tasks_to_supervise_channel(
-        self, channel: Channel[tuple[SupervisorCommand, BaseTask]]
-    ):
+    def add_tasks_to_supervise_channel(self, channel: Channel[BaseTask]):
         self._tasks_to_supervise = channel
 
     async def on_start(self):
         self._nursery.start_soon(self._command_loop)
 
     async def _command_loop(self):
-        async for cmd, payload in self._tasks_to_supervise:
-            task: BaseTask = payload
-            match cmd:
-                case SupervisorCommand.START:
-                    self._start_supervising_task(task)
-
-                case SupervisorCommand.STOP:
-                    self._stop_supervising_task(task)
+        async for task in self._tasks_to_supervise:
+            self._start_supervising_task(task)
 
         logger.debug("[Supervisor] command channel closed")
 
     def _start_supervising_task(self, task: BaseTask):
-        if task.task_id in self._active:
-            logger.warning(f"[Supervisor] Task '{task.task_id}' already supervised")
-            return
-
-        self._active[task.task_id] = task
-
         logger.info(f"[Supervisor] Supervising task '{task.task_id}'")
-
         # Start the supervision worker
         self._nursery.start_soon(self._supervise_task, task)
-
-    def _stop_supervising_task(self, task: BaseTask):
-        self._active.pop(task.task_id, None)
 
     async def _supervise_task(self, task: BaseTask):
         task_id = task.task_id
@@ -62,7 +44,7 @@ class TaskSupervisor(Service):
         attempt = 1
         backoff_base = 2.0
 
-        while task_id in self._active:
+        while self._catalog.has_task(task_id):
             try:
                 async with trio.open_nursery() as n:
                     task._nursery = n  # rebind nursery each cycle
@@ -85,4 +67,3 @@ class TaskSupervisor(Service):
                 attempt += 1
             finally:
                 await task.on_stop()
-        logger.info(f"[{task.task_id}] supervisor stopped")

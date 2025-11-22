@@ -20,7 +20,7 @@ from task.task import (
     BaseTaskSender,
     ScheduledSourceTask,
 )
-from task.types import TaskId, SupervisorCommand
+from task.types import TaskId
 
 
 from task.task_supervisor import TaskSupervisor
@@ -70,7 +70,7 @@ class TaskManager(Service):
     ]
 
     #: Outgoing channel to send task to supervisor
-    _tasks_to_supervise: Channel[tuple[SupervisorCommand, BaseTask]]
+    _tasks_to_supervise: Channel[BaseTask]
 
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
@@ -81,7 +81,7 @@ class TaskManager(Service):
         self._scheduled_executables = Channel[
             tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
         ](100)
-        self._tasks_to_supervise = Channel[tuple[SupervisorCommand, BaseTask]](100)
+        self._tasks_to_supervise = Channel[BaseTask](100)
         self.catalog = TaskCatalog()
         self.graph = TaskGraph()
 
@@ -148,7 +148,7 @@ class TaskManager(Service):
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
             else:
-                await self._tasks_to_supervise.send((SupervisorCommand.START, task))
+                await self._tasks_to_supervise.send(task)
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
     async def _delete_task(self, ctx: DropContext):
@@ -186,13 +186,9 @@ class TaskManager(Service):
             await self._scheduled_executables.send(
                 (SchedulerCommand.EVICT, task.task_id)
             )
-        else:
-            # Otherwise, stop supervising it
-            await self._tasks_to_supervise.send((SupervisorCommand.STOP, task))
-
         # Stop and clean up the task
-        await task.on_stop()
         self.catalog.remove(task)
+        await task.on_stop()
         del task
         # Delete associated metadata
         # TODO: refactor later, need to delete dependencies metadata (For CASCADE and others SECRET, LOOKUP etc)
