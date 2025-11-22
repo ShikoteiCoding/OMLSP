@@ -10,7 +10,7 @@ from task.task_catalog import TaskCatalog
 class TaskSupervisor(Service):
     """
     Lightweight supervisor for tasks.
-    Receives (cmd, payload) from a Channel
+    Receives tasks to supervise from a Channel
     """
 
     _catalog: TaskCatalog
@@ -18,7 +18,6 @@ class TaskSupervisor(Service):
 
     def __init__(self, catalog: TaskCatalog):
         super().__init__(name="TaskSupervisor")
-        # Map of active supervised tasks: task_id → BaseTask instance
         self._catalog: TaskCatalog = catalog
 
     def add_tasks_to_supervise_channel(self, channel: Channel[BaseTask]):
