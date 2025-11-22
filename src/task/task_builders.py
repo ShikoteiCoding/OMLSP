@@ -18,7 +18,7 @@ from engine.engine import (
     build_sink_executable,
     build_transform_executable,
 )
-
+from store.lookup import callback_store
 from task.task import (
     SinkTask,
     TransformTask,
@@ -93,7 +93,7 @@ def build_ws(manager, ctx: CreateWSTableContext | CreateWSSourceContext):
 
 @task_builder(CreateHTTPLookupTableContext)
 def build_lookup(manager, ctx: CreateHTTPLookupTableContext):
-    build_lookup_callback(ctx, manager.backend_conn)
+    callback_store.add(*build_lookup_callback(ctx, manager.backend_conn))
     return None
 
 

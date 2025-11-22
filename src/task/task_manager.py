@@ -40,17 +40,23 @@ __all__ = ["TaskManager"]
 
 
 class TaskManager(Service):
-    #: Duckdb connections
+    #: Duckdb connections for backend metadata
     backend_conn: DuckDBPyConnection
+
+    #: Duckdb connections for transform
+    #: NOTE: to be deprecated
     transform_conn: DuckDBPyConnection
 
     #: Scheduler (trio compatible) to register
     #: short lived or long lived processes
     scheduler: TrioScheduler
+
     #: Supervisor to restart tasks
     supervisor: TaskSupervisor
+
     #: Catalog of running tasks
     catalog: TaskCatalog
+
     #: Graph of dependancy between running taks
     graph: TaskGraph
 
