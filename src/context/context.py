@@ -26,6 +26,7 @@ class EvaluableContext(ValidContext):
 # ------- Context definitions -------
 class CreateContext(EvaluableContext):
     name: str
+    has_data: bool = False
 
 
 # ---------- Table Contexts ----------
@@ -42,6 +43,7 @@ class CreateHTTPTableContext(CreateTableContext):
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     trigger: CronTrigger
+    has_data = True
     lookup: bool = False
     source: bool = False
 
@@ -58,6 +60,7 @@ class CreateWSTableContext(CreateTableContext):
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
     on_start_query: str
+    has_data = True
     lookup: bool = False
     source: bool = False
 
@@ -122,6 +125,7 @@ class CreateViewContext(CreateContext):
     # on upcoming data
     transform_ctx: SelectContext
     materialized: bool
+    has_data = True
 
     # executable of ws table context
     # returns a polars dataframe
@@ -167,6 +171,24 @@ class SetContext(EvaluableContext):
 class ShowContext(EvaluableContext):
     user_query: str
     query: str
+
+
+@dataclass
+class DropContext(ValidContext):
+    drop_type: str
+    metadata: str
+    metadata_column: str
+    name: str
+
+
+@dataclass
+class DropCascadeContext(DropContext):
+    pass
+
+
+@dataclass
+class DropSimpleContext(DropContext):
+    pass
 
 
 @dataclass

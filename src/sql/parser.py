@@ -27,12 +27,16 @@ from context.context import (
     SelectContext,
     SetContext,
     ShowContext,
+    DropContext,
+    DropSimpleContext,
+    DropCascadeContext,
 )
 from metadata.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
     METADATA_SINK_TABLE_NAME,
     METADATA_SECRET_TABLE_NAME,
+    METADATA_SOURCE_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
 from sql.types import (
@@ -472,7 +476,7 @@ def build_create_sink_context(
         return InvalidContext(reason=f"Unsupported sink query: {expr}")
 
     return CreateSinkContext(
-        name=statement.this,
+        name=statement.this.name,
         upstreams=upstreams,
         properties=properties,
         subquery=ctx.query,
@@ -702,7 +706,63 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
     elif "SINKS" in sql:
         query += METADATA_SINK_TABLE_NAME
 
+    elif "SOURCES" in sql:
+        query += METADATA_SOURCE_TABLE_NAME
+
     return ShowContext(user_query=sql, query=query)
+
+
+def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
+    sql = statement.sql(dialect=OmlspDialect)
+    drop_type = statement.kind
+    metadata = ""
+    metadata_column = ""
+    match drop_type:
+        case "TABLE":
+            metadata = METADATA_TABLE_TABLE_NAME
+            metadata_column = "table_name"
+
+        case "VIEW":
+            metadata = METADATA_VIEW_TABLE_NAME
+            metadata_column = "view_name"
+
+        case "SECRET":
+            metadata = METADATA_SECRET_TABLE_NAME
+            metadata_column = "secret_name"
+
+        case "SINK":
+            metadata = METADATA_SINK_TABLE_NAME
+            metadata_column = "sink_name"
+
+        case "SOURCE":
+            metadata = METADATA_SOURCE_TABLE_NAME
+            metadata_column = "source_name"
+
+        case _:
+            return InvalidContext(reason=f"Unknown drop type - {drop_type}")
+
+    sql_parts = sql.replace(";", "").split()
+
+    # validate enough tokens exist
+    if len(sql_parts) < 3:
+        return InvalidContext(reason=f"Malformed DROP statement - {sql}")
+
+    cascade = bool(statement.args.get("cascade", False))
+
+    if cascade:
+        return DropCascadeContext(
+            drop_type=drop_type,
+            metadata=metadata,
+            metadata_column=metadata_column,
+            name=sql_parts[-2],
+        )
+
+    return DropSimpleContext(
+        drop_type=drop_type,
+        metadata=metadata,
+        metadata_column=metadata_column,
+        name=sql_parts[-1],
+    )
 
 
 def extract_command_context(
@@ -741,6 +801,9 @@ def extract_one_query_context(
 
     elif isinstance(parsed_statement, exp.Show):
         return extract_show_statement(parsed_statement)
+
+    elif isinstance(parsed_statement, exp.Drop):
+        return extract_drop_statement(parsed_statement)
 
     elif isinstance(parsed_statement, exp.With):
         return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")

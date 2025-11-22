@@ -2,7 +2,6 @@ import sys
 import trio
 
 from apscheduler.schedulers.base import BaseScheduler
-from apscheduler.triggers.base import BaseTrigger
 from services import Service
 from channel import Channel
 from typing import Callable
@@ -10,6 +9,11 @@ from typing import Callable
 
 from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
 from apscheduler.util import iscoroutinefunction_partial
+from apscheduler.triggers.cron import CronTrigger
+
+from task.types import TaskId
+
+from scheduler.types import SchedulerCommand
 
 from loguru import logger
 
@@ -117,8 +121,9 @@ class TrioScheduler(Service, BaseScheduler):
     _timer_cancel_scope: trio.CancelScope | None = None
 
     #: Executable receiver from TaskManager
-    _executable_receiver: Channel[Callable | tuple[Callable, BaseTrigger]]
-
+    _executable_receiver: Channel[
+        tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
+    ]
     #: Trio token to keep track of threaded tasks
     _trio_token: trio.lowlevel.TrioToken | None
 
@@ -129,18 +134,32 @@ class TrioScheduler(Service, BaseScheduler):
         self._is_shutting_down = False
 
     def add_executable_channel(
-        self, channel: Channel[Callable | tuple[Callable, BaseTrigger]]
+        self,
+        channel: Channel[
+            tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
+        ],
     ):
         self._executable_receiver = channel
 
-    async def on_start(self) -> None:
+    async def on_start(self):
         self._configure({"_nursery": self._nursery, "_trio_token": self._trio_token})
-
         BaseScheduler.start(self, paused=False)
-        async for executable in self._executable_receiver:
-            if isinstance(executable, tuple):
-                func, trigger = executable
-                _ = self.add_job(func=func, trigger=trigger)
+
+        async for cmd, payload in self._executable_receiver:
+            if cmd is SchedulerCommand.ADD:
+                job_id, trigger, func = payload
+                job = self.add_job(func=func, trigger=trigger, id=job_id)
+                logger.info(f"[Scheduler] Added job {job.id}")
+            # TODO EVICT should not be included in on_start
+            elif cmd is SchedulerCommand.EVICT:
+                job_id = payload
+                existed = self.evict_job_by_id(job_id)  # type ignore
+                if existed:
+                    logger.info(f"[Scheduler] Evicted job {job_id}")
+                else:
+                    logger.warning(
+                        f"[Scheduler] Evict failed — unknown job_id '{job_id}'"
+                    )
 
     async def on_stop(self) -> None:
         """Gracefully stop scheduler timer and executors."""
@@ -244,18 +263,18 @@ class TrioScheduler(Service, BaseScheduler):
         Do NOT call stop() here to avoid loops; the Service lifecycle handles it.
         """
 
-    def evict_job_by_id(self, job_id: str):
+    def evict_job_by_id(self, job_id: TaskId):
         """
         Immediately remove a job and cancel any pending executions.
         """
         job = self.get_job(job_id)
         if not job:
-            return
+            return False
         # Remove from jobstore
         self.remove_job(job_id)
 
         logger.debug(f"[{self.name}] Evicted job {job_id}")
-        return
+        return True
 
 
 if __name__ == "__main__":
