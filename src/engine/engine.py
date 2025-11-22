@@ -633,27 +633,24 @@ async def transform_executable(
     pl_ctx: pl.SQLContext,
     lookup_callbacks: dict[str, Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]],
 ) -> pl.DataFrame:
-    try:
-        logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
+    logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
 
-        # Register input df (from upstream)
-        pl_ctx.register("df", df)
+    # Register input df (from upstream)
+    pl_ctx.register("df", df)
 
-        # Register lookup if exist
-        for lookup_table_name, func in lookup_callbacks.items():
-            lookup_df = await func(df)
-            pl_ctx.register(lookup_table_name, lookup_df)
+    # Register lookup if exist
+    for lookup_table_name, func in lookup_callbacks.items():
+        lookup_df = await func(df)
+        pl_ctx.register(lookup_table_name, lookup_df)
 
-        transform_df = pl_ctx.execute(transform_query)
+    transform_df = pl_ctx.execute(transform_query)
 
-        epoch = int(time.time() * 1_000)
-        # invert is_materialized for truncate
-        # if is_materialized -> truncate = False -> append mode
-        # if not is_materialized -> truncate = True -> truncate mode (overwrite)
-        await cache(transform_df, -1, epoch, name, backend_conn, not is_materialized)
-        # update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
-    except Exception as e:
-        logger.error(e)
+    epoch = int(time.time() * 1_000)
+    # invert is_materialized for truncate
+    # if is_materialized -> truncate = False -> append mode
+    # if not is_materialized -> truncate = True -> truncate mode (overwrite)
+    await cache(transform_df, -1, epoch, name, backend_conn, not is_materialized)
+    # update_batch_id_in_view_metadata(conn, name, batch_id + 1, is_materialized)
 
     return transform_df
 
