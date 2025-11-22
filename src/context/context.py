@@ -179,7 +179,16 @@ class DropContext(ValidContext):
     metadata: str
     metadata_column: str
     name: str
-    user_query: str
+
+
+@dataclass
+class DropCascadeContext(DropContext):
+    pass
+
+
+@dataclass
+class DropSimpleContext(DropContext):
+    pass
 
 
 @dataclass

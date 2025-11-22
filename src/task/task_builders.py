@@ -1,6 +1,7 @@
-from typing import Type, Callable, Dict
+from typing import Callable, Dict
 
 from context.context import (
+    CreateContext,
     CreateSinkContext,
     CreateHTTPSourceContext,
     CreateHTTPTableContext,
@@ -26,14 +27,14 @@ from task.task import (
 )
 from loguru import logger
 
-TASK_BUILDERS: Dict[Type, Callable] = {}
+TASK_BUILDERS: Dict[type, Callable] = {}
 
 # ----------------------------
 # Registry decorator
 # ----------------------------
 
 
-def task_builder(ctx_type: Type):
+def task_builder(ctx_type: type[CreateContext]):
     def wrapper(func):
         TASK_BUILDERS[ctx_type] = func
         return func
@@ -60,7 +61,9 @@ def build_sink(manager, ctx: CreateSinkContext):
 
 @task_builder(CreateHTTPTableContext)
 @task_builder(CreateHTTPSourceContext)
-def build_http_scheduled(manager, ctx):
+def build_http_scheduled(
+    manager, ctx: CreateHTTPTableContext | CreateHTTPSourceContext
+):
     task = ScheduledSourceTask[ctx._out_type](
         ctx.name,
         manager.backend_conn,
@@ -75,7 +78,7 @@ def build_http_scheduled(manager, ctx):
 
 @task_builder(CreateWSTableContext)
 @task_builder(CreateWSSourceContext)
-def build_ws(manager, ctx):
+def build_ws(manager, ctx: CreateWSTableContext | CreateWSSourceContext):
     task = ContinuousSourceTask[ctx._out_type](
         ctx.name, manager.backend_conn, manager._nursery
     )
@@ -89,13 +92,13 @@ def build_ws(manager, ctx):
 
 
 @task_builder(CreateHTTPLookupTableContext)
-def build_lookup(manager, ctx):
+def build_lookup(manager, ctx: CreateHTTPLookupTableContext):
     build_lookup_table_prehook(ctx, manager.backend_conn)
     return None
 
 
 @task_builder(CreateViewContext)
-def build_view(manager, ctx):
+def build_view(manager, ctx: CreateViewContext):
     task = TransformTask[ctx._out_type](ctx.name, manager.transform_conn)
 
     for upstream in ctx.upstreams:

@@ -37,6 +37,31 @@ class TaskGraph:
             self.add_edge(parent, child)
 
     # ──────────────────────────────────────────────
+    # DROP LEAF
+    # ──────────────────────────────────────────────
+
+    def is_a_leaf(self, name: str) -> bool:
+        return name in self.leaves
+
+    def drop_leaf(self, name: str):
+        """Drop a single leaf-like vertex (children already removed)."""
+        # Remove node
+        self.nodes.discard(name)
+        self.leaves.discard(name)
+
+        # Remove from parents
+        for p in list(self.parents.get(name, [])):
+            self.children[p].discard(name)
+            if not self.children[p]:
+                self.leaves.add(p)
+
+        # Cleanup maps
+        if name in self.parents:
+            del self.parents[name]
+        if name in self.children:
+            del self.children[name]
+
+    # ──────────────────────────────────────────────
     # RECURSIVE DROP
     # ──────────────────────────────────────────────
 
@@ -54,7 +79,7 @@ class TaskGraph:
 
         # reverse ensures children dropped first (safe order)
         for n in reversed(to_drop):
-            self._drop_single(n)
+            self.drop_leaf(n)
 
         return to_drop
 
@@ -63,21 +88,3 @@ class TaskGraph:
         acc.append(name)
         for child in self.children.get(name, []):
             self._collect_descendants(child, acc)
-
-    def _drop_single(self, name: str):
-        """Drop a single leaf-like vertex (children already removed)."""
-        # Remove node
-        self.nodes.discard(name)
-        self.leaves.discard(name)
-
-        # Remove from parents
-        for p in list(self.parents.get(name, [])):
-            self.children[p].discard(name)
-            if not self.children[p]:
-                self.leaves.add(p)
-
-        # Cleanup maps
-        if name in self.parents:
-            del self.parents[name]
-        if name in self.children:
-            del self.children[name]

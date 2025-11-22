@@ -10,6 +10,8 @@ from scheduler.types import SchedulerCommand
 from context.context import (
     CreateContext,
     DropContext,
+    DropSimpleContext,
+    DropCascadeContext,
 )
 from apscheduler.triggers.cron import CronTrigger
 
@@ -110,21 +112,21 @@ class TaskManager(Service):
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
-        self._nursery.start_soon(self._create)
+        self._nursery.start_soon(self._process)
 
     async def on_stop(self):
         """Close channel."""
         await self._scheduled_executables.aclose()
         await self._tasks_to_supervise.aclose()
 
-    async def _create(self):
+    async def _process(self):
         async for ctx in self._task_events:
             if isinstance(ctx, CreateContext):
-                await self._register_one_task(ctx)
+                await self._create_task(ctx)
             elif isinstance(ctx, DropContext):
-                await self._delete(ctx)
+                await self._delete_task(ctx)
 
-    async def _register_one_task(self, ctx: CreateContext):
+    async def _create_task(self, ctx: CreateContext):
         """Create a task from context, register it, add graph deps, start supervisor."""
         builder = TASK_BUILDERS.get(type(ctx))
 
@@ -149,30 +151,52 @@ class TaskManager(Service):
                 await self._tasks_to_supervise.send((SupervisorCommand.START, task))
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
-    async def _delete(self, ctx: DropContext):
+    async def _delete_task(self, ctx: DropContext):
         name = ctx.name
 
-        dropped_from_graph = self.graph.drop_recursive(name)
-        if not dropped_from_graph:
-            logger.warning(f"[TaskManager] nothing to drop for '{name}'")
-            return
-
-        for n in dropped_from_graph:
-            task, has_data = self.catalog.get(n)
+        if isinstance(ctx, DropSimpleContext):
+            is_leaf = self.graph.is_a_leaf(name)
+            if not is_leaf:
+                logger.warning(f"[TaskManager] task is not a leaf '{name}'")
+                return
+            self.graph.drop_leaf(name)
+            task, has_data = self.catalog.get(name)
             if task:
-                # remove from scheduler or supervisor
-                if isinstance(task, ScheduledSourceTask):
-                    await self._scheduled_executables.send(
-                        (SchedulerCommand.EVICT, task.task_id)
-                    )
-                else:
-                    await self._tasks_to_supervise.send((SupervisorCommand.STOP, task))
-                await task.on_stop()
-                self.catalog.remove(task)
-                del task
-            # TODO: refactor later, need to delete dependencies metadata
-            delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, n)
-            # if has_data:
-            #     self.backend_conn.sql(ctx.user_query)
+                await self._delete_task_from_system(task, ctx, name, has_data)
+            logger.success(f"[TaskManager] dropped task: {name}")
 
-        logger.success(f"[TaskManager] dropped tasks: {dropped_from_graph}")
+        if isinstance(ctx, DropCascadeContext):
+            dropped_from_graph = self.graph.drop_recursive(name)
+            if not dropped_from_graph:
+                logger.warning(f"[TaskManager] nothing to drop for '{name}'")
+                return
+
+            for n in dropped_from_graph:
+                task, has_data = self.catalog.get(n)
+                if task:
+                    await self._delete_task_from_system(task, ctx, n, has_data)
+
+            logger.success(f"[TaskManager] dropped cascade tasks: {dropped_from_graph}")
+
+    async def _delete_task_from_system(
+        self, task: BaseTask, ctx: DropContext, name: str, has_data: bool
+    ):
+        if isinstance(task, ScheduledSourceTask):
+            # If task is a ScheduledSourceTask, evict it from the scheduler
+            await self._scheduled_executables.send(
+                (SchedulerCommand.EVICT, task.task_id)
+            )
+        else:
+            # Otherwise, stop supervising it
+            await self._tasks_to_supervise.send((SupervisorCommand.STOP, task))
+
+        # Stop and clean up the task
+        await task.on_stop()
+        self.catalog.remove(task)
+        del task
+        # Delete associated metadata
+        # TODO: refactor later, need to delete dependencies metadata (For CASCADE and others SECRET, LOOKUP etc)
+        delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
+        if has_data:
+            sql_query = f"DROP TABLE {name}"
+            self.backend_conn.sql(sql_query)

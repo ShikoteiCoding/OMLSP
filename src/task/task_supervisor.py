@@ -39,7 +39,7 @@ class TaskSupervisor(Service):
                 case SupervisorCommand.STOP:
                     self._stop_supervising_task(task)
 
-        logger.info("[Supervisor] command channel closed")
+        logger.debug("[Supervisor] command channel closed")
 
     def _start_supervising_task(self, task: BaseTask):
         if task.task_id in self._active:

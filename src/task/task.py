@@ -31,16 +31,11 @@ class BaseTask(Service, Generic[T]):
     #: Cancel event allows other tasks to be notified when this task is being stopped
     _cancel_event: trio.Event
 
-    _subscribed_to: set[TaskId]  # upstreams
-    _dependents: set[TaskId]  # downstreams
-
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection):
         super().__init__(name=task_id)
         self.task_id = task_id
         self.conn = conn
         self._cancel_event = trio.Event()
-        self._subscribed_to = set()  # upstreams
-        self._dependents = set()  # downstreams
 
     def register(self, executable: Callable[..., Any]) -> BaseTask:
         """Attach the executable coroutine or function to this task."""
@@ -102,8 +97,6 @@ class BaseTaskReceiver(BaseTask[T]):
 
     def subscribe(self, sender: "BaseTaskSender"):
         self._receivers.append(sender.get_sender().clone())
-        self._subscribed_to.add(sender.task_id)
-        sender._dependents.add(self.task_id)
 
 
 class ScheduledSourceTask(BaseTaskSender, Generic[T]):

@@ -28,6 +28,8 @@ from context.context import (
     SetContext,
     ShowContext,
     DropContext,
+    DropSimpleContext,
+    DropCascadeContext,
 )
 from metadata.db import (
     METADATA_TABLE_TABLE_NAME,
@@ -715,7 +717,6 @@ def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
     drop_type = statement.kind
     metadata = ""
     metadata_column = ""
-
     match drop_type:
         case "TABLE":
             metadata = METADATA_TABLE_TABLE_NAME
@@ -740,15 +741,27 @@ def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
         case _:
             return InvalidContext(reason=f"Unknown drop type - {drop_type}")
 
-    name = sql.replace(";", "").split()[-1]
-    user_query = sql.replace(drop_type, "TABLE")
+    sql_parts = sql.replace(";", "").split()
 
-    return DropContext(
+    # validate enough tokens exist
+    if len(sql_parts) < 3:
+        return InvalidContext(reason=f"Malformed DROP statement - {sql}")
+
+    cascade = bool(statement.args.get("cascade", False))
+
+    if cascade:
+        return DropCascadeContext(
+            drop_type=drop_type,
+            metadata=metadata,
+            metadata_column=metadata_column,
+            name=sql_parts[-2],
+        )
+
+    return DropSimpleContext(
         drop_type=drop_type,
         metadata=metadata,
         metadata_column=metadata_column,
-        name=name,
-        user_query=user_query,
+        name=sql_parts[-1],
     )
 
 
