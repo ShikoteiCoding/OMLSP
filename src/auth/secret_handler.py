@@ -6,7 +6,7 @@ from duckdb import DuckDBPyConnection
 from typing import Any
 
 from auth.types import SecretsHandlerT
-from metadata import get_secret_value_by_name
+from store import get_secret_value_by_name
 
 
 class SecretsHandler(SecretsHandlerT):

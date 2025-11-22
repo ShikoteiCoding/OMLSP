@@ -28,7 +28,7 @@ from context.context import (
     SetContext,
     ShowContext,
 )
-from metadata.db import (
+from store.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
     METADATA_SINK_TABLE_NAME,

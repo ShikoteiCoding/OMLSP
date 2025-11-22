@@ -6,7 +6,6 @@ from duckdb import DuckDBPyConnection
 from apscheduler.triggers.base import BaseTrigger
 
 from channel import Channel
-from scheduler import TrioScheduler
 from context.context import (
     CreateContext,
     CreateHTTPSourceContext,
@@ -18,13 +17,12 @@ from context.context import (
     CreateWSTableContext,
 )
 from engine.engine import (
-    build_lookup_table_prehook,
+    build_lookup_callback,
     build_continuous_source_executable,
     build_scheduled_source_executable,
     build_sink_executable,
     build_transform_executable,
 )
-
 from task.task import (
     TaskId,
     BaseTask,
@@ -35,8 +33,9 @@ from task.task import (
     TransformTask,
 )
 from task.task_supervisor import TaskSupervisor
-
+from scheduler import TrioScheduler
 from services import Service
+from store.lookup import callback_store
 
 from typing import Callable
 
@@ -160,9 +159,8 @@ class TaskManager(Service):
             )
 
         elif isinstance(ctx, CreateHTTPLookupTableContext):
-            # TODO: is this the place to build lookup ? grr
-            build_lookup_table_prehook(ctx, self.backend_conn)
-            logger.success(f"[TaskManager] registered lookup executables '{task_id}'")
+            callback_store.add(*build_lookup_callback(ctx, self.backend_conn))
+            logger.success("[TaskManager] registered lookup executables '{}'", task_id)
 
         elif isinstance(ctx, CreateViewContext):
             task = TransformTask[ctx._out_type](task_id, self.transform_conn)

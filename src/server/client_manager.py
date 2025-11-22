@@ -67,6 +67,9 @@ class ClientManager(Service):
                     pass
         logger.success(f"[{self.name}] stopped.")
 
+    # TODO: handler of trio.serve_tcp should be awaitable
+    # Our current implementation is a never ending loop with
+    # custom stream handling. Need to find correct implementation
     async def _handle_client(self, stream: trio.SocketStream):
         client_addr = stream.socket.getpeername()
         client_id = f"{client_addr[0]}:{client_addr[1]}"
