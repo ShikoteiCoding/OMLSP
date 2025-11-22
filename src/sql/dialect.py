@@ -46,7 +46,6 @@ def _show_parser(
 class OmlspDialect(Dialect):
     class Tokenizer(tokens.Tokenizer):
         KEYWORDS = {
-            # TODO: ADD SOURCE HERE
             **tokens.Tokenizer.KEYWORDS,
             "SHOW": TokenType.SHOW,
             "SINK": TokenType.SINK,
@@ -71,6 +70,7 @@ class OmlspDialect(Dialect):
             "MATERIALIZED VIEWS": _show_parser("MATERIALIZED VIEWS"),
             "SECRETS": _show_parser("SECRETS"),
             "SINKS": _show_parser("SINKS"),
+            "SOURCES": _show_parser("SOURCES"),
         }
 
         STATEMENT_PARSERS = {

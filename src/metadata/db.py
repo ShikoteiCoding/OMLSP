@@ -318,3 +318,16 @@ def resolve_schema(con, relation: str | SelectContext):
         sql = f"SELECT * FROM {relation}"
         schema = get_table_schema(con, relation)
     return sql, schema
+
+
+def delete_metadata(
+    conn: DuckDBPyConnection,
+    kind: str,
+    column: str,
+    name: str,
+) -> None:
+    """
+    Delete a metadata entry of the given kind, name and column
+    """
+
+    conn.execute(f"DELETE FROM {kind} WHERE {column} = ?", [name])

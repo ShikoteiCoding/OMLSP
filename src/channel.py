@@ -1,4 +1,5 @@
 from typing import Generic, TypeVar
+from loguru import logger
 
 import trio
 
@@ -35,13 +36,12 @@ class Channel(Generic[T]):
         if self._closed.is_set():
             return
         self._closed.set()
-        # Close all subscriber send channels
+        logger.debug(f"[Channel] closing {len(self._subscribers)} subscribers")
         for sub in self._subscribers:
             await sub.aclose()
         self._subscribers.clear()
-        # Close the primary channels
         await self._send_ch.aclose()
-        await self._recv_ch.aclose()
+        logger.debug("[Channel] send side closed")
 
     def __aiter__(self):
         return self
