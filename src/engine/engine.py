@@ -12,7 +12,7 @@ from duckdb.functional import FunctionNullHandling, PythonUDFType
 from duckdb.typing import VARCHAR, DuckDBPyType
 from functools import partial
 from string import Template
-from typing import Any, AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Type
+from typing import Any, AsyncGenerator, Awaitable, Callable, Iterable, Type
 
 from duckdb import struct_type
 from loguru import logger
@@ -388,7 +388,7 @@ async def ws_source_executable(
 
 def build_scheduled_source_executable(
     ctx: CreateHTTPSourceContext | CreateHTTPTableContext,
-) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
+) -> Callable[[str, DuckDBPyConnection], Awaitable[pl.DataFrame]]:
     requester = (
         TransportBuilder(ctx.properties)
         .option("mode", "async")
@@ -598,7 +598,7 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
 
 def build_sink_executable(
     ctx: CreateSinkContext, backend_conn: DuckDBPyConnection
-) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
+) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
@@ -641,9 +641,7 @@ async def kafka_sink(
 
 def build_transform_executable(
     ctx: CreateViewContext, backend_conn: DuckDBPyConnection
-) -> Callable[
-    [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
-]:
+) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[pl.DataFrame]]:
     from_table = ctx.upstreams[0]
     duckdb_tables = get_tables(backend_conn)
     substitute_mapping = {}
