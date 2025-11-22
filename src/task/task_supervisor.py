@@ -64,5 +64,3 @@ class TaskSupervisor(Service):
                 logger.debug(f"[{task.task_id}] retrying in {backoff:.1f}s")
                 await trio.sleep(backoff)
                 attempt += 1
-            finally:
-                await task.on_stop()
