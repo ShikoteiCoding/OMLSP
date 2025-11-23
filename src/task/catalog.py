@@ -3,7 +3,7 @@ from __future__ import annotations
 from task.task import BaseTask
 from task.types import TaskId, HasData
 from context.context import CreateContext
-from metadata.db import (
+from store.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
     METADATA_SINK_TABLE_NAME,
