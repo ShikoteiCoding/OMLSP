@@ -90,4 +90,4 @@ class TaskCatalog:
         return task_id in self._task_id_to_task
 
 
-task_catalog = TaskCatalog.get_instance()
+catalog = TaskCatalog.get_instance()

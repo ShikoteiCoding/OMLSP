@@ -1,12 +1,45 @@
+from __future__ import annotations
+
 from collections import defaultdict
 
 
 class TaskGraph:
+    """
+    Graph of dependancy between running taks
+    """
+
+    #: Flag to detect init
+    _instanciated: bool = False
+
+    #: Singleton instance
+    _instance: TaskGraph
+
+    nodes: set
+    #: parent → {children}
+    children: defaultdict
+    #: child  → {parents}
+    parents: defaultdict
+    leaves: set
+
     def __init__(self):
+        raise NotImplementedError("Singleton — use TaskGraph.get_instance()")
+
+    def init(self):
         self.nodes = set()
-        self.children = defaultdict(set)  # parent → {children}
-        self.parents = defaultdict(set)  # child  → {parents}
+        self.children = defaultdict(set)
+        self.parents = defaultdict(set)
         self.leaves = set()
+
+    @classmethod
+    def get_instance(cls) -> TaskGraph:
+        if cls._instanciated:
+            return cls._instance
+
+        cls._instance = cls.__new__(cls)
+        cls._instance.init()
+        cls._instanciated = True
+
+        return cls._instance
 
     def ensure_vertex(self, node_id: str):
         """Make sure a node exists even without edges."""
@@ -75,3 +108,6 @@ class TaskGraph:
         acc.append(node_id)
         for child in self.children.get(node_id, []):
             self._collect_descendants(child, acc)
+
+
+dependency_grah = TaskGraph.get_instance()

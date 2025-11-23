@@ -24,8 +24,8 @@ from task.types import TaskId
 
 
 from task.supervisor import TaskSupervisor
-from task.dependency_graph import TaskGraph
-from task.catalog import task_catalog
+from task.dependency_graph import dependency_grah
+from task.catalog import catalog
 from task.builder_registry import TASK_REGISTER
 
 from metadata import delete_metadata
@@ -49,8 +49,6 @@ class TaskManager(Service):
     scheduler: TrioScheduler
     #: Supervisor to restart tasks
     supervisor: TaskSupervisor
-    #: Graph of dependancy between running taks
-    graph: TaskGraph
 
     #: Reference to all sources by task id
     #: TODO: to deprecate for below mapping
@@ -80,7 +78,6 @@ class TaskManager(Service):
             tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
         ](100)
         self._tasks_to_supervise = Channel[BaseTask](100)
-        self.graph = TaskGraph()
 
     def add_taskctx_channel(self, channel: Channel[CreateContext | DropContext]):
         self._task_events = channel
@@ -133,14 +130,14 @@ class TaskManager(Service):
         # Register the task
         task = builder(self, ctx)
 
-        self.graph.ensure_vertex(ctx.name)
+        dependency_grah.ensure_vertex(ctx.name)
         # Register dependencies in the graph
         for parent in getattr(ctx, "upstreams", []):
-            self.graph.add_vertex(parent, ctx.name)
+            dependency_grah.add_vertex(parent, ctx.name)
 
         # Start supervised
         if task:
-            task_catalog.add(task, ctx.has_data, type(ctx))
+            catalog.add(task, ctx.has_data, type(ctx))
             # Scheduled tasks run unsupervised
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
@@ -152,12 +149,12 @@ class TaskManager(Service):
         name = ctx.name
 
         if isinstance(ctx, DropSimpleContext):
-            is_leaf = self.graph.is_a_leaf(name)
+            is_leaf = dependency_grah.is_a_leaf(name)
             if not is_leaf:
                 logger.warning(f"[TaskManager] task is not a leaf '{name}'")
                 return
-            self.graph.drop_leaf(name)
-            task, has_data, metadata_table, metadata_column = task_catalog.get(name)
+            dependency_grah.drop_leaf(name)
+            task, has_data, metadata_table, metadata_column = catalog.get(name)
             if task:
                 await self._delete_task_from_system(
                     task, name, has_data, metadata_table, metadata_column
@@ -165,13 +162,13 @@ class TaskManager(Service):
             logger.success(f"[TaskManager] dropped task: {name}")
 
         if isinstance(ctx, DropCascadeContext):
-            dropped_from_graph = self.graph.drop_recursive(name)
+            dropped_from_graph = dependency_grah.drop_recursive(name)
             if not dropped_from_graph:
                 logger.warning(f"[TaskManager] nothing to drop for '{name}'")
                 return
 
             for n in dropped_from_graph:
-                task, has_data, metadata_table, metadata_column = task_catalog.get(n)
+                task, has_data, metadata_table, metadata_column = catalog.get(n)
                 if task:
                     await self._delete_task_from_system(
                         task, n, has_data, metadata_table, metadata_column
@@ -193,7 +190,7 @@ class TaskManager(Service):
                 (SchedulerCommand.EVICT, task.task_id)
             )
         # Stop and clean up the task
-        task_catalog.remove(task)
+        catalog.remove(task)
         await task.on_stop()
         del task
         # Delete associated metadata

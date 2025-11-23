@@ -4,7 +4,7 @@ from task.task import BaseTask
 from channel import Channel
 from services import Service
 
-from task.catalog import task_catalog
+from task.catalog import catalog
 
 
 class TaskSupervisor(Service):
@@ -41,7 +41,7 @@ class TaskSupervisor(Service):
         attempt = 1
         backoff_base = 2.0
 
-        while task_catalog.has_task(task_id):
+        while catalog.has_task(task_id):
             try:
                 async with trio.open_nursery() as n:
                     task._nursery = n  # rebind nursery each cycle
