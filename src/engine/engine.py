@@ -430,7 +430,7 @@ def build_lookup_functions(
                         result.append(
                             _coerce_result_dict(default_response, pa_field_types)
                         )
-                # assume empty list or None. canno't extract anything
+                # assume empty list or None. cannot extract anything
                 # from response, just create an "empty" dict
                 else:
                     coerced = _coerce_result_dict(default_response, pa_field_types)
