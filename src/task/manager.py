@@ -3,6 +3,7 @@ Task Manager managing registration and running of Tasks.
 """
 
 from duckdb import DuckDBPyConnection
+from numpy import isin
 
 from channel import Channel
 from scheduler.scheduler import TrioScheduler
@@ -12,6 +13,7 @@ from context.context import (
     DropContext,
     DropSimpleContext,
     DropCascadeContext,
+    CreateHTTPLookupTableContext
 )
 from apscheduler.triggers.cron import CronTrigger
 
@@ -29,10 +31,11 @@ from task.catalog import catalog
 from task.builder_registry import TASK_REGISTER
 
 from store import delete_metadata
+from store.lookup import callback_store
 
 from services import Service
 
-from typing import Callable
+from typing import Callable, Optional
 
 from loguru import logger
 
@@ -126,6 +129,7 @@ class TaskManager(Service):
 
     async def _create_task(self, ctx: CreateContext):
         """Create a task from context, register it, add graph deps, start supervisor."""
+        name = ctx.name
         builder = TASK_REGISTER.get(type(ctx))
 
         if not builder:
@@ -134,14 +138,18 @@ class TaskManager(Service):
         # Register the task
         task = builder(self, ctx)
 
-        dependency_grah.ensure_vertex(ctx.name)
+        dependency_grah.ensure_vertex(name)
         # Register dependencies in the graph
         for parent in getattr(ctx, "upstreams", []):
             dependency_grah.add_vertex(parent, ctx.name)
+        # Add to catalog
+        if isinstance(ctx, CreateHTTPLookupTableContext):
+            catalog.add(name, None, ctx.has_data, type(ctx), lambda: callback_store.delete(ctx.name))
+        else:
+            catalog.add(name, task, ctx.has_data, type(ctx))
 
         # Start supervised
         if task:
-            catalog.add(task, ctx.has_data, type(ctx))
             # Scheduled tasks run unsupervised
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
@@ -158,11 +166,10 @@ class TaskManager(Service):
                 logger.warning(f"[TaskManager] task is not a leaf '{name}'")
                 return
             dependency_grah.drop_leaf(name)
-            task, has_data, metadata_table, metadata_column = catalog.get(name)
-            if task:
-                await self._delete_task_from_system(
-                    task, name, has_data, metadata_table, metadata_column
-                )
+            task, has_data, metadata_table, metadata_column, cleanup_callback = catalog.get(name)
+            await self._delete_task_from_system(
+                task, name, has_data, metadata_table, metadata_column, cleanup_callback
+            )
             logger.success(f"[TaskManager] dropped task: {name}")
 
         if isinstance(ctx, DropCascadeContext):
@@ -172,33 +179,39 @@ class TaskManager(Service):
                 return
 
             for n in dropped_from_graph:
-                task, has_data, metadata_table, metadata_column = catalog.get(n)
-                if task:
-                    await self._delete_task_from_system(
-                        task, n, has_data, metadata_table, metadata_column
-                    )
+                task, has_data, metadata_table, metadata_column, cleanup_callback = catalog.get(n)
+                await self._delete_task_from_system(
+                    task, n, has_data, metadata_table, metadata_column, cleanup_callback
+                )
 
             logger.success(f"[TaskManager] dropped cascade tasks: {dropped_from_graph}")
 
     async def _delete_task_from_system(
         self,
-        task: BaseTask,
+        task: BaseTask | None,
         name: str,
         has_data: bool,
         metadata_table: str,
         metadata_column: str,
+        cleanup_callback: Optional[Callable]
     ):
+        
+        #callback cleanup (lookup removal)
+        if cleanup_callback:
+            cleanup_callback()
+
         if isinstance(task, ScheduledSourceTask):
             # If task is a ScheduledSourceTask, evict it from the scheduler
             await self._scheduled_executables.send(
                 (SchedulerCommand.EVICT, task.task_id)
             )
         # Stop and clean up the task
-        catalog.remove(task)
-        await task.on_stop()
-        del task
+        catalog.remove(name)
+        if task:
+            await task.on_stop()
+            del task
         # Delete associated metadata
-        # TODO: DROP SECRET, MACRO etc
+        # TODO: DROP SECRET
         delete_metadata(self.backend_conn, metadata_table, metadata_column, name)
         if has_data:
             sql_query = f"DROP TABLE {name}"
