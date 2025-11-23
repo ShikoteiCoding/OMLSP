@@ -11,8 +11,8 @@ from app import App
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
-from task.task_manager import TaskManager
-from task.task_supervisor import TaskSupervisor
+from task.manager import TaskManager
+from task.supervisor import TaskSupervisor
 
 
 PROPERTIES_SCHEMA = json.loads(
