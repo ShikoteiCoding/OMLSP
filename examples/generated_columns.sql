@@ -31,12 +31,14 @@ WITH (
 );
 
 -- Get ohlc data provided symbols
--- NOTE: maybe source is more what a lookup is
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
+    -- Generated fields from upstream
     $start_at BIGINT,
     $end_at BIGINT,
     start_time TIMESTAMP,
+    -- Generated field at lookup level
+    end_time TIMESTAMP AS (start_time + INTERVAL 1 MINUTE),
     open FLOAT,
     high FLOAT,
     low FLOAT,
@@ -66,6 +68,7 @@ SELECT
     oh.start_at,
     oh.end_at,
     oh.start_time,
+    oh.end_time,
     open,
     high,
     low,
