@@ -143,7 +143,9 @@ class TaskManager(Service):
 
         # Start supervised
         if task:
-            self.catalog.add(task, ctx.has_data)
+            # drop udf + macro for lookup
+            # drop secret -> need secret name
+            self.catalog.add(task, ctx.has_data, type(ctx))
             # Scheduled tasks run unsupervised
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
@@ -160,9 +162,11 @@ class TaskManager(Service):
                 logger.warning(f"[TaskManager] task is not a leaf '{name}'")
                 return
             self.graph.drop_leaf(name)
-            task, has_data = self.catalog.get(name)
+            task, has_data, metadata_table, metadata_column = self.catalog.get(name)
             if task:
-                await self._delete_task_from_system(task, ctx, name, has_data)
+                await self._delete_task_from_system(
+                    task, name, has_data, metadata_table, metadata_column
+                )
             logger.success(f"[TaskManager] dropped task: {name}")
 
         if isinstance(ctx, DropCascadeContext):
@@ -172,14 +176,21 @@ class TaskManager(Service):
                 return
 
             for n in dropped_from_graph:
-                task, has_data = self.catalog.get(n)
+                task, has_data, metadata_table, metadata_column = self.catalog.get(n)
                 if task:
-                    await self._delete_task_from_system(task, ctx, n, has_data)
+                    await self._delete_task_from_system(
+                        task, n, has_data, metadata_table, metadata_column
+                    )
 
             logger.success(f"[TaskManager] dropped cascade tasks: {dropped_from_graph}")
 
     async def _delete_task_from_system(
-        self, task: BaseTask, ctx: DropContext, name: str, has_data: bool
+        self,
+        task: BaseTask,
+        name: str,
+        has_data: bool,
+        metadata_table: str,
+        metadata_column: str,
     ):
         if isinstance(task, ScheduledSourceTask):
             # If task is a ScheduledSourceTask, evict it from the scheduler
@@ -191,8 +202,8 @@ class TaskManager(Service):
         await task.on_stop()
         del task
         # Delete associated metadata
-        # TODO: refactor later, need to delete dependencies metadata (For CASCADE and others SECRET, LOOKUP etc)
-        delete_metadata(self.backend_conn, ctx.metadata, ctx.metadata_column, name)
+        # TODO: DROP SECRET, MACRO etc
+        delete_metadata(self.backend_conn, metadata_table, metadata_column, name)
         if has_data:
             sql_query = f"DROP TABLE {name}"
             self.backend_conn.sql(sql_query)

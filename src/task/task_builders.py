@@ -29,22 +29,14 @@ from loguru import logger
 
 TASK_BUILDERS: Dict[type, Callable] = {}
 
-# ----------------------------
+
 # Registry decorator
-# ----------------------------
-
-
 def task_builder(ctx_type: type[CreateContext]):
     def wrapper(func):
         TASK_BUILDERS[ctx_type] = func
         return func
 
     return wrapper
-
-
-# ----------------------------
-# Concrete builders
-# ----------------------------
 
 
 @task_builder(CreateSinkContext)

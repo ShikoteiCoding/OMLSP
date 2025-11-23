@@ -61,14 +61,14 @@ class TaskGraph:
         if node_id not in self.nodes:
             return []
 
-        to_drop = []
-        self._collect_descendants(node_id, to_drop)
+        dropped_from_graph = []
+        self._collect_descendants(node_id, dropped_from_graph)
 
         # reverse ensures children dropped first (safe order)
-        for n in reversed(to_drop):
+        dropped_from_graph = list(reversed(dropped_from_graph))
+        for n in dropped_from_graph:
             self.drop_leaf(n)
-
-        return to_drop
+        return dropped_from_graph
 
     def _collect_descendants(self, node_id: str, acc: list[str]):
         """DFS to collect all nodes reachable from node_id (including node)."""
