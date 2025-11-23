@@ -25,7 +25,7 @@ from task.types import TaskId
 
 from task.supervisor import TaskSupervisor
 from task.dependency_graph import TaskGraph
-from task.catalog import TaskCatalog
+from task.catalog import task_catalog
 from task.builder_registry import TASK_REGISTER
 
 from metadata import delete_metadata
@@ -49,8 +49,6 @@ class TaskManager(Service):
     scheduler: TrioScheduler
     #: Supervisor to restart tasks
     supervisor: TaskSupervisor
-    #: Catalog of running tasks
-    catalog: TaskCatalog
     #: Graph of dependancy between running taks
     graph: TaskGraph
 
@@ -82,7 +80,6 @@ class TaskManager(Service):
             tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
         ](100)
         self._tasks_to_supervise = Channel[BaseTask](100)
-        self.catalog = TaskCatalog()
         self.graph = TaskGraph()
 
     def add_taskctx_channel(self, channel: Channel[CreateContext | DropContext]):
@@ -143,7 +140,7 @@ class TaskManager(Service):
 
         # Start supervised
         if task:
-            self.catalog.add(task, ctx.has_data, type(ctx))
+            task_catalog.add(task, ctx.has_data, type(ctx))
             # Scheduled tasks run unsupervised
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
@@ -160,7 +157,7 @@ class TaskManager(Service):
                 logger.warning(f"[TaskManager] task is not a leaf '{name}'")
                 return
             self.graph.drop_leaf(name)
-            task, has_data, metadata_table, metadata_column = self.catalog.get(name)
+            task, has_data, metadata_table, metadata_column = task_catalog.get(name)
             if task:
                 await self._delete_task_from_system(
                     task, name, has_data, metadata_table, metadata_column
@@ -174,7 +171,7 @@ class TaskManager(Service):
                 return
 
             for n in dropped_from_graph:
-                task, has_data, metadata_table, metadata_column = self.catalog.get(n)
+                task, has_data, metadata_table, metadata_column = task_catalog.get(n)
                 if task:
                     await self._delete_task_from_system(
                         task, n, has_data, metadata_table, metadata_column
@@ -196,7 +193,7 @@ class TaskManager(Service):
                 (SchedulerCommand.EVICT, task.task_id)
             )
         # Stop and clean up the task
-        self.catalog.remove(task)
+        task_catalog.remove(task)
         await task.on_stop()
         del task
         # Delete associated metadata

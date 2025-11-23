@@ -51,7 +51,7 @@ async def main():
     task_manager.connect_scheduler(scheduler)
     # Connect TaskSupervisor to TaskManager
     # Catalog helps to know, tasks to run and supervise
-    supervisor = TaskSupervisor(catalog=task_manager.catalog)
+    supervisor = TaskSupervisor()
     task_manager.add_dependency(supervisor)
     task_manager.connect_supervisor(supervisor)
 

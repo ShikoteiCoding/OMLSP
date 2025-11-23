@@ -23,6 +23,12 @@ class TaskCatalog:
     Stores BaseTask objects and HasData bool by their task_id.
     """
 
+    #: Flag to detect init
+    _instanciated: bool = False
+
+    #: Singleton instance
+    _instance: TaskCatalog
+
     CTX_METADATA_MAP: dict[type, tuple[str, str]] = {
         CreateHTTPTableContext: (METADATA_TABLE_TABLE_NAME, "table_name"),
         CreateWSTableContext: (METADATA_TABLE_TABLE_NAME, "table_name"),
@@ -35,7 +41,21 @@ class TaskCatalog:
     _task_id_to_task: dict[TaskId, tuple[BaseTask, HasData, str, str]]
 
     def __init__(self):
+        raise NotImplementedError("Singleton — use TaskCatalog.get_instance()")
+
+    def init(self):
         self._task_id_to_task: dict[TaskId, tuple[BaseTask, HasData, str, str]] = {}
+
+    @classmethod
+    def get_instance(cls) -> TaskCatalog:
+        if cls._instanciated:
+            return cls._instance
+
+        cls._instance = cls.__new__(cls)
+        cls._instance.init()
+        cls._instanciated = True
+
+        return cls._instance
 
     def resolve_metadata(self, ctx_type: type) -> tuple[str, str]:
         return self.CTX_METADATA_MAP.get(
@@ -66,3 +86,5 @@ class TaskCatalog:
     def has_task(self, task_id: str) -> bool:
         """Check if the task is in the catalog."""
         return task_id in self._task_id_to_task
+
+task_catalog = TaskCatalog.get_instance()
