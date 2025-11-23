@@ -11,8 +11,8 @@ from app import App
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
-from task.task_manager import TaskManager
-from task.task_supervisor import TaskSupervisor
+from task.manager import TaskManager
+from task.supervisor import TaskSupervisor
 
 
 PROPERTIES_SCHEMA = json.loads(
@@ -51,7 +51,7 @@ async def main():
     task_manager.connect_scheduler(scheduler)
     # Connect TaskSupervisor to TaskManager
     # Catalog helps to know, tasks to run and supervise
-    supervisor = TaskSupervisor(catalog=task_manager.catalog)
+    supervisor = TaskSupervisor()
     task_manager.add_dependency(supervisor)
     task_manager.connect_supervisor(supervisor)
 

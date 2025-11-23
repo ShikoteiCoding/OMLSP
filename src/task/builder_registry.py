@@ -27,27 +27,19 @@ from task.task import (
 )
 from loguru import logger
 
-TASK_BUILDERS: Dict[type, Callable] = {}
+TASK_REGISTER: Dict[type, Callable] = {}
 
-# ----------------------------
+
 # Registry decorator
-# ----------------------------
-
-
-def task_builder(ctx_type: type[CreateContext]):
+def task_register(ctx_type: type[CreateContext]):
     def wrapper(func):
-        TASK_BUILDERS[ctx_type] = func
+        TASK_REGISTER[ctx_type] = func
         return func
 
     return wrapper
 
 
-# ----------------------------
-# Concrete builders
-# ----------------------------
-
-
-@task_builder(CreateSinkContext)
+@task_register(CreateSinkContext)
 def build_sink(manager, ctx: CreateSinkContext):
     task = SinkTask[ctx._out_type](ctx.name, manager.transform_conn)
     # TODO: subscribe to many upstreams
@@ -59,8 +51,8 @@ def build_sink(manager, ctx: CreateSinkContext):
     return task
 
 
-@task_builder(CreateHTTPTableContext)
-@task_builder(CreateHTTPSourceContext)
+@task_register(CreateHTTPTableContext)
+@task_register(CreateHTTPSourceContext)
 def build_http_scheduled(
     manager, ctx: CreateHTTPTableContext | CreateHTTPSourceContext
 ):
@@ -76,8 +68,8 @@ def build_http_scheduled(
     return task
 
 
-@task_builder(CreateWSTableContext)
-@task_builder(CreateWSSourceContext)
+@task_register(CreateWSTableContext)
+@task_register(CreateWSSourceContext)
 def build_ws(manager, ctx: CreateWSTableContext | CreateWSSourceContext):
     task = ContinuousSourceTask[ctx._out_type](
         ctx.name, manager.backend_conn, manager._nursery
@@ -91,13 +83,13 @@ def build_ws(manager, ctx: CreateWSTableContext | CreateWSSourceContext):
     return task
 
 
-@task_builder(CreateHTTPLookupTableContext)
+@task_register(CreateHTTPLookupTableContext)
 def build_lookup(manager, ctx: CreateHTTPLookupTableContext):
     callback_store.add(*build_lookup_callback(ctx, manager.backend_conn))
     return None
 
 
-@task_builder(CreateViewContext)
+@task_register(CreateViewContext)
 def build_view(manager, ctx: CreateViewContext):
     task = TransformTask[ctx._out_type](ctx.name, manager.transform_conn)
 
