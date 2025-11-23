@@ -40,7 +40,7 @@ class TaskCatalog:
     def resolve_metadata(self, ctx_type: type) -> tuple[str, str]:
         return self.CTX_METADATA_MAP.get(
             ctx_type,
-            (METADATA_TABLE_TABLE_NAME, "table_name"), # default
+            (METADATA_TABLE_TABLE_NAME, "table_name"),  # default
         )
 
     def add(

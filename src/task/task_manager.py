@@ -26,7 +26,7 @@ from task.types import TaskId
 from task.task_supervisor import TaskSupervisor
 from task.task_graph import TaskGraph
 from task.task_catalog import TaskCatalog
-from task.task_builders import TASK_BUILDERS
+from task.task_registry import TASK_REGISTER
 
 from metadata import delete_metadata
 
@@ -128,7 +128,7 @@ class TaskManager(Service):
 
     async def _create_task(self, ctx: CreateContext):
         """Create a task from context, register it, add graph deps, start supervisor."""
-        builder = TASK_BUILDERS.get(type(ctx))
+        builder = TASK_REGISTER.get(type(ctx))
 
         if not builder:
             logger.error(f"No task builder for context type: {type(ctx).__name__}")
@@ -143,8 +143,6 @@ class TaskManager(Service):
 
         # Start supervised
         if task:
-            # drop udf + macro for lookup
-            # drop secret -> need secret name
             self.catalog.add(task, ctx.has_data, type(ctx))
             # Scheduled tasks run unsupervised
             if isinstance(task, ScheduledSourceTask):
