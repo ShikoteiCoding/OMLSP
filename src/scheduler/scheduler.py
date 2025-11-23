@@ -124,6 +124,7 @@ class TrioScheduler(Service, BaseScheduler):
     _executable_receiver: Channel[
         tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
     ]
+
     #: Trio token to keep track of threaded tasks
     _trio_token: trio.lowlevel.TrioToken | None
 

@@ -16,20 +16,14 @@ from context.context import (
 METADATA_TABLE_TABLE_NAME = "__table_metadata"
 METADATA_SOURCE_TABLE_NAME = "__source_metadata"
 METADATA_VIEW_TABLE_NAME = "__view_metadata"
-METADATA_MACRO_TABLE_NAME = "__macro_metadata"
 METADATA_SINK_TABLE_NAME = "__sink_metadata"
 METADATA_SECRET_TABLE_NAME = "__secret_metadata"
 
 
 def init_metadata_store(conn: DuckDBPyConnection) -> None:
-    # Create table for lookup macro definition
-    macro_table_to_def = f"""
-    CREATE TABLE {METADATA_MACRO_TABLE_NAME} (
-        macro_name STRING,
-        fields STRING[]
-    );
     """
-    conn.execute(macro_table_to_def)
+    Initilize once the backend store.
+    """
 
     table_metadata = f"""
     CREATE TABLE {METADATA_TABLE_TABLE_NAME} (
@@ -133,35 +127,6 @@ def get_secret_value_by_name(conn: DuckDBPyConnection, secret_name: str) -> str:
     res: list[tuple] = conn.execute(query).fetchall()
 
     return res[0][0]
-
-
-def get_macro_definition_by_name(
-    conn: DuckDBPyConnection, macro_name: str
-) -> tuple[str, list[str]]:
-    query = f"""
-    SELECT 
-        macro_name,
-        fields
-    FROM {METADATA_MACRO_TABLE_NAME}
-    WHERE macro_name = '{macro_name}';
-    """
-    res = conn.execute(query).fetchall()
-
-    assert len(res) > 0, (
-        f"no result for macro definition {macro_name}, has it been registered ?"
-    )
-
-    return res[0]
-
-
-async def create_macro_definition(
-    conn: DuckDBPyConnection, macro_name: str, fields: list[str]
-) -> None:
-    query = f"""
-    INSERT INTO {METADATA_MACRO_TABLE_NAME} (macro_name, fields)
-    VALUES ('{macro_name}', {fields});
-    """
-    conn.execute(query)
 
 
 def get_lookup_tables(conn: DuckDBPyConnection) -> list[str]:

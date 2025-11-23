@@ -3,7 +3,9 @@ CREATE TABLE all_tickers (
     symbol STRING,
     symbolName STRING,
     buy FLOAT,
-    sell FLOAT
+    sell FLOAT,
+    start_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000 - (5 * 60)),
+    end_at BIGINT AS (TRIGGER_EPOCH_TIME() / 1000)
 )
 WITH (
     connector = 'http',
@@ -17,6 +19,8 @@ WITH (
 -- Get ohlc data provided symbols
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
+    $start_at BIGINT,
+    $end_at BIGINT,
     start_time TIMESTAMP,
     open FLOAT,
     high FLOAT,
@@ -27,7 +31,7 @@ CREATE TEMPORARY TABLE ohlc (
 )
 WITH (
     'connector' = 'lookup-http',
-    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=1753977000&endAt=1753977300',
+    'url' = 'https://api.kucoin.com/api/v1/market/candles?type=1min&symbol=$symbol&startAt=$start_at&endAt=$end_at',
     'method' = 'GET',
     'jq' = '.data[] | {
         start_time: (.[0] | tonumber),
@@ -42,10 +46,12 @@ WITH (
 );
 
 -- Materialized view leveraging all tickers + ohlc on lookup (request)
-CREATE MATERIALIZED VIEW ohlc_all_spot_tickers AS
+CREATE VIEW ohlc_all_spot_tickers AS
 SELECT
     ALT.symbol,
-    start_time,
+    oh.start_at,
+    oh.end_at,
+    oh.start_time,
     open,
     high,
     low,

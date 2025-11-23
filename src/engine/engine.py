@@ -8,7 +8,6 @@ import trio
 from confluent_kafka import Producer
 from datetime import datetime, timezone
 from duckdb import DuckDBPyConnection
-from duckdb.typing import DuckDBPyType
 from functools import partial
 from string import Template
 from typing import Any, AsyncGenerator, Awaitable, Callable, Iterable, Type
@@ -39,7 +38,6 @@ from store import (
     get_duckdb_tables,
     get_lookup_tables,
     get_tables,
-    get_macro_definition_by_name,
     update_batch_id_in_table_metadata,
     create_secret,
     create_sink,
@@ -385,16 +383,18 @@ def build_continuous_source_executable(
 def build_lookup_functions(
     properties: SourceHttpProperties,
     dynamic_columns: list[str],
-    return_type: DuckDBPyType,
+    columns: dict[str, str],
     backend_conn: DuckDBPyConnection,
 ) -> Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]:
+    # Create pyarrow type from sql DDL
+    # {"symbol": "TEXT"} -> {"symbol": pa.string()}
+    return_type = struct_type(columns)  # type: ignore
     child_types = []
     for subtype in return_type.children:
         child_types.append(
             pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
         )
-    return_type_arrow: pa.Schema = pa.struct(child_types)
-    field_types = {field.name: field.type for field in return_type_arrow}
+    pa_field_types = {field.name: field.type for field in pa.struct(child_types)}
 
     async def process_elements(
         rows: Iterable[tuple[Any, ...]],
@@ -406,6 +406,7 @@ def build_lookup_functions(
             context = dict(zip(dynamic_columns, row))
             lookup_properties = substitute_http_properties(properties, context)
             default_response = context.copy()
+            result = []
 
             requester = (
                 TransportBuilder(lookup_properties)
@@ -419,20 +420,30 @@ def build_lookup_functions(
                 # requester is an awaitable
                 response = await requester(backend_conn)
 
+                # single dict reply means only 1 record
                 if isinstance(response, dict):
-                    result = context | response
+                    result = [default_response | response]
+                # list assumes multiple records
                 elif isinstance(response, list) and len(response) >= 1:
-                    merged = default_response
-                    merged |= response[-1]
-                    result = _coerce_result_dict(merged, field_types)
+                    for row in response:
+                        default_response |= row
+                        result.append(
+                            _coerce_result_dict(default_response, pa_field_types)
+                        )
+                # assume empty list or None. canno't extract anything
+                # from response, just create an "empty" dict
                 else:
-                    result = _coerce_result_dict(default_response, field_types)
+                    coerced = _coerce_result_dict(default_response, pa_field_types)
+                    result.append(
+                        coerced
+                        | {k: None for k in columns if k not in set(coerced.keys())}
+                    )
 
             except Exception as e:
                 logger.exception("HTTP request failed: {}", e)
-                result = _coerce_result_dict(default_response, field_types)
+                result.append(_coerce_result_dict(default_response, pa_field_types))
 
-            results.append(result)
+            results.extend(result)
 
         async with trio.open_nursery() as nursery:
             for row in rows:
@@ -457,40 +468,11 @@ def build_lookup_callback(
     table_name = create_table_context.name
     dynamic_columns = create_table_context.dynamic_columns
     columns = create_table_context.columns
-    return_type = struct_type(columns)  # type: ignore
 
     return (
         table_name,
-        build_lookup_functions(properties, dynamic_columns, return_type, backend_conn),
+        build_lookup_functions(properties, dynamic_columns, columns, backend_conn),
     )
-
-
-def get_substitute_macro_definition(
-    conn: DuckDBPyConnection,
-    join_table: str,
-    from_table: str,
-    from_table_or_alias: str,
-    join_table_or_alias: str,
-) -> str:
-    # Lookup tables should go through a macro definition.
-    #
-    # This function returns macro definition which can be used in SQL statement.
-    #
-    # Example:
-    #     - table: ohlc
-    #     - returns: ohlc_macro("all_tickers", ALT.field1, ALT.field2)
-
-    macro_name, fields = get_macro_definition_by_name(conn, f"{join_table}_macro")
-    scalar_func_fields = ",".join(
-        [f"{from_table_or_alias}.{field}" for field in fields]
-    )
-    macro_definition = f'{macro_name}("{from_table}", {scalar_func_fields})'
-    if join_table_or_alias == join_table:
-        # TODO: fix bug, if table_name == alias
-        # JOIN ohlc AS ohlc
-        # -> this writes the AS statements and fails
-        macro_definition += f"AS {join_table_or_alias}"
-    return macro_definition
 
 
 # NOTE: To be deprecated once confirmed that we do not need
