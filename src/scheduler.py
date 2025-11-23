@@ -2,7 +2,7 @@ import sys
 import trio
 
 from apscheduler.schedulers.base import BaseScheduler
-from apscheduler.triggers.base import BaseTrigger
+from apscheduler.triggers.cron import CronTrigger
 from services import Service
 from channel import Channel
 from typing import Callable
@@ -117,7 +117,7 @@ class TrioScheduler(Service, BaseScheduler):
     _timer_cancel_scope: trio.CancelScope | None = None
 
     #: Executable receiver from TaskManager
-    _executable_receiver: Channel[Callable | tuple[Callable, BaseTrigger]]
+    _executable_receiver: Channel[tuple[Callable, CronTrigger]]
 
     #: Trio token to keep track of threaded tasks
     _trio_token: trio.lowlevel.TrioToken | None
@@ -128,9 +128,7 @@ class TrioScheduler(Service, BaseScheduler):
         self._trio_token = trio.lowlevel.current_trio_token()
         self._is_shutting_down = False
 
-    def add_executable_channel(
-        self, channel: Channel[Callable | tuple[Callable, BaseTrigger]]
-    ):
+    def add_executable_channel(self, channel: Channel[tuple[Callable, CronTrigger]]):
         self._executable_receiver = channel
 
     async def on_start(self) -> None:

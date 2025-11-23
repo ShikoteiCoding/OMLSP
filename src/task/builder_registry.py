@@ -12,13 +12,13 @@ from context.context import (
 )
 
 from engine.engine import (
-    build_lookup_table_prehook,
+    build_lookup_callback,
     build_continuous_source_executable,
     build_scheduled_source_executable,
     build_sink_executable,
     build_transform_executable,
 )
-
+from store.lookup import callback_store
 from task.task import (
     SinkTask,
     TransformTask,
@@ -85,7 +85,7 @@ def build_ws(manager, ctx: CreateWSTableContext | CreateWSSourceContext):
 
 @task_register(CreateHTTPLookupTableContext)
 def build_lookup(manager, ctx: CreateHTTPLookupTableContext):
-    build_lookup_table_prehook(ctx, manager.backend_conn)
+    callback_store.add(*build_lookup_callback(ctx, manager.backend_conn))
     return None
 
 

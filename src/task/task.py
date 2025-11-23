@@ -3,7 +3,7 @@ from __future__ import annotations
 import trio
 
 from duckdb import DuckDBPyConnection
-from typing import Any, AsyncGenerator, Callable, Coroutine, Generic
+from typing import Any, AsyncGenerator, Awaitable, Callable, Generic
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from services import Service
@@ -24,10 +24,11 @@ class BaseTask(Service, Generic[T]):
     conn: DuckDBPyConnection
 
     #: The executable function, core logic of the Task
-    _executable: Callable[..., Any]
+    _executable: Callable[..., Awaitable]
 
     #: Cancel scope for structured concurrency
     _cancel_scope: trio.CancelScope
+
     #: Cancel event allows other tasks to be notified when this task is being stopped
     _cancel_event: trio.Event
 
@@ -59,7 +60,9 @@ class BaseTask(Service, Generic[T]):
 
 
 class BaseTaskSender(BaseTask[T]):
+    #: Channel to write output for downstream tasks
     _sender: Channel[T]
+
     #: Sender watchguard
     _has_sender: bool = False
 
@@ -88,14 +91,14 @@ class BaseTaskSender(BaseTask[T]):
 
 
 class BaseTaskReceiver(BaseTask[T]):
-    # Channel to receive subscribers
+    # Channel to receive data from upstream tasks
     _receivers: list[Channel[T]]
 
     async def on_stop(self) -> None:
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_scope.cancel()
 
-    def subscribe(self, sender: "BaseTaskSender"):
+    def subscribe(self, sender: BaseTaskSender):
         self._receivers.append(sender.get_sender().clone())
 
 
@@ -130,7 +133,7 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         self._nursery.start_soon(_task_runner)
 
     def register(
-        self, executable: Callable[[TaskId, DuckDBPyConnection], Coroutine[Any, Any, T]]
+        self, executable: Callable[[TaskId, DuckDBPyConnection], Awaitable[T]]
     ) -> ScheduledSourceTask[T]:
         self._executable = executable
         return self
@@ -152,14 +155,14 @@ class ContinuousSourceTask(BaseTaskSender, Generic[T]):
         self,
         executable: Callable[
             [str, DuckDBPyConnection, trio.Nursery, trio.Event],
-            AsyncGenerator[Any, T],
+            AsyncGenerator[T, None],
         ],
     ) -> ContinuousSourceTask[T]:
-        self._executable = executable
+        self._executable = executable  # type: ignore
         return self
 
     async def run(self):
-        async for result in self._executable(
+        async for result in self._executable(  # type: ignore
             task_id=self.task_id,
             conn=self.conn,
             nursery=self.nursery,

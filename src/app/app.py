@@ -10,7 +10,7 @@ from context.context import (
     DropContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
-from metadata import (
+from store import (
     init_metadata_store,
 )
 from server import ClientManager
@@ -136,7 +136,7 @@ class App(Service):
             # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
-                result = self._eval_ctx(ctx)
+                result = await self._eval_ctx(ctx)
 
             # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):
@@ -165,8 +165,8 @@ class App(Service):
     # Client terminal gets "blocked" till response is received,
     # so it is safe to assume we can queue per client and defer
     # results to keep ordering per client
-    def _eval_ctx(self, ctx: EvaluableContext) -> str:
+    async def _eval_ctx(self, ctx: EvaluableContext) -> str:
         try:
-            return EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
+            return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
         except Exception as e:
             return f"Fail to run sql: '{ctx}': {e}"

@@ -1,18 +1,17 @@
-import time
 import json
-import trio
+import numpy as np
 import polars as pl
 import pyarrow as pa
+import time
+import trio
 
-from concurrent.futures import ThreadPoolExecutor
 from confluent_kafka import Producer
 from datetime import datetime, timezone
 from duckdb import DuckDBPyConnection
-from duckdb.functional import FunctionNullHandling, PythonUDFType
-from duckdb.typing import VARCHAR, DuckDBPyType
+from duckdb.typing import DuckDBPyType
 from functools import partial
 from string import Template
-from typing import Any, AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Type
+from typing import Any, AsyncGenerator, Awaitable, Callable, Iterable, Type
 
 from duckdb import struct_type
 from loguru import logger
@@ -34,8 +33,7 @@ from context.context import (
     ShowContext,
 )
 from inout import cache
-from metadata import (
-    create_macro_definition,
+from store import (
     get_batch_id_from_source_metadata,
     get_batch_id_from_table_metadata,
     get_duckdb_tables,
@@ -49,6 +47,7 @@ from metadata import (
     create_table,
     create_view,
 )
+from store.lookup import callback_store
 from sql.types import SourceHttpProperties
 from transport.builder import TransportBuilder
 
@@ -111,7 +110,8 @@ def substitute_http_properties(
 
 
 def _coerce_result_dict(
-    d: dict[str, Any], field_types: dict[str, pa.DataType]
+    d: dict[str, Any],
+    field_types: dict[str, pa.DataType],
 ) -> dict[str, Any]:
     """
     Convert the values in ``d`` so that they match the Arrow ``schema``.
@@ -124,51 +124,81 @@ def _coerce_result_dict(
     converter. If it is pre compiled we could also detect "if we need"
     coercion, making overall performance greatly improved.
     """
+
     out = {}
 
-    # Loop through actual keys in the dict (sparse-friendly)
+    # fast local helpers
+    np_int = (np.integer,)
+    np_float = (np.floating,)
+    np_str = (np.str_,)
+    np_datetime = (np.datetime64,)
+
     for name, raw in d.items():
-        # Skip if this field isn't in the schema
         if name not in field_types:
             logger.warning(
-                "Field `{}` in dict isn't in provided schema: `{}`", name, field_types
+                "Field `%s` in dict isn't in provided schema: `%s`",
+                name,
+                field_types,
             )
             continue
 
         typ = field_types[name]
 
         if pa.types.is_int64(typ):
-            if isinstance(raw, (int)):
+            if isinstance(raw, (int,)) or isinstance(raw, np_int):
                 out[name] = int(raw)
             elif isinstance(raw, str):
                 out[name] = int(raw.strip())
+            elif isinstance(raw, np_str):
+                out[name] = int(raw.item().strip())
             else:
                 raise TypeError(f"Field '{name}' expected int64, got {type(raw)}")
 
         elif pa.types.is_float64(typ) or pa.types.is_float32(typ):
-            if isinstance(raw, (float, int)):
+            if (
+                isinstance(raw, (float, int))
+                or isinstance(raw, np_float)
+                or isinstance(raw, np_int)
+            ):
                 out[name] = float(raw)
             elif isinstance(raw, str):
                 out[name] = float(raw.strip())
+            elif isinstance(raw, np_str):
+                out[name] = float(raw.item().strip())
             else:
-                raise TypeError(f"Field '{name}' expected float64, got {type(raw)}")
+                raise TypeError(f"Field '{name}' expected float, got {type(raw)}")
 
-        # TODO: improve timestamp coercion to be stop being unit sensitive
         elif pa.types.is_timestamp(typ):
+            # python datetime → pass-through
             if isinstance(raw, datetime):
                 out[name] = raw
-            elif isinstance(raw, (int)):
+
+            # numpy datetime64 (nano or ms or s)
+            elif isinstance(raw, np_datetime):
+                # Convert to python datetime in UTC
+                ts = raw.astype("datetime64[ns]").astype("int64") / 1e9
+                out[name] = datetime.fromtimestamp(ts, timezone.utc)
+
+            # python int or numpy int → timestamp
+            elif isinstance(raw, (int, np_int)):
                 out[name] = datetime.fromtimestamp(float(raw), timezone.utc)
-            elif isinstance(raw, str):
+
+            # string timestamp
+            elif isinstance(raw, str) or isinstance(raw, np_str):
+                s = raw if isinstance(raw, str) else raw.item()
                 try:
-                    out[name] = datetime.fromisoformat(raw)
+                    out[name] = datetime.fromisoformat(s)
                 except ValueError:
-                    out[name] = datetime.fromtimestamp(float(raw.strip()), timezone.utc)
+                    out[name] = datetime.fromtimestamp(float(s.strip()), timezone.utc)
+
             else:
                 raise TypeError(f"Field '{name}' expected timestamp, got {type(raw)}")
 
         elif pa.types.is_string(typ):
-            out[name] = str(raw)
+            if isinstance(raw, np_str):
+                out[name] = raw.item()
+            else:
+                out[name] = str(raw)
 
         else:
             raise NotImplementedError(
@@ -176,94 +206,6 @@ def _coerce_result_dict(
             )
 
     return out
-
-
-def build_scalar_udf(
-    properties: SourceHttpProperties,
-    dynamic_columns: list[str],
-    return_type: DuckDBPyType,
-    conn: DuckDBPyConnection,
-    name: str,
-) -> dict[str, Any]:
-    # Number of parameters (input) of the scalar func
-    arity = len(dynamic_columns)
-
-    # Types of parameters (input) of the scalar func
-    # they are hardcoded VARCHAR because we are dealing
-    # only with property values as string (for now ?)
-    parameters = [VARCHAR for _ in range(arity)]
-
-    child_types = []
-    for subtype in return_type.children:
-        child_types.append(
-            pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
-        )
-
-    # Return type of the scalar func as pyarrow (internal)
-    return_type_arrow: pa.Schema = pa.struct(child_types)
-    field_types = {field.name: field.type for field in return_type_arrow}
-
-    # Create named parameters for the udf, using arity as identifier
-    # Dyckdb pyarrow udf does't accept args or kwargs
-    arg_names = [f"a{i}" for i in range(1, arity + 1)]
-
-    # Threadpool http wrapper which process elements
-    def process_elements(
-        rows: Iterable[tuple[Any, ...]],
-        properties: SourceHttpProperties,
-    ) -> pa.Array:
-        def _inner(row: tuple[Any, ...]) -> dict[str, Any]:
-            context = dict(zip(dynamic_columns, row))
-            lookup_properties = substitute_http_properties(properties, context)
-            default_response = context.copy()
-            requester = (
-                TransportBuilder(lookup_properties)
-                .option("mode", "sync")
-                .build("http")
-                .configure()
-                .finalize()
-            )
-
-            try:
-                response = requester(conn)
-                if isinstance(response, dict):
-                    return context | response
-                if isinstance(response, list) and len(response) >= 1:
-                    default_response |= response[-1]
-            except Exception as e:
-                logger.exception("HTTP request failed: {}", e)
-
-            coerced_response = _coerce_result_dict(default_response, field_types)
-            return coerced_response
-
-        with ThreadPoolExecutor() as executor:
-            results = list(executor.map(_inner, rows))
-
-        return results
-
-    def core_udf(*arrays: pa.ChunkedArray) -> pa.Array:
-        coerced_results = []
-        for chunks in zip(*(arr.chunks for arr in arrays)):
-            py_chunks = [chunk.to_pylist() for chunk in chunks]
-            chunk_rows = zip(*py_chunks)
-            chunk_results = process_elements(chunk_rows, properties)
-            coerced_results.extend(chunk_results)
-
-        return pa.array(coerced_results, type=return_type_arrow)
-
-    udf = eval(
-        f"lambda {', '.join(arg_names)}: core_udf({', '.join(arg_names)})",
-        {"core_udf": core_udf},
-    )
-
-    return {
-        "name": name,
-        "function": udf,
-        "parameters": parameters,
-        "return_type": return_type,
-        "type": PythonUDFType.ARROW,
-        "null_handling": FunctionNullHandling.SPECIAL,
-    }
 
 
 def records_to_polars(
@@ -388,7 +330,7 @@ async def ws_source_executable(
 
 def build_scheduled_source_executable(
     ctx: CreateHTTPSourceContext | CreateHTTPTableContext,
-) -> Callable[[str, DuckDBPyConnection], Coroutine[Any, Any, pl.DataFrame]]:
+) -> Callable[[str, DuckDBPyConnection], Awaitable[pl.DataFrame]]:
     requester = (
         TransportBuilder(ctx.properties)
         .option("mode", "async")
@@ -439,62 +381,88 @@ def build_continuous_source_executable(
     )
 
 
-def build_lookup_table_prehook(
+# NOTE: Deprecate pyarrow schema for direct SQL to polars typing
+def build_lookup_functions(
+    properties: SourceHttpProperties,
+    dynamic_columns: list[str],
+    return_type: DuckDBPyType,
+    backend_conn: DuckDBPyConnection,
+) -> Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]:
+    child_types = []
+    for subtype in return_type.children:
+        child_types.append(
+            pa.field(subtype[0], DUCKDB_TO_PYARROW_PYTYPE[str(subtype[1])])
+        )
+    return_type_arrow: pa.Schema = pa.struct(child_types)
+    field_types = {field.name: field.type for field in return_type_arrow}
+
+    async def process_elements(
+        rows: Iterable[tuple[Any, ...]],
+        properties: SourceHttpProperties,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+
+        async def _process_one(row: tuple[Any, ...]):
+            context = dict(zip(dynamic_columns, row))
+            lookup_properties = substitute_http_properties(properties, context)
+            default_response = context.copy()
+
+            requester = (
+                TransportBuilder(lookup_properties)
+                .option("mode", "async")
+                .build("http")
+                .configure()
+                .finalize()
+            )
+
+            try:
+                # requester is an awaitable
+                response = await requester(backend_conn)
+
+                if isinstance(response, dict):
+                    result = context | response
+                elif isinstance(response, list) and len(response) >= 1:
+                    merged = default_response
+                    merged |= response[-1]
+                    result = _coerce_result_dict(merged, field_types)
+                else:
+                    result = _coerce_result_dict(default_response, field_types)
+
+            except Exception as e:
+                logger.exception("HTTP request failed: {}", e)
+                result = _coerce_result_dict(default_response, field_types)
+
+            results.append(result)
+
+        async with trio.open_nursery() as nursery:
+            for row in rows:
+                nursery.start_soon(_process_one, row)
+
+        return results
+
+    async def core_udf(df: pl.DataFrame) -> pl.DataFrame:
+        np_cols = [df[col].to_numpy() for col in dynamic_columns]
+        row_iter = zip(*np_cols)
+        results = await process_elements(row_iter, properties)
+        return pl.DataFrame(results)
+
+    return core_udf
+
+
+def build_lookup_callback(
     create_table_context: CreateHTTPLookupTableContext,
-    conn: DuckDBPyConnection,
-) -> str:
+    backend_conn: DuckDBPyConnection,
+) -> tuple[str, Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]]:
     properties = create_table_context.properties
     table_name = create_table_context.name
     dynamic_columns = create_table_context.dynamic_columns
     columns = create_table_context.columns
-
-    func_name = f"{table_name}_func"
-    macro_name = f"{table_name}_macro"
-
-    # TODO: handle other return than dict (for instance array http responses)
     return_type = struct_type(columns)  # type: ignore
-    udf_params = build_scalar_udf(
-        properties, dynamic_columns, return_type, conn, func_name
+
+    return (
+        table_name,
+        build_lookup_functions(properties, dynamic_columns, return_type, backend_conn),
     )
-    # register scalar for row to row http call
-    conn.create_function(**udf_params)
-    logger.debug("registered function: {}", func_name)
-
-    # TODO: wrap SQL in function
-    # register macro (to be injected in place of sql)
-    __inner_tbl = "__inner_tbl"
-    __deriv_tbl = "__deriv_tbl"
-
-    # This inner macro function is used to substitute create properties
-    # They are fine to be all casted to VARCHAR by default as we should
-    # not need other types (all properties are string values)
-    func_def = f"{func_name}({', '.join([f'CAST({__inner_tbl}.{col} AS VARCHAR)' for col in dynamic_columns])})"
-    macro_def = f"{macro_name}(table_name, {', '.join(dynamic_columns)})"
-    output_cols = ", ".join(
-        [
-            f"CAST(struct.{col_name} AS {duckdb_dtype}) AS {col_name}"
-            for col_name, duckdb_dtype in columns.items()
-        ]
-    )
-
-    # TODO: move to metadata func
-    create_macro_sql = f"""
-        CREATE OR REPLACE MACRO {macro_def} AS TABLE
-        SELECT
-            {output_cols}
-        FROM (
-            SELECT
-                {func_def} AS struct
-            FROM query_table(table_name) AS {__inner_tbl}
-        ) AS {__deriv_tbl};
-    """
-    conn.execute(create_macro_sql)
-    logger.debug(
-        "registered macro: {} with definition: {}", macro_name, create_macro_sql
-    )
-    create_macro_definition(conn, macro_name, dynamic_columns)
-
-    return macro_name
 
 
 def get_substitute_macro_definition(
@@ -525,38 +493,24 @@ def get_substitute_macro_definition(
     return macro_definition
 
 
+# NOTE: To be deprecated once confirmed that we do not need
+# parsing-level substitution of table names
+# This was created to handle dynamic sql alteration
+# to transform lookup into macro
 def substitute_sql_template(
-    conn: DuckDBPyConnection,
     ctx: SelectContext,
     substitute_mapping: dict[str, str],
 ) -> str:
     """
     Substitutes select statement query with lookup references to macro references.
-
-    TODO: should it be moved somewhere better ? This function is using ctx.
-    Too much coupling.
     """
     original_query = ctx.query
     join_tables = ctx.joins
-    lookup_tables = get_lookup_tables(conn)
-
-    # join query
-    from_table = ctx.table
-    from_table_or_alias = ctx.alias
 
     # for table in join and in lookup
     # build the substitute mapping
-    for join_table, join_table_or_alias in join_tables.items():
-        if join_table in lookup_tables:
-            substitute_mapping[join_table] = get_substitute_macro_definition(
-                conn,
-                join_table,
-                from_table,
-                from_table_or_alias,
-                join_table_or_alias,
-            )
-        else:
-            substitute_mapping[join_table] = join_table
+    for join_table_name, _ in join_tables.items():
+        substitute_mapping[join_table_name] = join_table_name
 
     # Substritute lookup table placeholder with template
     query = Template(original_query).substitute(substitute_mapping)
@@ -598,13 +552,12 @@ def duckdb_to_dicts(conn: DuckDBPyConnection, duckdb_sql: str) -> list[Any]:
 
 def build_sink_executable(
     ctx: CreateSinkContext, backend_conn: DuckDBPyConnection
-) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, None]]:
+) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[None]]:
     properties = ctx.properties
     producer = Producer({"bootstrap.servers": properties["server"]})
     topic = properties["topic"]
     return partial(
         kafka_sink,
-        backend_conn=backend_conn,
         first_upstream=ctx.upstreams[0],
         transform_query=ctx.subquery,
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
@@ -615,16 +568,15 @@ def build_sink_executable(
 
 async def kafka_sink(
     task_id: str,
-    transform_conn: DuckDBPyConnection,
+    _: DuckDBPyConnection,
     df: pl.DataFrame,
-    backend_conn: DuckDBPyConnection,
     first_upstream: str,
     transform_query: str,
     pl_ctx: pl.SQLContext,
-    *,
     producer: Producer,
     topic: str,
 ) -> None:
+    logger.info("[{}] - starting sink executable", task_id)
     pl_ctx.register(first_upstream, df)
     transform_df = pl_ctx.execute(transform_query)
     records = transform_df.to_dicts()
@@ -641,9 +593,7 @@ async def kafka_sink(
 
 def build_transform_executable(
     ctx: CreateViewContext, backend_conn: DuckDBPyConnection
-) -> Callable[
-    [str, DuckDBPyConnection, pl.DataFrame], Coroutine[Any, Any, pl.DataFrame]
-]:
+) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[pl.DataFrame]]:
     from_table = ctx.upstreams[0]
     duckdb_tables = get_tables(backend_conn)
     substitute_mapping = {}
@@ -652,45 +602,44 @@ def build_transform_executable(
         val = duckdb_table if duckdb_table != from_table else "df"
         substitute_mapping[duckdb_table] = val
 
-    transform_sql = substitute_sql_template(
-        backend_conn, ctx.transform_ctx, substitute_mapping
-    )
+    transform_sql = substitute_sql_template(ctx.transform_ctx, substitute_mapping)
 
     return partial(
         transform_executable,
         backend_conn=backend_conn,
         name=ctx.name,
-        first_upstream=from_table,  # TODO add joins
         transform_query=transform_sql,
         is_materialized=ctx.materialized,
         # force eager to enforce read over write consistency
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
+        lookup_callbacks=callback_store.get_by_names(
+            list(ctx.transform_ctx.joins.keys())
+        ),
     )
 
 
 async def transform_executable(
     task_id: str,
-    transform_conn: DuckDBPyConnection,
+    _: DuckDBPyConnection,
     df: pl.DataFrame,
     backend_conn: DuckDBPyConnection,
     name: str,
-    first_upstream: str,
     transform_query: str,
     is_materialized: bool,
     pl_ctx: pl.SQLContext,
+    lookup_callbacks: dict[str, Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]],
 ) -> pl.DataFrame:
-    # TODO: migrate away from duckdb
-    # pl_ctx.register(first_upstream, df)
-    # transform_df = pl_ctx.execute(transform_query)
     logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
 
-    # explicitely mock df registration of incoming df
-    # in case of lookup, this should also work when the
-    # registed df is called inside / through a macro !
-    # don't use conn.register() as duckdb only support
-    # global registration and would make it not thread-safe anymore
-    transform_query = transform_query.replace(f'"{first_upstream}"', "df")
-    transform_df = transform_conn.execute(transform_query).pl()
+    # Register input df (from upstream)
+    pl_ctx.register("df", df)
+
+    # Register lookup if exist
+    for lookup_table_name, func in lookup_callbacks.items():
+        lookup_df = await func(df)
+        pl_ctx.register(lookup_table_name, lookup_df)
+
+    transform_df = pl_ctx.execute(transform_query)
 
     epoch = int(time.time() * 1_000)
     # invert is_materialized for truncate
@@ -702,7 +651,7 @@ async def transform_executable(
     return transform_df
 
 
-def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
+async def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
     """
     Evaluate select statement against queryable cached layer.
 
@@ -718,23 +667,45 @@ def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
     substitute_mapping = dict(zip(duckdb_tables, duckdb_tables))
 
     if table_name in lookup_tables:
-        return f"'{table_name}' is a lookup table, you cannot use it in FROM."
+        return f"'{table_name}' is a lookup table, there is nothing to query."
 
     if table_name not in duckdb_tables:
         return f"'{table_name}' doesn't exist"
 
-    duckdb_sql = substitute_sql_template(conn, ctx, substitute_mapping)
-    return str(duckdb_to_pl(conn, duckdb_sql))
+    pl_ctx = pl.SQLContext(register_globals=False, eager=True)
+
+    # NOTE: to be deprecated
+    duckdb_sql = substitute_sql_template(ctx, substitute_mapping)
+
+    # Register main table
+    df = duckdb_to_pl(conn, f"SELECT * FROM {ctx.table}")
+    pl_ctx.register(table_name, df)
+
+    # Register lookup if exist
+    lookup_callbacks = callback_store.get_by_names(list(ctx.joins.keys()))
+    for lookup_table_name, func in lookup_callbacks.items():
+        lookup_df = await func(df)
+        pl_ctx.register(lookup_table_name, lookup_df)
+
+    return str(pl_ctx.execute(duckdb_sql))
 
 
-def eval_set(conn: DuckDBPyConnection, ctx: SetContext):
+async def eval_set(conn: DuckDBPyConnection, ctx: SetContext):
     conn.sql(ctx.query)
     return "SET"
 
 
+async def async_duckdb_to_pl(conn: DuckDBPyConnection, ctx: EvaluableContext):
+    return str(duckdb_to_pl(conn, ctx.query))
+
+
 # Static registration of EvaluableContext to
 # their respective evaluable function
-EVALUABLE_QUERY_DISPATCH: dict[Type[EvaluableContext], Callable] = {
+# NOTE: add type hint to callable 2nd argument. Seems to be linter
+# failing to type with more than 1 level inheritance
+EVALUABLE_QUERY_DISPATCH: dict[
+    Type[EvaluableContext], Callable[[DuckDBPyConnection, Any], Awaitable[str]]
+] = {
     CreateHTTPLookupTableContext: create_table,
     CreateHTTPTableContext: create_table,
     CreateWSTableContext: create_table,
@@ -743,8 +714,8 @@ EVALUABLE_QUERY_DISPATCH: dict[Type[EvaluableContext], Callable] = {
     CreateViewContext: create_view,
     CreateSinkContext: create_sink,
     CreateSecretContext: create_secret,
-    CommandContext: lambda conn, ctx: str(duckdb_to_pl(conn, ctx.query)),
+    CommandContext: async_duckdb_to_pl,
     SetContext: eval_set,
-    ShowContext: lambda conn, ctx: str(duckdb_to_pl(conn, ctx.query)),
+    ShowContext: async_duckdb_to_pl,
     SelectContext: eval_select,
 }
