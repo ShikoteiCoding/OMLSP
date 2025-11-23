@@ -4,7 +4,7 @@ from task.task import BaseTask
 from channel import Channel
 from services import Service
 
-from task.task_catalog import TaskCatalog
+from task.catalog import catalog
 
 
 class TaskSupervisor(Service):
@@ -13,15 +13,11 @@ class TaskSupervisor(Service):
     Receives tasks to supervise from a Channel
     """
 
-    #: TODO
-    _catalog: TaskCatalog
-
-    #: TODO
+    #: Channel to receive tasks to supervise
     _tasks_to_supervise: Channel[BaseTask]
 
-    def __init__(self, catalog: TaskCatalog):
+    def __init__(self):
         super().__init__(name="TaskSupervisor")
-        self._catalog: TaskCatalog = catalog
 
     def add_tasks_to_supervise_channel(self, channel: Channel[BaseTask]):
         self._tasks_to_supervise = channel
@@ -46,7 +42,7 @@ class TaskSupervisor(Service):
         attempt = 1
         backoff_base = 2.0
 
-        while self._catalog.has_task(task_id):
+        while catalog.has_task(task_id):
             try:
                 async with trio.open_nursery() as n:
                     task._nursery = n  # rebind nursery each cycle

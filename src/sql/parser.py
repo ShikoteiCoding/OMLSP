@@ -715,34 +715,10 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
 def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
     sql = statement.sql(dialect=OmlspDialect)
     drop_type = statement.kind
-    metadata = ""
-    metadata_column = ""
-    match drop_type:
-        case "TABLE":
-            metadata = METADATA_TABLE_TABLE_NAME
-            metadata_column = "table_name"
-
-        case "VIEW":
-            metadata = METADATA_VIEW_TABLE_NAME
-            metadata_column = "view_name"
-
-        case "SECRET":
-            metadata = METADATA_SECRET_TABLE_NAME
-            metadata_column = "secret_name"
-
-        case "SINK":
-            metadata = METADATA_SINK_TABLE_NAME
-            metadata_column = "sink_name"
-
-        case "SOURCE":
-            metadata = METADATA_SOURCE_TABLE_NAME
-            metadata_column = "source_name"
-
-        case _:
-            return InvalidContext(reason=f"Unknown drop type - {drop_type}")
+    if drop_type is None:
+        return InvalidContext(reason=f"Unknown drop type - {drop_type}")
 
     sql_parts = sql.replace(";", "").split()
-
     # validate enough tokens exist
     if len(sql_parts) < 3:
         return InvalidContext(reason=f"Malformed DROP statement - {sql}")
@@ -752,15 +728,11 @@ def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
     if cascade:
         return DropCascadeContext(
             drop_type=drop_type,
-            metadata=metadata,
-            metadata_column=metadata_column,
             name=sql_parts[-2],
         )
 
     return DropSimpleContext(
         drop_type=drop_type,
-        metadata=metadata,
-        metadata_column=metadata_column,
         name=sql_parts[-1],
     )
 

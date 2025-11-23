@@ -1,12 +1,45 @@
+from __future__ import annotations
+
 from collections import defaultdict
 
 
 class TaskGraph:
+    """
+    Graph of dependancy between running taks
+    """
+
+    #: Flag to detect init
+    _instanciated: bool = False
+
+    #: Singleton instance
+    _instance: TaskGraph
+
+    nodes: set
+    #: parent → {children}
+    children: defaultdict
+    #: child  → {parents}
+    parents: defaultdict
+    leaves: set
+
     def __init__(self):
+        raise NotImplementedError("Singleton — use TaskGraph.get_instance()")
+
+    def init(self):
         self.nodes = set()
-        self.children = defaultdict(set)  # parent → {children}
-        self.parents = defaultdict(set)  # child  → {parents}
+        self.children = defaultdict(set)
+        self.parents = defaultdict(set)
         self.leaves = set()
+
+    @classmethod
+    def get_instance(cls) -> TaskGraph:
+        if cls._instanciated:
+            return cls._instance
+
+        cls._instance = cls.__new__(cls)
+        cls._instance.init()
+        cls._instanciated = True
+
+        return cls._instance
 
     def ensure_vertex(self, node_id: str):
         """Make sure a node exists even without edges."""
@@ -61,17 +94,20 @@ class TaskGraph:
         if node_id not in self.nodes:
             return []
 
-        to_drop = []
-        self._collect_descendants(node_id, to_drop)
+        dropped_from_graph = []
+        self._collect_descendants(node_id, dropped_from_graph)
 
         # reverse ensures children dropped first (safe order)
-        for n in reversed(to_drop):
+        dropped_from_graph = list(reversed(dropped_from_graph))
+        for n in dropped_from_graph:
             self.drop_leaf(n)
-
-        return to_drop
+        return dropped_from_graph
 
     def _collect_descendants(self, node_id: str, acc: list[str]):
         """DFS to collect all nodes reachable from node_id (including node)."""
         acc.append(node_id)
         for child in self.children.get(node_id, []):
             self._collect_descendants(child, acc)
+
+
+dependency_grah = TaskGraph.get_instance()
