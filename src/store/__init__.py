@@ -1,5 +1,4 @@
 from store.db import (
-    create_macro_definition,
     create_secret,
     create_sink,
     create_source,
@@ -8,7 +7,6 @@ from store.db import (
     get_batch_id_from_source_metadata,
     get_batch_id_from_table_metadata,
     get_lookup_tables,
-    get_macro_definition_by_name,
     get_secret_value_by_name,
     get_duckdb_tables,
     get_tables,
@@ -22,7 +20,6 @@ from store.db import (
 )
 
 __all__ = [
-    "create_macro_definition",
     "create_secret",
     "create_sink",
     "create_source",
@@ -31,7 +28,6 @@ __all__ = [
     "get_batch_id_from_source_metadata",
     "get_batch_id_from_table_metadata",
     "get_lookup_tables",
-    "get_macro_definition_by_name",
     "get_secret_value_by_name",
     "get_duckdb_tables",
     "get_tables",

@@ -13,6 +13,7 @@ class TaskSupervisor(Service):
     Receives tasks to supervise from a Channel
     """
 
+    #: Channel to receive tasks to supervise
     _tasks_to_supervise: Channel[BaseTask]
 
     def __init__(self):
@@ -50,13 +51,19 @@ class TaskSupervisor(Service):
                 # Normal cancellation -> evicted by user
                 logger.debug(f"[{task.task_id}] cancelled by supervisor")
                 break
-            except Exception as e:
+            # When failing in nursery, it is always an exception group
+            # trio high level + sub-exceptions
+            except ExceptionGroup as e:
                 # Crash handling
                 if attempt > max_retries:
                     logger.error(f"[{task.task_id}] exceeded max retries: {e}")
                     break
                 logger.warning(
-                    f"[{task.task_id}] crashed (attempt {attempt}/{max_retries}): {e}"
+                    "[{}] crashed (attempt {}/{}).\n{}",
+                    task.task_id,
+                    attempt,
+                    max_retries,
+                    "\n".join([str(sub) for sub in e.exceptions]),
                 )
                 backoff = backoff_base * attempt
                 logger.debug(f"[{task.task_id}] retrying in {backoff:.1f}s")
