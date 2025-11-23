@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from task.task import BaseTask
 from task.types import TaskId, HasData
 from context.context import CreateContext
@@ -76,7 +78,7 @@ class TaskCatalog:
         )
 
     def remove(self, task: BaseTask) -> None:
-        """Remove a task (e.g. intentionally stopped)."""
+        """Remove a task."""
         self._task_id_to_task.pop(task.task_id, None)
 
     def get(self, task_id: str) -> tuple[BaseTask | None, HasData, str, str]:
@@ -86,5 +88,6 @@ class TaskCatalog:
     def has_task(self, task_id: str) -> bool:
         """Check if the task is in the catalog."""
         return task_id in self._task_id_to_task
+
 
 task_catalog = TaskCatalog.get_instance()
