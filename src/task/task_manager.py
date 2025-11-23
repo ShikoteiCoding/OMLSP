@@ -26,7 +26,7 @@ from task.types import TaskId
 from task.task_supervisor import TaskSupervisor
 from task.task_graph import TaskGraph
 from task.task_catalog import TaskCatalog
-from task.task_registry import TASK_REGISTER
+from task.task_register import TASK_REGISTER
 
 from metadata import delete_metadata
 
