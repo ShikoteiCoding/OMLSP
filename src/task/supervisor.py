@@ -4,7 +4,7 @@ from task.task import BaseTask
 from channel import Channel
 from services import Service
 
-from task.task_catalog import TaskCatalog
+from task.catalog import TaskCatalog
 
 
 class TaskSupervisor(Service):
