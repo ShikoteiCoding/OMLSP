@@ -381,6 +381,7 @@ def build_continuous_source_executable(
     )
 
 
+# NOTE: Deprecate pyarrow schema for direct SQL to polars typing
 def build_lookup_functions(
     properties: SourceHttpProperties,
     dynamic_columns: list[str],
@@ -439,15 +440,10 @@ def build_lookup_functions(
 
         return results
 
-    async def core_udf(df: pl.DataFrame) -> pa.Array:
-        # Extract columns as NumPy arrays (fast, zero-copy when possible)
+    async def core_udf(df: pl.DataFrame) -> pl.DataFrame:
         np_cols = [df[col].to_numpy() for col in dynamic_columns]
-
-        # Build a row iterator: zip of the numpy arrays
         row_iter = zip(*np_cols)
-        # Process rows
         results = await process_elements(row_iter, properties)
-        # Return Arrow array with correct type
         return pl.DataFrame(results)
 
     return core_udf

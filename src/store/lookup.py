@@ -6,6 +6,12 @@ from typing import Awaitable, Callable
 
 
 class LookupCallbackStore:
+    """
+    Singleton implementation of the callback lookup store.
+
+    Use to access a callback function from name.
+    """
+
     #: Flag to detect init
     _instanciated: bool = False
 
@@ -35,10 +41,20 @@ class LookupCallbackStore:
     def add(
         self, name: str, func: Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]
     ) -> None:
-        self._instance._store[name] = func
+        if name in self._store:
+            raise ValueError(
+                f"[LookupCallbackStore] attempted to add known key from store: {name}"
+            )
 
-    def delete(self, name: str):
-        del self._instance._store[name]
+        self._store[name] = func
+
+    def delete(self, name: str) -> None:
+        if name not in self._store:
+            raise ValueError(
+                f"[LookupCallbackStore] attempted to delete unknown key from store: {name}"
+            )
+
+        del self._store[name]
 
     def get_by_names(
         self, names: list[str]
