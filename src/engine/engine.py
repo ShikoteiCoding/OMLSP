@@ -306,6 +306,7 @@ async def ws_source_executable(
         [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
     ],
     cancel_event: trio.Event,
+    generated_columns: dict[str, Callable],
     *args,
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
@@ -314,16 +315,24 @@ async def ws_source_executable(
     # 'ws_generator_func' is supposed to be never ending (while True)
     # if an issue happens, the source task should be entirely
     # restarted (not a feature yet)
-    async for records in ws_generator_func(nursery, cancel_event):
-        if len(records) > 0:
-            df = records_to_polars(records, column_types, {}, {})
-            # Do not truncate the cache, this is a Table
-            await cache(df, 0, int(time.time() * 1_000), table_name, conn, is_source)
-        else:
-            # This should not happen, just in case
-            df = pl.DataFrame()
+    try:
+        async for records in ws_generator_func(nursery, cancel_event):
+            if len(records) > 0:
+                df = records_to_polars(records, column_types, generated_columns, {})
+                # Do not truncate the cache, this is a Table
+                await cache(
+                    df, 0, int(time.time() * 1_000), table_name, conn, is_source
+                )
+            else:
+                # This should not happen, just in case
+                df = pl.DataFrame()
 
-        yield df
+            yield df
+    except Exception as e:
+        # Custom capture as async generator escapes SC control
+        # https://github.com/python-trio/trio/issues/265
+        logger.error(e)
+        raise e
 
 
 def build_scheduled_source_executable(
@@ -355,6 +364,7 @@ def build_continuous_source_executable(
 ]:
     properties = ctx.properties
     table_name = ctx.name
+    generated_columns = ctx.generated_columns
     on_start_results = []
 
     if ctx.on_start_query != "":
@@ -376,6 +386,7 @@ def build_continuous_source_executable(
         column_types=ctx.column_types,
         is_source=ctx.source,
         ws_generator_func=ws_generator,
+        generated_columns=generated_columns,
     )
 
 

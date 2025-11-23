@@ -270,10 +270,10 @@ def parse_column_def(
 
 def parse_ws_table_schema(
     table: exp.Schema,
-) -> tuple[str, dict[str, str], dict[str, Callable]]:
+) -> tuple[exp.Schema, str, dict[str, str], dict[str, Callable]]:
     # Parse web socket table schema.
-    table = table.copy()
     table_name = table.this.name
+    table = table.copy()
 
     column_types: dict[str, str] = {}
     generated_columns: dict[str, Callable] = {}
@@ -288,7 +288,7 @@ def parse_ws_table_schema(
             generated_columns[col_name] = generated_column
             col.set("constraints", None)
 
-    return table_name, column_types, generated_columns
+    return table, table_name, column_types, generated_columns
 
 
 def validate_create_properties(
@@ -347,12 +347,12 @@ def build_create_http_table_or_source_context(
     statement = statement.copy()
 
     # parse table schema and update exp.Schema
-    updated_table_statement, table_name, _, column_types, generated_columns = (
+    new_expr_schema, table_name, _, column_types, generated_columns = (
         parse_table_schema(statement.this)
     )
 
     # overwrite modified table statement
-    statement.set("this", updated_table_statement)
+    statement.set("this", new_expr_schema)
     # extract source for correct typing
     is_source = str(statement.kind) == "SOURCE"
     # restore table for state creation
@@ -427,15 +427,19 @@ def build_create_ws_table_context(
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
 
-    table_name, column_types, generated_columns = parse_ws_table_schema(statement.this)
+    new_expr_schema, table_name, column_types, generated_columns = (
+        parse_ws_table_schema(statement.this)
+    )
 
+    # overwrite modified table statement
+    statement.set("this", new_expr_schema)
     # extract source for correct typing
     is_source = str(statement.kind) == "SOURCE"
     # restore table for state creation
     statement.set("kind", "TABLE")
 
-    # get query purged of omlsp-specific syntax
-    clean_query = get_duckdb_sql(statement)
+    # get query purged of it's omlsp specific syntax
+    duckdb_query = get_duckdb_sql(statement)
 
     on_start_query = properties.pop("on_start_query", "")
 
@@ -445,7 +449,7 @@ def build_create_ws_table_context(
             properties=build_create_ws_properties(properties),
             column_types=column_types,
             generated_columns=generated_columns,
-            query=clean_query,
+            query=duckdb_query,
             on_start_query=on_start_query,
         )
 
@@ -454,7 +458,7 @@ def build_create_ws_table_context(
         properties=build_create_ws_properties(properties),
         column_types=column_types,
         generated_columns=generated_columns,
-        query=clean_query,
+        query=duckdb_query,
         on_start_query=on_start_query,
     )
 
