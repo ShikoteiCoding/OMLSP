@@ -154,7 +154,7 @@ def get_macro_definition_by_name(
     return res[0]
 
 
-def create_macro_definition(
+async def create_macro_definition(
     conn: DuckDBPyConnection, macro_name: str, fields: list[str]
 ) -> None:
     query = f"""
@@ -204,7 +204,7 @@ def get_duckdb_tables(conn: DuckDBPyConnection) -> list[str]:
     return tables
 
 
-def create_source(
+async def create_source(
     conn: DuckDBPyConnection,
     context: CreateSourceContext,
 ) -> str:
@@ -215,7 +215,7 @@ def create_source(
     return "CREATE SOURCE"
 
 
-def create_table(
+async def create_table(
     conn: DuckDBPyConnection,
     context: CreateTableContext,
 ) -> str:
@@ -226,7 +226,7 @@ def create_table(
     return "CREATE TABLE"
 
 
-def create_view(
+async def create_view(
     conn: DuckDBPyConnection,
     context: CreateViewContext,
 ) -> str:
@@ -237,7 +237,7 @@ def create_view(
     return f"CREATE {'MATERIALIZED' if context.materialized else ''}VIEW"
 
 
-def create_sink(
+async def create_sink(
     conn: DuckDBPyConnection,
     context: CreateSinkContext,
 ) -> str:
@@ -246,7 +246,7 @@ def create_sink(
     return "CREATE SINK"
 
 
-def create_secret(
+async def create_secret(
     conn: DuckDBPyConnection,
     context: CreateSecretContext,
 ) -> str:

@@ -28,7 +28,7 @@ from task.task_graph import TaskGraph
 from task.task_catalog import TaskCatalog
 from task.task_builders import TASK_BUILDERS
 
-from metadata import delete_metadata
+from store import delete_metadata
 
 from services import Service
 
@@ -40,17 +40,23 @@ __all__ = ["TaskManager"]
 
 
 class TaskManager(Service):
-    #: Duckdb connections
+    #: Duckdb connections for backend metadata
     backend_conn: DuckDBPyConnection
+
+    #: Duckdb connections for transform
+    #: NOTE: to be deprecated
     transform_conn: DuckDBPyConnection
 
     #: Scheduler (trio compatible) to register
     #: short lived or long lived processes
     scheduler: TrioScheduler
+
     #: Supervisor to restart tasks
     supervisor: TaskSupervisor
+
     #: Catalog of running tasks
     catalog: TaskCatalog
+
     #: Graph of dependancy between running taks
     graph: TaskGraph
 
