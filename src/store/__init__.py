@@ -1,4 +1,4 @@
-from metadata.db import (
+from store.db import (
     create_macro_definition,
     create_secret,
     create_sink,

@@ -17,7 +17,7 @@ WITH (
 -- Get ohlc data provided symbols
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
-    start_time TIMESTAMP_MS,
+    start_time TIMESTAMP,
     open FLOAT,
     high FLOAT,
     low FLOAT,

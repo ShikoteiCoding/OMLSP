@@ -31,6 +31,7 @@ WITH (
 );
 
 -- Get ohlc data provided symbols
+-- NOTE: maybe source is more what a lookup is
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
     $start_at BIGINT,

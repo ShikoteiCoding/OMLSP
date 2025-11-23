@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import trio
+import abc
 from functools import partial
 from string import Template
 from typing import (
@@ -10,7 +11,6 @@ from typing import (
     AsyncGenerator,
     Literal,
     cast,
-    Protocol,
     TypedDict,
 )
 
@@ -72,9 +72,11 @@ class TransportBuilder:
         return self
 
 
-class TransportT(Protocol):
+class TransportT(abc.ABC):
+    @abc.abstractmethod
     def configure(self) -> TransportT: ...
 
+    @abc.abstractmethod
     def finalize(self) -> Callable: ...
 
 
@@ -88,6 +90,10 @@ class Transport(TransportT):
     def __init__(self, properties: Properties, config: TransportBuilderOptions):
         self.properties = properties
         self.config = config
+
+    def configure(self) -> TransportT: ...
+
+    def finalize(self) -> Callable: ...
 
 
 class HttpTransport(Transport):
