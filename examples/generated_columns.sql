@@ -31,12 +31,14 @@ WITH (
 );
 
 -- Get ohlc data provided symbols
--- NOTE: maybe source is more what a lookup is
 CREATE TEMPORARY TABLE ohlc (
     $symbol STRING,
+    -- Generated fields from upstream
     $start_at BIGINT,
     $end_at BIGINT,
     start_time TIMESTAMP,
+    -- Generated field at lookup level
+    end_time TIMESTAMP AS (start_time + INTERVAL 1 MINUTE),
     open FLOAT,
     high FLOAT,
     low FLOAT,
@@ -66,6 +68,7 @@ SELECT
     oh.start_at,
     oh.end_at,
     oh.start_time,
+    oh.end_time,
     open,
     high,
     low,
@@ -75,3 +78,33 @@ SELECT
 FROM all_tickers AS ALT
 LEFT JOIN ohlc AS oh
     ON ALT.symbol = oh.symbol;
+
+-- Get mini tickers info from binance as websocket
+CREATE SOURCE binance_mini_tickers (
+    event_type STRING,
+    event_time BIGINT,
+    symbol STRING,
+    close FLOAT,
+    open FLOAT,
+    high FLOAT,
+    low FLOAT,
+    base_volume FLOAT,
+    quote_volume FLOAT,
+    -- Generated columns for websocket
+    delta FLOAT AS (close - open)
+)
+WITH (
+    connector = 'ws',
+    url = 'wss://fstream.binance.com/ws/!ticker@arr',
+    'jq' = '.[:2][] | {
+        event_type: .e,
+        event_time: .E,
+        symbol: .s,
+        close: .c,
+        open: .o,
+        high: .h,
+        low: .l,
+        base_volume: .v,
+        quote_volume: .q
+    }'
+);

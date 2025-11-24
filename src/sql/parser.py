@@ -218,23 +218,35 @@ def parse_table_schema(
 
 def parse_lookup_table_schema(
     table: exp.Schema,
-) -> tuple[exp.Schema, str, dict[str, str], list[str]]:
+) -> tuple[exp.Schema, str, dict[str, str], list[str], dict[str, Callable]]:
     # Parse temporary table schema (lookup).
     # Extract parameters for dynamic eval
-    table_name = get_name(table)
+    table_name = table.this.name
     table = table.copy()
 
-    columns = {}
-    dynamic_columns = []
+    column_types: dict[str, str] = {}
+    lookup_fields = []
+    generated_columns: dict[str, Callable] = {}
 
-    for column in table.expressions:
-        if isinstance(column, exp.ColumnDef) and column.name.startswith("$"):
-            new_col_name = str(column.name).replace("$", "")
-            column.set("this", exp.to_identifier(new_col_name))
-            dynamic_columns.append(new_col_name)
-        columns[column.name] = str(column.kind)
+    for col in table.expressions:
+        # Parse Columns name + type (and optionally generated columns)
+        col_name, column_type, generated_column = parse_column_def(col)
 
-    return table, table_name, columns, dynamic_columns
+        new_col_name = str(col_name).replace("$", "")
+
+        if col_name.startswith("$"):
+            lookup_fields.append(new_col_name)
+
+        col.set("this", exp.to_identifier(new_col_name))
+        column_types[new_col_name] = column_type
+
+        # If generated column exist, remove it from sql
+        # for duckdb sql generation
+        if generated_column:
+            generated_columns[new_col_name] = generated_column
+            col.set("constraints", None)
+
+    return table, table_name, column_types, lookup_fields, generated_columns
 
 
 def parse_column_def(
@@ -258,10 +270,10 @@ def parse_column_def(
 
 def parse_ws_table_schema(
     table: exp.Schema,
-) -> tuple[str, dict[str, str], dict[str, Callable]]:
+) -> tuple[exp.Schema, str, dict[str, str], dict[str, Callable]]:
     # Parse web socket table schema.
-    table = table.copy()
     table_name = table.this.name
+    table = table.copy()
 
     column_types: dict[str, str] = {}
     generated_columns: dict[str, Callable] = {}
@@ -276,7 +288,7 @@ def parse_ws_table_schema(
             generated_columns[col_name] = generated_column
             col.set("constraints", None)
 
-    return table_name, column_types, generated_columns
+    return table, table_name, column_types, generated_columns
 
 
 def validate_create_properties(
@@ -335,12 +347,12 @@ def build_create_http_table_or_source_context(
     statement = statement.copy()
 
     # parse table schema and update exp.Schema
-    updated_table_statement, table_name, _, column_types, generated_columns = (
+    new_expr_schema, table_name, _, column_types, generated_columns = (
         parse_table_schema(statement.this)
     )
 
     # overwrite modified table statement
-    statement.set("this", updated_table_statement)
+    statement.set("this", new_expr_schema)
     # extract source for correct typing
     is_source = str(statement.kind) == "SOURCE"
     # restore table for state creation
@@ -382,8 +394,8 @@ def build_create_http_lookup_table_context(
     # get updated exp.Schema (to extract sql later)
     # columns and dynamic columns are extracted for
     # duckdb scalar function & macros
-    new_expr_schema, table_name, columns, dynamic_columns = parse_lookup_table_schema(
-        statement.this
+    new_expr_schema, table_name, column_types, dynamic_columns, generated_columns = (
+        parse_lookup_table_schema(statement.this)
     )
 
     # get updated exp.Create (to extract sql later)
@@ -393,8 +405,9 @@ def build_create_http_lookup_table_context(
         name=table_name,
         properties=build_create_http_properties(properties),
         query=get_duckdb_sql(statement),
-        dynamic_columns=dynamic_columns,
-        columns=columns,
+        column_types=column_types,
+        lookup_fields=dynamic_columns,
+        generated_columns=generated_columns,
     )
 
 
@@ -414,15 +427,19 @@ def build_create_ws_table_context(
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
 
-    table_name, column_types, generated_columns = parse_ws_table_schema(statement.this)
+    new_expr_schema, table_name, column_types, generated_columns = (
+        parse_ws_table_schema(statement.this)
+    )
 
+    # overwrite modified table statement
+    statement.set("this", new_expr_schema)
     # extract source for correct typing
     is_source = str(statement.kind) == "SOURCE"
     # restore table for state creation
     statement.set("kind", "TABLE")
 
-    # get query purged of omlsp-specific syntax
-    clean_query = get_duckdb_sql(statement)
+    # get query purged of it's omlsp specific syntax
+    duckdb_query = get_duckdb_sql(statement)
 
     on_start_query = properties.pop("on_start_query", "")
 
@@ -432,7 +449,7 @@ def build_create_ws_table_context(
             properties=build_create_ws_properties(properties),
             column_types=column_types,
             generated_columns=generated_columns,
-            query=clean_query,
+            query=duckdb_query,
             on_start_query=on_start_query,
         )
 
@@ -441,7 +458,7 @@ def build_create_ws_table_context(
         properties=build_create_ws_properties(properties),
         column_types=column_types,
         generated_columns=generated_columns,
-        query=clean_query,
+        query=duckdb_query,
         on_start_query=on_start_query,
     )
 

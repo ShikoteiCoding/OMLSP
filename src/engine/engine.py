@@ -209,7 +209,7 @@ def _coerce_result_dict(
 def records_to_polars(
     records: list[dict[str, Any]],
     output_dtypes: dict[str, str],
-    dynamic_columns: dict[str, Callable[[dict[str, Any]], pl.Expr]],
+    generated_columns: dict[str, Callable[[dict[str, Any]], pl.Expr]],
     func_context: dict[str, Any],
 ) -> pl.DataFrame:
     df = pl.DataFrame(records)
@@ -221,9 +221,9 @@ def records_to_polars(
         target_dtype = DUCKDB_TO_POLARS.get(dtype, pl.Utf8)
 
         # Generated columns are generated here
-        if output_col in dynamic_columns:
+        if output_col in generated_columns:
             dynamic_columns_operations.append(
-                dynamic_columns[output_col](func_context)
+                generated_columns[output_col](func_context)
                 .cast(target_dtype)
                 .alias(output_col)
             )
@@ -247,7 +247,7 @@ async def http_source_executable(
     conn: DuckDBPyConnection,
     name: str,
     column_types: dict[str, str],
-    dynamic_columns: dict[str, Callable],
+    generated_columns: dict[str, Callable],
     is_source: bool,
     http_requester_func: Callable[[DuckDBPyConnection], Awaitable[list[dict]]],
 ) -> pl.DataFrame:
@@ -281,7 +281,7 @@ async def http_source_executable(
 
     if len(records) > 0:
         epoch = int(time.time() * 1_000)
-        df = records_to_polars(records, column_types, dynamic_columns, func_context)
+        df = records_to_polars(records, column_types, generated_columns, func_context)
         await cache(df, batch_id, epoch, name, conn, is_source)
     else:
         df = pl.DataFrame()
@@ -306,6 +306,7 @@ async def ws_source_executable(
         [trio.Nursery, trio.Event], AsyncGenerator[list[dict[str, Any]], None]
     ],
     cancel_event: trio.Event,
+    generated_columns: dict[str, Callable],
     *args,
     **kwargs,
 ) -> AsyncGenerator[pl.DataFrame, None]:
@@ -314,16 +315,24 @@ async def ws_source_executable(
     # 'ws_generator_func' is supposed to be never ending (while True)
     # if an issue happens, the source task should be entirely
     # restarted (not a feature yet)
-    async for records in ws_generator_func(nursery, cancel_event):
-        if len(records) > 0:
-            df = records_to_polars(records, column_types, {}, {})
-            # Do not truncate the cache, this is a Table
-            await cache(df, 0, int(time.time() * 1_000), table_name, conn, is_source)
-        else:
-            # This should not happen, just in case
-            df = pl.DataFrame()
+    try:
+        async for records in ws_generator_func(nursery, cancel_event):
+            if len(records) > 0:
+                df = records_to_polars(records, column_types, generated_columns, {})
+                # Do not truncate the cache, this is a Table
+                await cache(
+                    df, 0, int(time.time() * 1_000), table_name, conn, is_source
+                )
+            else:
+                # This should not happen, just in case
+                df = pl.DataFrame()
 
-        yield df
+            yield df
+    except Exception as e:
+        # Custom capture as async generator escapes SC control
+        # https://github.com/python-trio/trio/issues/265
+        logger.error(e)
+        raise e
 
 
 def build_scheduled_source_executable(
@@ -341,7 +350,7 @@ def build_scheduled_source_executable(
         http_source_executable,
         name=ctx.name,
         column_types=ctx.column_types,
-        dynamic_columns=ctx.generated_columns,
+        generated_columns=ctx.generated_columns,
         is_source=ctx.source,
         http_requester_func=requester,
     )
@@ -355,6 +364,7 @@ def build_continuous_source_executable(
 ]:
     properties = ctx.properties
     table_name = ctx.name
+    generated_columns = ctx.generated_columns
     on_start_results = []
 
     if ctx.on_start_query != "":
@@ -376,19 +386,21 @@ def build_continuous_source_executable(
         column_types=ctx.column_types,
         is_source=ctx.source,
         ws_generator_func=ws_generator,
+        generated_columns=generated_columns,
     )
 
 
 # NOTE: Deprecate pyarrow schema for direct SQL to polars typing
 def build_lookup_functions(
     properties: SourceHttpProperties,
-    dynamic_columns: list[str],
-    columns: dict[str, str],
+    lookup_fields: list[str],
+    column_dtypes: dict[str, str],
     backend_conn: DuckDBPyConnection,
+    generated_columns: dict[str, Callable],
 ) -> Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]:
     # Create pyarrow type from sql DDL
     # {"symbol": "TEXT"} -> {"symbol": pa.string()}
-    return_type = struct_type(columns)  # type: ignore
+    return_type = struct_type(column_dtypes)  # type: ignore
     child_types = []
     for subtype in return_type.children:
         child_types.append(
@@ -403,7 +415,7 @@ def build_lookup_functions(
         results: list[dict[str, Any]] = []
 
         async def _process_one(row: tuple[Any, ...]):
-            context = dict(zip(dynamic_columns, row))
+            context = dict(zip(lookup_fields, row))
             lookup_properties = substitute_http_properties(properties, context)
             default_response = context.copy()
             result = []
@@ -436,7 +448,11 @@ def build_lookup_functions(
                     coerced = _coerce_result_dict(default_response, pa_field_types)
                     result.append(
                         coerced
-                        | {k: None for k in columns if k not in set(coerced.keys())}
+                        | {
+                            k: None
+                            for k in column_dtypes
+                            if k not in set(coerced.keys())
+                        }
                     )
 
             except Exception as e:
@@ -452,10 +468,10 @@ def build_lookup_functions(
         return results
 
     async def core_udf(df: pl.DataFrame) -> pl.DataFrame:
-        np_cols = [df[col].to_numpy() for col in dynamic_columns]
+        np_cols = [df[col].to_numpy() for col in lookup_fields]
         row_iter = zip(*np_cols)
         results = await process_elements(row_iter, properties)
-        return pl.DataFrame(results)
+        return records_to_polars(results, column_dtypes, generated_columns, {})
 
     return core_udf
 
@@ -466,12 +482,15 @@ def build_lookup_callback(
 ) -> tuple[str, Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]]:
     properties = create_table_context.properties
     table_name = create_table_context.name
-    dynamic_columns = create_table_context.dynamic_columns
-    columns = create_table_context.columns
+    lookup_fields = create_table_context.lookup_fields
+    column_types = create_table_context.column_types
+    generated_columns = create_table_context.generated_columns
 
     return (
         table_name,
-        build_lookup_functions(properties, dynamic_columns, columns, backend_conn),
+        build_lookup_functions(
+            properties, lookup_fields, column_types, backend_conn, generated_columns
+        ),
     )
 
 

@@ -87,8 +87,8 @@ VALID_CREATE_RESULT = [
             "jq": ".",
         },
         query="CREATE TEMPORARY TABLE lookup_example (url TEXT)",
-        dynamic_columns=["url"],
-        columns={"url": "TEXT"},
+        lookup_fields=["url"],
+        column_types={"url": "TEXT"},
     ),
 ]
 

@@ -74,8 +74,9 @@ class CreateHTTPLookupTableContext(CreateTableContext):
     name: str
     properties: SourceHttpProperties
     query: str
-    dynamic_columns: list[str]
-    columns: dict[str, str]
+    column_types: dict[str, str]
+    lookup_fields: list[str]
+    generated_columns: dict[str, Callable]
     lookup: bool = True
 
 
