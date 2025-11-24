@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 from typing import Any, TypeAlias, TypeVar, Callable, Optional
-from task.task import BaseTask
 
 TaskOutput: TypeAlias = Any
 TaskId = str
@@ -11,7 +10,7 @@ T = TypeVar("T")
 
 @dataclass
 class TaskInfo:
-    task: BaseTask | None
+    task: Any | None  # avoid circular type
     has_data: bool
     metadata_table: str
     metadata_column: str

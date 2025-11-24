@@ -131,6 +131,9 @@ class TaskManager(Service):
         name = ctx.name
         builder = TASK_REGISTER.get(type(ctx))
 
+        dependency_grah.ensure_vertex(name)  # to add Secret, temp solution
+
+        builder = TASK_REGISTER.get(type(ctx))
         if not builder:
             logger.error(f"No task builder for context type: {type(ctx).__name__}")
             return

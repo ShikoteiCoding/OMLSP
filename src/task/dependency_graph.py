@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 
-class TaskGraph:
+class DependancyGraph:
     """
     Graph of dependancy between running taks
     """
@@ -12,7 +12,7 @@ class TaskGraph:
     _instanciated: bool = False
 
     #: Singleton instance
-    _instance: TaskGraph
+    _instance: DependancyGraph
 
     nodes: set
     #: parent → {children}
@@ -31,7 +31,7 @@ class TaskGraph:
         self.leaves = set()
 
     @classmethod
-    def get_instance(cls) -> TaskGraph:
+    def get_instance(cls) -> DependancyGraph:
         if cls._instanciated:
             return cls._instance
 
@@ -110,4 +110,4 @@ class TaskGraph:
             self._collect_descendants(child, acc)
 
 
-dependency_grah = TaskGraph.get_instance()
+dependency_grah = DependancyGraph.get_instance()
