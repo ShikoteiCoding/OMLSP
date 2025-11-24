@@ -3,7 +3,6 @@ Task Manager managing registration and running of Tasks.
 """
 
 from duckdb import DuckDBPyConnection
-from numpy import isin
 
 from channel import Channel
 from scheduler.scheduler import TrioScheduler
@@ -13,7 +12,7 @@ from context.context import (
     DropContext,
     DropSimpleContext,
     DropCascadeContext,
-    CreateHTTPLookupTableContext
+    CreateHTTPLookupTableContext,
 )
 from apscheduler.triggers.cron import CronTrigger
 
@@ -144,10 +143,20 @@ class TaskManager(Service):
             dependency_grah.add_vertex(parent, ctx.name)
         # Add to catalog
         if isinstance(ctx, CreateHTTPLookupTableContext):
-            catalog.add(name, None, ctx.has_data, type(ctx), lambda: callback_store.delete(ctx.name))
+            catalog.add(
+                name,
+                task=None,
+                has_metadata=ctx.has_data,
+                ctx_type=type(ctx),
+                cleanup_callback=lambda: callback_store.delete(ctx.name),
+            )
         else:
-            catalog.add(name, task, ctx.has_data, type(ctx))
-
+            catalog.add(
+                name,
+                task=task,
+                has_metadata=ctx.has_data,
+                ctx_type=type(ctx),
+            )
         # Start supervised
         if task:
             # Scheduled tasks run unsupervised
@@ -166,10 +175,8 @@ class TaskManager(Service):
                 logger.warning(f"[TaskManager] task is not a leaf '{name}'")
                 return
             dependency_grah.drop_leaf(name)
-            task, has_data, metadata_table, metadata_column, cleanup_callback = catalog.get(name)
-            await self._delete_task_from_system(
-                task, name, has_data, metadata_table, metadata_column, cleanup_callback
-            )
+            await self._delete_task_from_system(name=name, **vars(catalog.get(name)))
+
             logger.success(f"[TaskManager] dropped task: {name}")
 
         if isinstance(ctx, DropCascadeContext):
@@ -179,24 +186,21 @@ class TaskManager(Service):
                 return
 
             for n in dropped_from_graph:
-                task, has_data, metadata_table, metadata_column, cleanup_callback = catalog.get(n)
-                await self._delete_task_from_system(
-                    task, n, has_data, metadata_table, metadata_column, cleanup_callback
-                )
+                await self._delete_task_from_system(name=n, **vars(catalog.get(n)))
 
             logger.success(f"[TaskManager] dropped cascade tasks: {dropped_from_graph}")
 
     async def _delete_task_from_system(
         self,
+        *,
         task: BaseTask | None,
         name: str,
         has_data: bool,
         metadata_table: str,
         metadata_column: str,
-        cleanup_callback: Optional[Callable]
+        cleanup_callback: Optional[Callable],
     ):
-        
-        #callback cleanup (lookup removal)
+        # Callback cleanup (lookup removal)
         if cleanup_callback:
             cleanup_callback()
 

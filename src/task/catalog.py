@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from polars import Unknown
 from typing import Callable, Optional
 
 from task.task import BaseTask
-from task.types import TaskId, HasData
+from task.types import TaskId, HasData, TaskInfo
 from context.context import CreateContext
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
@@ -19,7 +18,7 @@ from context.context import (
     CreateWSSourceContext,
     CreateWSTableContext,
     CreateViewContext,
-    CreateHTTPLookupTableContext
+    CreateHTTPLookupTableContext,
 )
 
 
@@ -45,13 +44,13 @@ class TaskCatalog:
         CreateWSSourceContext: (METADATA_SOURCE_TABLE_NAME, "source_name"),
     }
 
-    _task_id_to_task: dict[TaskId, tuple[BaseTask | None, HasData, str, str, Optional[Callable]]]
+    _task_id_to_task: dict[TaskId, TaskInfo]
 
     def __init__(self):
         raise NotImplementedError("Singleton — use TaskCatalog.get_instance()")
 
     def init(self):
-        self._task_id_to_task: dict[TaskId, tuple[BaseTask | None, HasData, str, str, Optional[Callable]]] = {}
+        self._task_id_to_task: dict[TaskId, TaskInfo] = {}
 
     @classmethod
     def get_instance(cls) -> TaskCatalog:
@@ -71,27 +70,37 @@ class TaskCatalog:
         )
 
     def add(
-        self, task_id: TaskId, task: BaseTask | None, has_metadata: HasData, ctx_type: type[CreateContext], cleanup_callback: Optional[Callable] = None
+        self,
+        task_id: TaskId,
+        *,
+        task: BaseTask | None,
+        has_metadata: HasData,
+        ctx_type: type[CreateContext],
+        cleanup_callback: Optional[Callable] = None,
     ) -> None:
         """Add a task to the catalog."""
         metadata_table, metadata_column = self.resolve_metadata(ctx_type)
-        self._task_id_to_task[task_id] = (
-            task,
-            has_metadata,
-            metadata_table,
-            metadata_column,
-            cleanup_callback
+
+        self._task_id_to_task[task_id] = TaskInfo(
+            task=task,
+            has_data=has_metadata,
+            metadata_table=metadata_table,
+            metadata_column=metadata_column,
+            cleanup_callback=cleanup_callback,
         )
 
     def remove(self, task_id: TaskId) -> None:
         """Remove a task."""
         self._task_id_to_task.pop(task_id, None)
 
-    def get(self, task_id: str) -> tuple[BaseTask | None, HasData, str, str, Optional[Callable]]:
+    def get(self, task_id: TaskId) -> TaskInfo:
         """Retrieve a task by ID."""
-        return self._task_id_to_task.get(task_id, (None ,False, "", "", None))
+        return self._task_id_to_task.get(
+            task_id,
+            TaskInfo(None, False, "", "", None),  # default
+        )
 
-    def has_task(self, task_id: str) -> bool:
+    def has_task(self, task_id: TaskId) -> bool:
         """Check if the task is in the catalog."""
         return task_id in self._task_id_to_task
 
