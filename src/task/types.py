@@ -1,7 +1,7 @@
 from typing import Any, TypeAlias, TypeVar
 
 TaskOutput: TypeAlias = Any
-TaskId = str
-ArtifactId = TaskId
+ArtifactId = str
+TaskId = ArtifactId
 HasData = bool
 T = TypeVar("T")
