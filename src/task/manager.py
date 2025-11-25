@@ -13,6 +13,7 @@ from context.context import (
     DropSimpleContext,
     DropCascadeContext,
     CreateHTTPLookupTableContext,
+    CreateSecretContext,
 )
 from apscheduler.triggers.cron import CronTrigger
 
@@ -122,34 +123,37 @@ class TaskManager(Service):
     async def _process(self):
         async for ctx in self._task_events:
             if isinstance(ctx, CreateContext):
-                await self._create_task(ctx)
+                await self._register_artifact(ctx)
             elif isinstance(ctx, DropContext):
-                await self._delete_task(ctx)
+                await self._delete_artifact(ctx)
 
-    async def _create_task(self, ctx: CreateContext):
-        """Create a task from context, register it, add graph deps, start supervisor."""
+    async def _register_artifact(self, ctx: CreateContext):
+        """Create a artifact from context, register it, add graph deps, start supervisor."""
         name = ctx.name
+        has_data = ctx.has_data
         builder = TASK_REGISTER.get(type(ctx))
 
-        dependency_grah.ensure_vertex(name)  # to add Secret, temp solution
-
-        builder = TASK_REGISTER.get(type(ctx))
-        if not builder:
-            logger.error(f"No task builder for context type: {type(ctx).__name__}")
-            return
-        # Register the task
-        task = builder(self, ctx)
+        # Some contexts produce NO task (secret, lookup-table)
+        if builder is None:
+            task = None
+        else:
+            task = builder(self, ctx)
 
         dependency_grah.ensure_vertex(name)
         # Register dependencies in the graph
+        # TODO: add secret dependancy
         for parent in getattr(ctx, "upstreams", []):
             dependency_grah.add_vertex(parent, ctx.name)
         # Add to catalog
-        if isinstance(ctx, CreateHTTPLookupTableContext):
+        if isinstance(ctx, CreateSecretContext):
+            catalog.add(name, task=None, has_data=False, ctx_type=type(ctx))
+            return
+
+        elif isinstance(ctx, CreateHTTPLookupTableContext):
             catalog.add(
                 name,
                 task=None,
-                has_metadata=ctx.has_data,
+                has_data=False,
                 ctx_type=type(ctx),
                 cleanup_callback=lambda: callback_store.delete(ctx.name),
             )
@@ -157,7 +161,7 @@ class TaskManager(Service):
             catalog.add(
                 name,
                 task=task,
-                has_metadata=ctx.has_data,
+                has_data=has_data,
                 ctx_type=type(ctx),
             )
         # Start supervised
@@ -169,18 +173,18 @@ class TaskManager(Service):
                 await self._tasks_to_supervise.send(task)
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
-    async def _delete_task(self, ctx: DropContext):
+    async def _delete_artifact(self, ctx: DropContext):
         name = ctx.name
 
         if isinstance(ctx, DropSimpleContext):
             is_leaf = dependency_grah.is_a_leaf(name)
             if not is_leaf:
-                logger.warning(f"[TaskManager] task is not a leaf '{name}'")
+                logger.warning(f"[TaskManager] artefact is not a leaf '{name}'")
                 return
             dependency_grah.drop_leaf(name)
-            await self._delete_task_from_system(name=name, **vars(catalog.get(name)))
+            await self._destroy_artifact(name=name, **vars(catalog.get(name)))
 
-            logger.success(f"[TaskManager] dropped task: {name}")
+            logger.success(f"[TaskManager] dropped artifact: {name}")
 
         if isinstance(ctx, DropCascadeContext):
             dropped_from_graph = dependency_grah.drop_recursive(name)
@@ -189,11 +193,13 @@ class TaskManager(Service):
                 return
 
             for n in dropped_from_graph:
-                await self._delete_task_from_system(name=n, **vars(catalog.get(n)))
+                await self._destroy_artifact(name=n, **vars(catalog.get(n)))
 
-            logger.success(f"[TaskManager] dropped cascade tasks: {dropped_from_graph}")
+            logger.success(
+                f"[TaskManager] dropped cascade artifacts: {dropped_from_graph}"
+            )
 
-    async def _delete_task_from_system(
+    async def _destroy_artifact(
         self,
         *,
         task: BaseTask | None,
@@ -218,7 +224,6 @@ class TaskManager(Service):
             await task.on_stop()
             del task
         # Delete associated metadata
-        # TODO: DROP SECRET
         delete_metadata(self.backend_conn, metadata_table, metadata_column, name)
         if has_data:
             sql_query = f"DROP TABLE {name}"

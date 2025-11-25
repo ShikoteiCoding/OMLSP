@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 
-class DependancyGraph:
+class DependencyGraph:
     """
     Graph of dependancy between running taks
     """
@@ -12,7 +12,7 @@ class DependancyGraph:
     _instanciated: bool = False
 
     #: Singleton instance
-    _instance: DependancyGraph
+    _instance: DependencyGraph
 
     nodes: set
     #: parent → {children}
@@ -31,7 +31,7 @@ class DependancyGraph:
         self.leaves = set()
 
     @classmethod
-    def get_instance(cls) -> DependancyGraph:
+    def get_instance(cls) -> DependencyGraph:
         if cls._instanciated:
             return cls._instance
 
@@ -110,4 +110,4 @@ class DependancyGraph:
             self._collect_descendants(child, acc)
 
 
-dependency_grah = DependancyGraph.get_instance()
+dependency_grah = DependencyGraph.get_instance()

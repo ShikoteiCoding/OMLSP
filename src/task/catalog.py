@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from task.task import BaseTask
-from task.types import TaskId, HasData, TaskInfo
+from task.types import ArtifactId, HasData
 from context.context import CreateContext
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
@@ -22,17 +23,26 @@ from context.context import (
 )
 
 
-class TaskCatalog:
+@dataclass
+class ArtifactInfo:
+    task: BaseTask | None
+    has_data: bool
+    metadata_table: str
+    metadata_column: str
+    cleanup_callback: Optional[Callable] = None
+
+
+class ArtifactCatalog:
     """
-    Catalog of tasks.
-    Stores BaseTask objects, type, HasData bool, and metadata by their task_id.
+    Catalog of artifact.
+    Stores BaseTask objects, context type, HasData bool, and metadata by their task_id.
     """
 
     #: Flag to detect init
     _instanciated: bool = False
 
     #: Singleton instance
-    _instance: TaskCatalog
+    _instance: ArtifactCatalog
 
     CTX_METADATA_MAP: dict[type, tuple[str, str]] = {
         CreateHTTPTableContext: (METADATA_TABLE_TABLE_NAME, "table_name"),
@@ -44,16 +54,16 @@ class TaskCatalog:
         CreateWSSourceContext: (METADATA_SOURCE_TABLE_NAME, "source_name"),
     }
 
-    _task_id_to_task: dict[TaskId, TaskInfo]
+    _artifact_id_to_artifact: dict[ArtifactId, ArtifactInfo]
 
     def __init__(self):
-        raise NotImplementedError("Singleton — use TaskCatalog.get_instance()")
+        raise NotImplementedError("Singleton — use ArtifactCatalog.get_instance()")
 
     def init(self):
-        self._task_id_to_task: dict[TaskId, TaskInfo] = {}
+        self._artifact_id_to_artifact: dict[ArtifactId, ArtifactInfo] = {}
 
     @classmethod
-    def get_instance(cls) -> TaskCatalog:
+    def get_instance(cls) -> ArtifactCatalog:
         if cls._instanciated:
             return cls._instance
 
@@ -71,38 +81,38 @@ class TaskCatalog:
 
     def add(
         self,
-        task_id: TaskId,
+        task_id: ArtifactId,
         *,
         task: BaseTask | None,
-        has_metadata: HasData,
+        has_data: HasData,
         ctx_type: type[CreateContext],
         cleanup_callback: Optional[Callable] = None,
     ) -> None:
-        """Add a task to the catalog."""
+        """Add an artifact to the catalog."""
         metadata_table, metadata_column = self.resolve_metadata(ctx_type)
 
-        self._task_id_to_task[task_id] = TaskInfo(
+        self._artifact_id_to_artifact[task_id] = ArtifactInfo(
             task=task,
-            has_data=has_metadata,
+            has_data=has_data,
             metadata_table=metadata_table,
             metadata_column=metadata_column,
             cleanup_callback=cleanup_callback,
         )
 
-    def remove(self, task_id: TaskId) -> None:
-        """Remove a task."""
-        self._task_id_to_task.pop(task_id, None)
+    def remove(self, task_id: ArtifactId) -> None:
+        """Remove an artifact."""
+        self._artifact_id_to_artifact.pop(task_id, None)
 
-    def get(self, task_id: TaskId) -> TaskInfo:
-        """Retrieve a task by ID."""
-        return self._task_id_to_task.get(
+    def get(self, task_id: ArtifactId) -> ArtifactInfo:
+        """Retrieve an artifact by ID."""
+        return self._artifact_id_to_artifact.get(
             task_id,
-            TaskInfo(None, False, "", "", None),  # default
+            ArtifactInfo(None, False, "", "", None),  # default
         )
 
-    def has_task(self, task_id: TaskId) -> bool:
+    def has_task(self, task_id: ArtifactId) -> bool:
         """Check if the task is in the catalog."""
-        return task_id in self._task_id_to_task
+        return task_id in self._artifact_id_to_artifact
 
 
-catalog = TaskCatalog.get_instance()
+catalog = ArtifactCatalog.get_instance()

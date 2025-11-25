@@ -63,7 +63,7 @@ class TaskSupervisor(Service):
                     task.task_id,
                     attempt,
                     max_retries,
-                    "\n".join([str(sub) for sub in e.exceptions]),
+                    "\n".join(str(sub) for sub in list(e.exceptions)),
                 )
                 backoff = backoff_base * attempt
                 logger.debug(f"[{task.task_id}] retrying in {backoff:.1f}s")

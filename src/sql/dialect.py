@@ -140,6 +140,22 @@ class OmlspDialect(Dialect):
             # Fallback to the default Postgres CREATE behavior
             return super()._parse_create()
 
+        def _parse_drop(self, exists: bool = False):
+            # SECRET is tokenized as TokenType.COMMAND
+            if self._match(TokenType.COMMAND):  # matches SECRET
+                if self._prev:
+                    kind = self._prev.text.upper()  # "SECRET"
+                    this = self._parse_id_var()  # secret name
+
+                    return self.expression(
+                        exp.Drop,
+                        kind=kind,
+                        this=this,
+                    )
+
+            # Fallback to the base DROP logic
+            return super()._parse_drop(exists)
+
     class Generator(generator.Generator):
         TRANSFORMS = {
             **generator.Generator.TRANSFORMS,
