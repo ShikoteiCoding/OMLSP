@@ -9,11 +9,6 @@ from scheduler.scheduler import TrioScheduler
 from scheduler.types import SchedulerCommand
 from context.context import (
     CreateContext,
-    DropContext,
-    DropSimpleContext,
-    DropCascadeContext,
-    CreateHTTPLookupTableContext,
-    CreateSecretContext,
 )
 from apscheduler.triggers.cron import CronTrigger
 
@@ -26,16 +21,11 @@ from task.types import TaskId
 
 
 from task.supervisor import TaskSupervisor
-from task.dependency_graph import dependency_grah
-from task.catalog import catalog
 from task.builder_registry import TASK_REGISTER
-
-from store import delete_metadata
-from store.lookup import callback_store
 
 from services import Service
 
-from typing import Callable, Optional
+from typing import Callable
 
 from loguru import logger
 
@@ -61,11 +51,8 @@ class TaskManager(Service):
     #: TODO: to deprecate for below mapping
     _sources: dict[TaskId, BaseTaskSender] = {}
 
-    #: Reference to all tasks by task id
-    _task_id_to_task: dict[TaskId, tuple[BaseTask, bool]] = {}
-
     #: Outgoing Task context to be orchestrated
-    _task_events: Channel[CreateContext | DropContext]
+    _task_events: Channel[CreateContext | TaskId]
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[
@@ -85,8 +72,9 @@ class TaskManager(Service):
             tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
         ](100)
         self._tasks_to_supervise = Channel[BaseTask](100)
+        self.supervisor = TaskSupervisor()
 
-    def add_taskctx_channel(self, channel: Channel[CreateContext | DropContext]):
+    def add_taskctx_channel(self, channel: Channel[CreateContext | TaskId]):
         self._task_events = channel
 
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
@@ -100,131 +88,41 @@ class TaskManager(Service):
         """
         scheduler.add_executable_channel(self._scheduled_executables)
 
-    def connect_supervisor(self, supervisor: TaskSupervisor) -> None:
-        """
-        Connect TaskManager and TaskSupervisor through one Channel.
-
-        Channel:
-            - Task Channel
-
-        See channel.py for Channel implementation.
-        """
-        supervisor.add_tasks_to_supervise_channel(self._tasks_to_supervise)
-
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
+        await self.supervisor.start(self._nursery)
         self._nursery.start_soon(self._process)
 
     async def on_stop(self):
         """Close channel."""
+        await self.supervisor.stop()
         await self._scheduled_executables.aclose()
         await self._tasks_to_supervise.aclose()
 
     async def _process(self):
-        async for ctx in self._task_events:
-            if isinstance(ctx, CreateContext):
-                await self._register_artifact(ctx)
-            elif isinstance(ctx, DropContext):
-                await self._delete_artifact(ctx)
+        async for payload in self._task_events:
+            if isinstance(payload, CreateContext):
+                ctx = payload
+                await self._create_task(ctx)
+            elif isinstance(payload, TaskId):
+                task_id = payload
+                await self._delete_task(task_id)
 
-    async def _register_artifact(self, ctx: CreateContext):
-        """Create a artifact from context, register it, add graph deps, start supervisor."""
-        name = ctx.name
-        has_data = ctx.has_data
+    async def _create_task(self, ctx: CreateContext):
+        """Create a task from context, register it, start to supervise."""
+
         builder = TASK_REGISTER.get(type(ctx))
-
-        # Some contexts produce NO task (secret, lookup-table)
         if builder is None:
-            task = None
-        else:
-            task = builder(self, ctx)
-
-        dependency_grah.ensure_vertex(name)
-        # Register dependencies in the graph
-        # TODO: add secret dependancy
-        for parent in getattr(ctx, "upstreams", []):
-            dependency_grah.add_vertex(parent, ctx.name)
-        # Add to catalog
-        if isinstance(ctx, CreateSecretContext):
-            catalog.add(name, task=None, has_data=False, ctx_type=type(ctx))
             return
-
-        elif isinstance(ctx, CreateHTTPLookupTableContext):
-            catalog.add(
-                name,
-                task=None,
-                has_data=False,
-                ctx_type=type(ctx),
-                cleanup_callback=lambda: callback_store.delete(ctx.name),
-            )
-        else:
-            catalog.add(
-                name,
-                task=task,
-                has_data=has_data,
-                ctx_type=type(ctx),
-            )
+        task = builder(self, ctx)
         # Start supervised
         if task:
             # Scheduled tasks run unsupervised
             if isinstance(task, ScheduledSourceTask):
                 self._nursery.start_soon(task.start, self._nursery)
             else:
-                await self._tasks_to_supervise.send(task)
+                await self.supervisor.start_supervising(task)
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
-    async def _delete_artifact(self, ctx: DropContext):
-        name = ctx.name
-
-        if isinstance(ctx, DropSimpleContext):
-            is_leaf = dependency_grah.is_a_leaf(name)
-            if not is_leaf:
-                logger.warning(f"[TaskManager] artefact is not a leaf '{name}'")
-                return
-            dependency_grah.drop_leaf(name)
-            await self._destroy_artifact(name=name, **vars(catalog.get(name)))
-
-            logger.success(f"[TaskManager] dropped artifact: {name}")
-
-        if isinstance(ctx, DropCascadeContext):
-            dropped_from_graph = dependency_grah.drop_recursive(name)
-            if not dropped_from_graph:
-                logger.warning(f"[TaskManager] nothing to drop for '{name}'")
-                return
-
-            for n in dropped_from_graph:
-                await self._destroy_artifact(name=n, **vars(catalog.get(n)))
-
-            logger.success(
-                f"[TaskManager] dropped cascade artifacts: {dropped_from_graph}"
-            )
-
-    async def _destroy_artifact(
-        self,
-        *,
-        task: BaseTask | None,
-        name: str,
-        has_data: bool,
-        metadata_table: str,
-        metadata_column: str,
-        cleanup_callback: Optional[Callable],
-    ):
-        # Callback cleanup (lookup removal)
-        if cleanup_callback:
-            cleanup_callback()
-
-        if isinstance(task, ScheduledSourceTask):
-            # If task is a ScheduledSourceTask, evict it from the scheduler
-            await self._scheduled_executables.send(
-                (SchedulerCommand.EVICT, task.task_id)
-            )
-        # Stop and clean up the task
-        catalog.remove(name)
-        if task:
-            await task.on_stop()
-            del task
-        # Delete associated metadata
-        delete_metadata(self.backend_conn, metadata_table, metadata_column, name)
-        if has_data:
-            sql_query = f"DROP TABLE {name}"
-            self.backend_conn.sql(sql_query)
+    async def _delete_task(self, task_id: TaskId):
+        await self.supervisor.stop_supervising(task_id)

@@ -15,9 +15,9 @@ from store import (
 )
 from server import ClientManager
 from sql.parser import extract_one_query_context
-from task import TaskManager
 from services import Service
 from app.types import ClientSQL, EvaledSQL
+from entity.entity_manager import EntityManager
 
 __all__ = ["App"]
 
@@ -44,7 +44,7 @@ class App(Service):
     _evaled_sql: Channel[EvaledSQL]
 
     #: Outgoing Task context to be orchestrated by TaskManager
-    _task_events: Channel[CreateContext | DropContext]
+    _entity_context: Channel[CreateContext | DropContext]
 
     def __init__(
         self,
@@ -60,7 +60,7 @@ class App(Service):
         # becomes more mature.
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
-        self._task_events = Channel[CreateContext | DropContext](100)
+        self._entity_context = Channel[CreateContext | DropContext](100)
 
     def connect_client_manager(self, client_manager: ClientManager) -> None:
         """
@@ -75,16 +75,16 @@ class App(Service):
         client_manager.add_sql_channel(self._sql_to_eval)
         client_manager.add_response_channel(self._evaled_sql)
 
-    def connect_task_manager(self, task_manager: TaskManager) -> None:
+    def connect_entity_manager(self, entity_manager: EntityManager) -> None:
         """
-        Connect App and TaskManager through one Channel.
+        Connect App and EntityManager through one Channel.
 
         Channel:
-            - Task Channel (incoming client SQL)
+            - Context Channel (incoming client SQL)
 
         See channel.py for Channel implementation.
         """
-        task_manager.add_taskctx_channel(self._task_events)
+        entity_manager.add_ctx_channel(self._entity_context)
 
     async def on_start(self):
         """
@@ -103,7 +103,7 @@ class App(Service):
         logger.success("[App] stopping.")
         await self._sql_to_eval.aclose()
         await self._evaled_sql.aclose()
-        await self._task_events.aclose()
+        await self._entity_context.aclose()
 
     async def submit(self, sql: str) -> None:
         """
@@ -155,7 +155,7 @@ class App(Service):
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):
-                await self._task_events.send(ctx)
+                await self._entity_context.send(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return

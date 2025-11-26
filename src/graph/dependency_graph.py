@@ -5,7 +5,7 @@ from collections import defaultdict
 
 class DependencyGraph:
     """
-    Graph of dependancy between running taks
+    Graph of dependancy between context
     """
 
     #: Flag to detect init
