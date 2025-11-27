@@ -11,6 +11,7 @@ class TaskSupervisor(Service):
 
     def __init__(self):
         super().__init__(name="TaskSupervisor")
+        # cancel scope per supervised task (controls supervision loop)
         self._supervised: dict[str, trio.CancelScope] = {}
 
     async def start_supervising(self, task: BaseTask):

@@ -14,12 +14,12 @@ class DependencyGraph:
     #: Singleton instance
     _instance: DependencyGraph
 
-    nodes: set
-    #: parent → {children}
-    children: defaultdict
+    nodes: set[str]
     #: child  → {parents}
-    parents: defaultdict
-    leaves: set
+    children: dict[str, set[str]]
+    #: parent → {children}
+    parents: dict[str, set[str]]
+    leaves: set[str]
 
     def __init__(self):
         raise NotImplementedError("Singleton — use TaskGraph.get_instance()")

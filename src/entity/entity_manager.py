@@ -1,5 +1,5 @@
 """
-Entity Manager managing registration and dependancies of Contex.
+Entity Manager managing registration and dependancies of Context.
 """
 
 from duckdb import DuckDBPyConnection
@@ -16,6 +16,7 @@ from store.db import (
     METADATA_VIEW_TABLE_NAME,
     METADATA_SINK_TABLE_NAME,
     METADATA_SOURCE_TABLE_NAME,
+    METADATA_SECRET_TABLE_NAME,
     delete_metadata,
 )
 from context.context import (
@@ -26,6 +27,7 @@ from context.context import (
     CreateWSTableContext,
     CreateViewContext,
     CreateHTTPLookupTableContext,
+    CreateSecretContext
 )
 from graph.dependency_graph import dependency_grah
 from task.manager import TaskManager
@@ -48,6 +50,7 @@ class EntityManager(Service):
         CreateSinkContext: (METADATA_SINK_TABLE_NAME, "sink_name"),
         CreateHTTPSourceContext: (METADATA_SOURCE_TABLE_NAME, "source_name"),
         CreateWSSourceContext: (METADATA_SOURCE_TABLE_NAME, "source_name"),
+        CreateSecretContext: (METADATA_SECRET_TABLE_NAME, "secret_name"),
     }
     #: Duckdb connections for backend metadata
     backend_conn: DuckDBPyConnection
@@ -64,7 +67,9 @@ class EntityManager(Service):
     def __init__(self, backend_conn: DuckDBPyConnection):
         super().__init__(name="EntityManager")
         self.backend_conn = backend_conn
-        self._task_events = Channel[CreateContext | str](100)
+        self._task_events = Channel[CreateContext | str](
+            100
+        )  # TODO: replace by command
         self._entity_context = Channel[CreateContext | DropContext](100)
 
     def add_ctx_channel(self, channel: Channel[CreateContext | DropContext]):
@@ -99,6 +104,7 @@ class EntityManager(Service):
     async def _register_entity(self, ctx: CreateContext):
         dependency_grah.ensure_vertex(ctx.name)
         # Register dependencies in the graph
+        #TODO: add SECRET
         for parent in getattr(ctx, "upstreams", []):
             dependency_grah.add_vertex(parent, ctx.name)
 
@@ -115,8 +121,8 @@ class EntityManager(Service):
             dependency_grah.drop_leaf(ctx.name)
             ctx_node = self._name_to_context.get(ctx.name)
             if ctx_node is not None:
+                await self._task_events.send(ctx_node.name)
                 await self._destroy_entity(ctx_node)
-                await self._task_events.send(ctx_node)
 
             logger.success(f"[EntityManager] dropped entity: {ctx}")
 
@@ -125,12 +131,11 @@ class EntityManager(Service):
             if not dropped_from_graph:
                 logger.warning(f"[EntityManager] nothing to drop for '{ctx}'")
                 return
-            print(dropped_from_graph)
             for n in dropped_from_graph:
                 ctx_node = self._name_to_context.get(n)
                 if ctx_node is not None:
-                    await self._destroy_entity(ctx_node)
                     await self._task_events.send(ctx_node.name)
+                    await self._destroy_entity(ctx_node)
 
             logger.success(
                 f"[EntityManager] dropped cascade entities: {dropped_from_graph}"

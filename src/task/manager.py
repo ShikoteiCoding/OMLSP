@@ -13,7 +13,6 @@ from context.context import (
 from apscheduler.triggers.cron import CronTrigger
 
 from task.task import (
-    BaseTask,
     BaseTaskSender,
     ScheduledSourceTask,
 )
@@ -59,9 +58,6 @@ class TaskManager(Service):
         tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
     ]
 
-    #: Outgoing channel to send task to supervisor
-    _tasks_to_supervise: Channel[BaseTask]
-
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
     ):
@@ -71,7 +67,6 @@ class TaskManager(Service):
         self._scheduled_executables = Channel[
             tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
         ](100)
-        self._tasks_to_supervise = Channel[BaseTask](100)
         self.supervisor = TaskSupervisor()
 
     def add_taskctx_channel(self, channel: Channel[CreateContext | TaskId]):
@@ -97,7 +92,6 @@ class TaskManager(Service):
         """Close channel."""
         await self.supervisor.stop()
         await self._scheduled_executables.aclose()
-        await self._tasks_to_supervise.aclose()
 
     async def _process(self):
         async for payload in self._task_events:
