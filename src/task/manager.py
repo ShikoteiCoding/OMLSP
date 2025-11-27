@@ -12,11 +12,13 @@ from context.context import (
 )
 from apscheduler.triggers.cron import CronTrigger
 
+from context.context import CreateHTTPSourceContext, CreateHTTPTableContext
+
 from task.task import (
     BaseTaskSender,
     ScheduledSourceTask,
 )
-from task.types import TaskId
+from task.types import TaskId, TaskManagerCommand
 
 
 from task.supervisor import TaskSupervisor
@@ -51,7 +53,7 @@ class TaskManager(Service):
     _sources: dict[TaskId, BaseTaskSender] = {}
 
     #: Outgoing Task context to be orchestrated
-    _task_events: Channel[CreateContext | TaskId]
+    _task_events: Channel[tuple[TaskManagerCommand, CreateContext]]
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[
@@ -69,7 +71,9 @@ class TaskManager(Service):
         ](100)
         self.supervisor = TaskSupervisor()
 
-    def add_taskctx_channel(self, channel: Channel[CreateContext | TaskId]):
+    def add_taskctx_channel(
+        self, channel: Channel[tuple[TaskManagerCommand, CreateContext]]
+    ):
         self._task_events = channel
 
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
@@ -94,13 +98,11 @@ class TaskManager(Service):
         await self._scheduled_executables.aclose()
 
     async def _process(self):
-        async for payload in self._task_events:
-            if isinstance(payload, CreateContext):
-                ctx = payload
+        async for cmd, ctx in self._task_events:
+            if cmd is TaskManagerCommand.CREATE:
                 await self._create_task(ctx)
-            elif isinstance(payload, TaskId):
-                task_id = payload
-                await self._delete_task(task_id)
+            elif cmd is TaskManagerCommand.DELETE:
+                await self._delete_task(ctx)
 
     async def _create_task(self, ctx: CreateContext):
         """Create a task from context, register it, start to supervise."""
@@ -118,5 +120,9 @@ class TaskManager(Service):
                 await self.supervisor.start_supervising(task)
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
-    async def _delete_task(self, task_id: TaskId):
-        await self.supervisor.stop_supervising(task_id)
+    async def _delete_task(self, ctx: CreateContext):
+        if isinstance(ctx, CreateHTTPSourceContext | CreateHTTPTableContext):
+            # If task is a ScheduledSourceTask, evict it from the scheduler
+            await self._scheduled_executables.send((SchedulerCommand.EVICT, ctx.name))
+        else:
+            await self.supervisor.stop_supervising(ctx.name)
