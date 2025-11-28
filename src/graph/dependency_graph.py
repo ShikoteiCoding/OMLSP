@@ -22,7 +22,7 @@ class DependencyGraph:
     leaves: set[str]
 
     def __init__(self):
-        raise NotImplementedError("Singleton — use TaskGraph.get_instance()")
+        raise NotImplementedError("Singleton — use DependencyGraph.get_instance()")
 
     def init(self):
         self.nodes = set()

@@ -5,12 +5,6 @@ Entity Manager managing registration and dependancies of Context.
 from duckdb import DuckDBPyConnection
 
 from channel import Channel
-from context.context import (
-    CreateContext,
-    DropContext,
-    DropSimpleContext,
-    DropCascadeContext,
-)
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
@@ -28,6 +22,10 @@ from context.context import (
     CreateViewContext,
     CreateHTTPLookupTableContext,
     CreateSecretContext,
+    CreateContext,
+    DropContext,
+    DropSimpleContext,
+    DropCascadeContext,
 )
 from graph.dependency_graph import dependency_grah
 from task.manager import TaskManager
@@ -62,15 +60,15 @@ class EntityManager(Service):
     _task_events: Channel[tuple[TaskManagerCommand, CreateContext]]
 
     #: Outgoing Context channel to add in DependencyGrah
-    _entity_context: Channel[CreateContext | DropContext]  # TODO: replace by command
+    _entity_context: Channel[CreateContext]
 
     def __init__(self, backend_conn: DuckDBPyConnection):
         super().__init__(name="EntityManager")
         self.backend_conn = backend_conn
         self._task_events = Channel[tuple[TaskManagerCommand, CreateContext]](100)
-        self._entity_context = Channel[CreateContext | DropContext](100)
+        self._entity_context = Channel[CreateContext](100)
 
-    def add_ctx_channel(self, channel: Channel[CreateContext | DropContext]):
+    def add_ctx_channel(self, channel: Channel[CreateContext]):
         self._entity_context = channel
 
     def connect_task_manager(self, task_manager: TaskManager) -> None:
