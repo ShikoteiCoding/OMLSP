@@ -333,6 +333,7 @@ def build_create_http_properties(properties: dict[str, str]) -> SourceHttpProper
     for key, value in list(headers.items()):
         if match := pattern.match(value.strip()):
             secrets.append((key, match.group(1)))
+            del headers[key]
 
     return SourceHttpProperties(
         url=str(unnested["url"]),
