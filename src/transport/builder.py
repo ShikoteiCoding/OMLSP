@@ -123,7 +123,7 @@ class HttpTransport(Transport):
     def configure(self) -> HttpTransport:
         # Configure SecretsHandler
         self.signer = AUTH_DISPATCHER.get(self.properties.signer_class, NoSigner)(
-            SecretsHandler.init(self.properties.headers)
+            SecretsHandler.init(self.properties.secrets)
         )
 
         # Initialize http specific

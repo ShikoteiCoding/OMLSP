@@ -100,9 +100,11 @@ class EntityManager(Service):
     async def _register_entity(self, ctx: CreateContext):
         dependency_grah.ensure_vertex(ctx.name)
         # Register dependencies in the graph
-        # TODO: add SECRET
         for parent in getattr(ctx, "upstreams", []):
             dependency_grah.add_vertex(parent, ctx.name)
+        properties = getattr(ctx, "properties", object())
+        for _, secret_name in getattr(properties, "secrets", []):
+            dependency_grah.add_vertex(secret_name, ctx.name)
 
         await self._task_events.send((TaskManagerCommand.CREATE, ctx))
         self._name_to_context[ctx.name] = ctx

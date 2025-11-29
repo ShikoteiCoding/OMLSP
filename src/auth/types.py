@@ -10,10 +10,6 @@ __all__ = ["BaseSignerT"]
 
 class SecretsHandlerT(abc.ABC):
     @abc.abstractmethod
-    def _add(self):
-        pass
-
-    @abc.abstractmethod
     def render(
         self, conn: DuckDBPyConnection, request_kwargs: dict[str, Any]
     ) -> dict[str, Any]:

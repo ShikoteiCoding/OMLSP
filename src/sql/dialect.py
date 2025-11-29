@@ -146,14 +146,17 @@ class OmlspDialect(Dialect):
                 if self._prev:
                     kind = self._prev.text.upper()  # "SECRET"
                     this = self._parse_id_var()  # secret name
+                    cascade = False
+                    nxt = self._curr  # CURRENT token AFTER name
+                    if nxt and nxt.text.upper() == "CASCADE":
+                        self._advance()  # consume
+                        cascade = True
 
                     return self.expression(
-                        exp.Drop,
-                        kind=kind,
-                        this=this,
+                        exp.Drop, kind=kind, this=this, cascade=cascade
                     )
 
-            # Fallback to the base DROP logic
+            # Fallback to standard DROP logic
             return super()._parse_drop(exists)
 
     class Generator(generator.Generator):

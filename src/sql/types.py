@@ -39,6 +39,7 @@ class SourceHttpProperties(Properties):
     headers: dict
     json: dict
     params: dict
+    secrets: list[tuple[str, str]]
 
 
 @dataclass
