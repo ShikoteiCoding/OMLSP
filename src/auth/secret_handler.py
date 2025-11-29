@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 
 from duckdb import DuckDBPyConnection
 from typing import Any
@@ -27,23 +26,10 @@ class SecretsHandler(SecretsHandlerT):
     cache: dict[str, str] = {}
 
     @classmethod
-    def init(cls, headers: dict[str, str]) -> SecretsHandler:
+    def init(cls, secrets: list[tuple[str, str]]) -> SecretsHandler:
         new = cls.__new__(cls)
-        pattern = re.compile(r"^SECRET\s+(.+)$")
-
-        # NOTE: For now we assume the secret exists and is
-        # valid and has not been removed in-between. Which
-        # also means this headers parsing could be moved
-        # elsewhere instead
-        for key, value in headers.items():
-            if match := re.match(pattern, value.strip()):
-                if match:
-                    new._add(key, str(match.group(1)))
-
+        new.paths = secrets
         return new
-
-    def _add(self, header_subkey: str, secret_name: str):
-        self.paths.append((header_subkey, secret_name))
 
     def render(self, conn: DuckDBPyConnection, request_kwargs: dict[str, Any]):
         if not self.is_rendered:

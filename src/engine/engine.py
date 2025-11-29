@@ -104,6 +104,7 @@ def substitute_http_properties(
         headers=properties.headers,
         json=properties.json,
         params=properties.params,
+        secrets=properties.secrets,
     )
 
 
