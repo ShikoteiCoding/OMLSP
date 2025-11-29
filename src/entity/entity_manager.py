@@ -60,16 +60,16 @@ class EntityManager(Service):
     _task_events: Channel[tuple[TaskManagerCommand, CreateContext]]
 
     #: Outgoing Context channel to add in DependencyGrah
-    _entity_context: Channel[CreateContext]
+    _command_entity: Channel[CreateContext | DropContext]
 
     def __init__(self, backend_conn: DuckDBPyConnection):
         super().__init__(name="EntityManager")
         self.backend_conn = backend_conn
         self._task_events = Channel[tuple[TaskManagerCommand, CreateContext]](100)
-        self._entity_context = Channel[CreateContext](100)
+        self._command_entity = Channel[CreateContext | DropContext](100)
 
-    def add_ctx_channel(self, channel: Channel[CreateContext]):
-        self._entity_context = channel
+    def add_ctx_channel(self, channel: Channel[CreateContext | DropContext]):
+        self._command_entity = channel
 
     def connect_task_manager(self, task_manager: TaskManager) -> None:
         """
@@ -91,7 +91,7 @@ class EntityManager(Service):
         await self._task_events.aclose()
 
     async def _process(self):
-        async for ctx in self._entity_context:
+        async for ctx in self._command_entity:
             if isinstance(ctx, CreateContext):
                 await self._register_entity(ctx)
             elif isinstance(ctx, DropContext):
@@ -109,35 +109,39 @@ class EntityManager(Service):
         logger.success(f"[EntityManager] registered context '{ctx.name}'")
 
     async def _delete_entity(self, ctx: DropContext):
+        # TODO: emit real-time deletion events to clients
         if isinstance(ctx, DropSimpleContext):
             is_leaf = dependency_grah.is_a_leaf(ctx.name)
             if not is_leaf:
-                logger.warning(f"[EntityManager] entity is not a leaf '{ctx}'")
+                logger.warning(f"[EntityManager] entity is not a leaf '{ctx.name}'")
                 return
-            dependency_grah.drop_leaf(ctx.name)
+            dependency_grah.remove(ctx.name)
             ctx_node = self._name_to_context.get(ctx.name)
             if ctx_node is not None:
                 await self._task_events.send((TaskManagerCommand.DELETE, ctx_node))
                 await self._destroy_entity(ctx_node)
 
-            logger.success(f"[EntityManager] dropped entity: {ctx}")
+            logger.success(f"[EntityManager] removed entity: {ctx.name}")
 
         if isinstance(ctx, DropCascadeContext):
-            dropped_from_graph = dependency_grah.drop_recursive(ctx.name)
-            if not dropped_from_graph:
-                logger.warning(f"[EntityManager] nothing to drop for '{ctx}'")
+            removed_nodes = dependency_grah.remove_recursive(ctx.name)
+            if not removed_nodes:
+                logger.warning(f"[EntityManager] nothing to remove for '{ctx.name}'")
                 return
-            for n in dropped_from_graph:
+            for n in removed_nodes:
                 ctx_node = self._name_to_context.get(n)
                 if ctx_node is not None:
                     await self._task_events.send((TaskManagerCommand.DELETE, ctx_node))
                     await self._destroy_entity(ctx_node)
+                logger.info(f"[EntityManager] removed entity: {n} from system")
 
-            logger.success(
-                f"[EntityManager] dropped cascade entities: {dropped_from_graph}"
-            )
+            logger.success(f"[EntityManager] removed cascade entities: {removed_nodes}")
 
     async def _destroy_entity(self, ctx: CreateContext):
+        # NOTE: We intentionally operate on the original CreateContext rather than
+        # converting to a dedicated Entity type.
+        # This keeps task lifecycle logic simple until the future Entity abstraction is introduced.
+
         if isinstance(ctx, CreateHTTPLookupTableContext):
             callback_store.delete(ctx.name)
 

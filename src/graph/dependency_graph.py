@@ -67,8 +67,8 @@ class DependencyGraph:
     def is_a_leaf(self, node_id: str) -> bool:
         return node_id in self.leaves
 
-    def drop_leaf(self, node_id: str):
-        """Drop a single leaf."""
+    def remove(self, node_id: str):
+        """Remove a single leaf."""
         # remove node
         self.nodes.discard(node_id)
         self.leaves.discard(node_id)
@@ -85,10 +85,10 @@ class DependencyGraph:
         if node_id in self.children:
             del self.children[node_id]
 
-    def drop_recursive(self, node_id: str) -> list[str]:
+    def remove_recursive(self, node_id: str) -> list[str]:
         """
-        Drop node and ALL its descendants.
-        Returns the list of nodes dropped.
+        Remove node and ALL its descendants.
+        Returns the list of nodes removed.
         """
 
         if node_id not in self.nodes:
@@ -100,7 +100,7 @@ class DependencyGraph:
         # reverse ensures children dropped first (safe order)
         dropped_from_graph = list(reversed(dropped_from_graph))
         for n in dropped_from_graph:
-            self.drop_leaf(n)
+            self.remove(n)
         return dropped_from_graph
 
     def _collect_descendants(self, node_id: str, acc: list[str]):

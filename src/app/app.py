@@ -44,7 +44,7 @@ class App(Service):
     _evaled_sql: Channel[EvaledSQL]
 
     #: Outgoing Task context to be orchestrated by TaskManager
-    _entity_context: Channel[CreateContext | DropContext]
+    _command_entity: Channel[CreateContext | DropContext]
 
     def __init__(
         self,
@@ -60,7 +60,7 @@ class App(Service):
         # becomes more mature.
         self._sql_to_eval = Channel[ClientSQL](100)
         self._evaled_sql = Channel[EvaledSQL](100)
-        self._entity_context = Channel[CreateContext | DropContext](100)
+        self._command_entity = Channel[CreateContext | DropContext](100)
 
     def connect_client_manager(self, client_manager: ClientManager) -> None:
         """
@@ -84,7 +84,7 @@ class App(Service):
 
         See channel.py for Channel implementation.
         """
-        entity_manager.add_ctx_channel(self._entity_context)
+        entity_manager.add_ctx_channel(self._command_entity)
 
     async def on_start(self):
         """
@@ -103,7 +103,7 @@ class App(Service):
         logger.success("[App] stopping.")
         await self._sql_to_eval.aclose()
         await self._evaled_sql.aclose()
-        await self._entity_context.aclose()
+        await self._command_entity.aclose()
 
     async def submit(self, sql: str) -> None:
         """
@@ -155,7 +155,7 @@ class App(Service):
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):
-                await self._entity_context.send(ctx)
+                await self._command_entity.send(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return
