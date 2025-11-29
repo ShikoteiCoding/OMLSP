@@ -8,12 +8,11 @@ from loguru import logger
 from pathlib import Path
 
 from app import App
+from entity.entity_manager import EntityManager
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
 from task.manager import TaskManager
-from task.supervisor import TaskSupervisor
-
 
 PROPERTIES_SCHEMA = json.loads(
     open(Path("src/properties.schema.json"), "rb").read().decode("utf-8")
@@ -40,20 +39,20 @@ async def main():
     app.add_dependency(client_manager)
     app.connect_client_manager(client_manager)
 
-    # Connect TaskManager to App
+    # Connect App to EntityManager
+    entity_manager = EntityManager(backend_conn)
+    app.add_dependency(entity_manager)
+    app.connect_entity_manager(entity_manager)
+
+    # Connect TaskManager to EntityManager
     task_manager = TaskManager(backend_conn, transform_conn)
-    app.add_dependency(task_manager)
-    app.connect_task_manager(task_manager)
+    entity_manager.add_dependency(task_manager)
+    entity_manager.connect_task_manager(task_manager)
 
     # Connect Scheduler to TaskManager
     scheduler = TrioScheduler()
     task_manager.add_dependency(scheduler)
     task_manager.connect_scheduler(scheduler)
-    # Connect TaskSupervisor to TaskManager
-    # Catalog helps to know, tasks to run and supervise
-    supervisor = TaskSupervisor()
-    task_manager.add_dependency(supervisor)
-    task_manager.connect_supervisor(supervisor)
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(app.start, nursery)

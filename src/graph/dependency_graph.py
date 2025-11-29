@@ -3,26 +3,26 @@ from __future__ import annotations
 from collections import defaultdict
 
 
-class TaskGraph:
+class DependencyGraph:
     """
-    Graph of dependancy between running taks
+    Graph of dependancy between context
     """
 
     #: Flag to detect init
     _instanciated: bool = False
 
     #: Singleton instance
-    _instance: TaskGraph
+    _instance: DependencyGraph
 
-    nodes: set
-    #: parent → {children}
-    children: defaultdict
+    nodes: set[str]
     #: child  → {parents}
-    parents: defaultdict
-    leaves: set
+    children: dict[str, set[str]]
+    #: parent → {children}
+    parents: dict[str, set[str]]
+    leaves: set[str]
 
     def __init__(self):
-        raise NotImplementedError("Singleton — use TaskGraph.get_instance()")
+        raise NotImplementedError("Singleton — use DependencyGraph.get_instance()")
 
     def init(self):
         self.nodes = set()
@@ -31,7 +31,7 @@ class TaskGraph:
         self.leaves = set()
 
     @classmethod
-    def get_instance(cls) -> TaskGraph:
+    def get_instance(cls) -> DependencyGraph:
         if cls._instanciated:
             return cls._instance
 
@@ -67,8 +67,8 @@ class TaskGraph:
     def is_a_leaf(self, node_id: str) -> bool:
         return node_id in self.leaves
 
-    def drop_leaf(self, node_id: str):
-        """Drop a single leaf."""
+    def remove(self, node_id: str):
+        """Remove a single leaf."""
         # remove node
         self.nodes.discard(node_id)
         self.leaves.discard(node_id)
@@ -85,10 +85,10 @@ class TaskGraph:
         if node_id in self.children:
             del self.children[node_id]
 
-    def drop_recursive(self, node_id: str) -> list[str]:
+    def remove_recursive(self, node_id: str) -> list[str]:
         """
-        Drop node and ALL its descendants.
-        Returns the list of nodes dropped.
+        Remove node and ALL its descendants.
+        Returns the list of nodes removed.
         """
 
         if node_id not in self.nodes:
@@ -100,7 +100,7 @@ class TaskGraph:
         # reverse ensures children dropped first (safe order)
         dropped_from_graph = list(reversed(dropped_from_graph))
         for n in dropped_from_graph:
-            self.drop_leaf(n)
+            self.remove(n)
         return dropped_from_graph
 
     def _collect_descendants(self, node_id: str, acc: list[str]):
@@ -110,4 +110,4 @@ class TaskGraph:
             self._collect_descendants(child, acc)
 
 
-dependency_grah = TaskGraph.get_instance()
+dependency_grah = DependencyGraph.get_instance()

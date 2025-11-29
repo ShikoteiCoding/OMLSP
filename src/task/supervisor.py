@@ -1,40 +1,40 @@
 import trio
 from loguru import logger
 from task.task import BaseTask
-from channel import Channel
 from services import Service
-
-from task.catalog import catalog
 
 
 class TaskSupervisor(Service):
     """
-    Lightweight supervisor for tasks.
-    Receives tasks to supervise from a Channel
+    Supervisor owned by TaskManager.
     """
-
-    #: Channel to receive tasks to supervise
-    _tasks_to_supervise: Channel[BaseTask]
 
     def __init__(self):
         super().__init__(name="TaskSupervisor")
+        # cancel scope per supervised task (controls supervision loop)
+        self._supervised: dict[str, trio.CancelScope] = {}
 
-    def add_tasks_to_supervise_channel(self, channel: Channel[BaseTask]):
-        self._tasks_to_supervise = channel
+    async def start_supervising(self, task: BaseTask):
+        task_id = task.task_id
+        # already supervising
+        if task_id in self._supervised:
+            logger.debug(f"[Supervisor] already supervising '{task_id}'")
+            return
 
-    async def on_start(self):
-        self._nursery.start_soon(self._command_loop)
-
-    async def _command_loop(self):
-        async for task in self._tasks_to_supervise:
-            self._start_supervising_task(task)
-
-        logger.debug("[Supervisor] command channel closed")
-
-    def _start_supervising_task(self, task: BaseTask):
-        logger.info(f"[Supervisor] Supervising task '{task.task_id}'")
-        # Start the supervision worker
+        logger.info(f"[Supervisor] start supervising '{task_id}'")
+        # each supervised task runs under the TaskManager nursery
         self._nursery.start_soon(self._supervise_task, task)
+
+    async def stop_supervising(self, task_id: str):
+        scope = self._supervised.get(task_id)
+        if not scope:
+            logger.debug(f"[Supervisor] '{task_id}' not supervised")
+            return
+
+        logger.info(f"[Supervisor] stop supervising '{task_id}'")
+
+        scope.cancel()
+        del self._supervised[task_id]
 
     async def _supervise_task(self, task: BaseTask):
         task_id = task.task_id
@@ -42,30 +42,34 @@ class TaskSupervisor(Service):
         attempt = 1
         backoff_base = 2.0
 
-        while catalog.has_task(task_id):
-            try:
-                async with trio.open_nursery() as n:
-                    task._nursery = n  # rebind nursery each cycle
-                    await task.on_start()
-            except trio.Cancelled:
-                # Normal cancellation -> evicted by user
-                logger.debug(f"[{task.task_id}] cancelled by supervisor")
-                break
-            # When failing in nursery, it is always an exception group
-            # trio high level + sub-exceptions
-            except ExceptionGroup as e:
-                # Crash handling
-                if attempt > max_retries:
-                    logger.error(f"[{task.task_id}] exceeded max retries: {e}")
+        with trio.CancelScope() as scope:
+            self._supervised[task_id] = scope
+
+            while True:
+                try:
+                    async with trio.open_nursery() as n:
+                        task._nursery = n  # rebind nursery each cycle
+                        await task.on_start()
+                except trio.Cancelled:
+                    # Normal cancellation -> evicted by user
+                    logger.debug(f"[{task.task_id}] cancelled by supervisor")
                     break
-                logger.warning(
-                    "[{}] crashed (attempt {}/{}).\n{}",
-                    task.task_id,
-                    attempt,
-                    max_retries,
-                    "\n".join([str(sub) for sub in e.exceptions]),
-                )
-                backoff = backoff_base * attempt
-                logger.debug(f"[{task.task_id}] retrying in {backoff:.1f}s")
-                await trio.sleep(backoff)
-                attempt += 1
+                # When failing in nursery, it is always an exception group
+                # trio high level + sub-exceptions
+                except ExceptionGroup as e:
+                    # Crash handling
+                    if attempt > max_retries:
+                        logger.error(f"[{task.task_id}] exceeded max retries: {e}")
+                        break
+                    logger.warning(
+                        "[{}] crashed (attempt {}/{}).\n{}",
+                        task.task_id,
+                        attempt,
+                        max_retries,
+                        "\n".join(str(sub) for sub in list(e.exceptions)),
+                    )
+                    backoff = backoff_base * attempt
+                    logger.debug(f"[{task.task_id}] retrying in {backoff:.1f}s")
+                    await trio.sleep(backoff)
+                    attempt += 1
+        logger.info(f"[Supervisor] supervision ended for '{task_id}'")
