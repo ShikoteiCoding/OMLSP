@@ -73,7 +73,7 @@ class EventBus:
     #: Producer
     _producer: defaultdict[Address, list[Producer]] = defaultdict(list)
 
-    #: Channel store
+    #: Channel store, unique because trio mem buffer aren't broadcasters anyway
     _channels: dict[Address, Channel] = {}
 
     #: Round-robin track

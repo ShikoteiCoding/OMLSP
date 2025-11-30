@@ -36,20 +36,19 @@ class App(Service):
     #: Internal reference for when sql doesn't come from TCP
     _internal_ref = "__runner"
 
-    #: Incoming SQL from self.submit() or TCP client
-    # _sql_to_eval: Channel[ClientSQL]
-
-    #: Outgoing SQL result to TCP client
-    # _evaled_sql: Channel[EvaledSQL]
-
     #: Outgoing Task context to be orchestrated by TaskManager
     _task_events: Channel[CreateContext | DropContext]
 
-    #: New
+    #: EventBus ref
     _event_bus: EventBus
+
+    #: Consumer for client sql requests from ClientManager
     _client_sql_request_consumer: Consumer
+
+    #: Producer for client sql requests from file entrypoint
     _client_sql_request_producer: Producer
 
+    #: Producer for client sql responses after eval
     _client_sql_response_producer: Producer
 
     def __init__(
