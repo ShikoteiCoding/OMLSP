@@ -16,7 +16,7 @@ from store import (
 from sql.parser import extract_one_query_context
 from task import TaskManager
 from services import Service
-from eventbus.eventbus import _get_event_bus, Consumer, EventBus, Producer
+from eventbus.eventbus import _get_event_bus, Consumer, EventBus
 
 __all__ = ["App"]
 
@@ -45,12 +45,6 @@ class App(Service):
     #: Consumer for client sql requests from ClientManager
     _client_sql_request_consumer: Consumer
 
-    #: Producer for client sql requests from file entrypoint
-    _client_sql_request_producer: Producer
-
-    #: Producer for client sql responses after eval
-    _client_sql_response_producer: Producer
-
     def __init__(
         self,
         conn: DuckDBPyConnection,
@@ -70,14 +64,6 @@ class App(Service):
         # Create Client SQL request consumer & producer
         self._client_sql_request_consumer = self._event_bus.consumer(
             "client.sql.requests"
-        )
-        self._client_sql_request_producer = self._event_bus.producer(
-            "client.sql.requests"
-        )
-
-        # Create Client SQL response producer
-        self._client_sql_response_producer = self._event_bus.producer(
-            "client.sql.responses"
         )
 
     def connect_task_manager(self, task_manager: TaskManager) -> None:
@@ -116,7 +102,7 @@ class App(Service):
 
         TODO: move to entrypoint from path on __init__ + on_start
         """
-        await self._client_sql_request_producer.produce((self._internal_ref, sql))
+        await self._event_bus.publish("client.sql.requests", (self._internal_ref, sql))
 
     async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
@@ -153,8 +139,9 @@ class App(Service):
                 result = ""
 
             # Send back to client (unless internal query)
+            # Anonymous publish: i.e no internal ref to producer
             if client_id != self._internal_ref:
-                await self._client_sql_response_producer.produce((client_id, result))
+                await self._event_bus.publish(client_id, result)
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):

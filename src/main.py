@@ -37,10 +37,7 @@ async def main():
 
     # Connect ClientManager to App
     client_manager = ClientManager(backend_conn)
-    logger.error("here")
     app.add_dependency(client_manager)
-    # app.connect_client_manager(client_manager)
-    logger.error("here")
 
     # Connect TaskManager to App
     task_manager = TaskManager(backend_conn, transform_conn)

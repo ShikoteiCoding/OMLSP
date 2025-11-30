@@ -8,8 +8,7 @@ import trio
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from eventbus.eventbus import _get_event_bus, Consumer, EventBus, Producer
-from channel import Channel
+from eventbus.eventbus import _get_event_bus, EventBus
 from services import Service
 
 ClientId = str
@@ -22,30 +21,14 @@ class ClientManager(Service):
     #: Duckdb connection
     _conn: DuckDBPyConnection
 
-    #: TODO
-    _client_id_to_channel: dict[ClientId, Channel[str]]
-
-    #: New
+    #: EventBus ref
     _event_bus: EventBus
-
-    #: Client(s) SQL requests to produce to App
-    _client_sql_request_producer: Producer
-
-    #: Client(s) SQL responses to consume from App
-    _client_sql_response_consumer: Consumer
 
     def __init__(self, conn: DuckDBPyConnection):
         super().__init__(name="ClientManager")
         self._conn = conn
-        self._client_id_to_channel: dict[ClientId, Channel[str]] = {}
 
         self._event_bus = _get_event_bus()
-        self._client_sql_request_producer = self._event_bus.producer(
-            "client.sql.requests"
-        )
-        self._client_sql_response_consumer = self._event_bus.consumer(
-            "client.sql.responses"
-        )
 
     async def on_start(self):
         self._listeners = await self._nursery.start(
@@ -57,15 +40,13 @@ class ClientManager(Service):
             )
         )
 
-        self._nursery.start_soon(self._dispatch_client_responses)
-
         logger.info(
             "[ClientManager] Server running on {}",
             self._listeners[0].socket.getsockname(),
         )
 
     async def on_stop(self):
-        logger.success(f"[{self.name}] stopping.")
+        logger.success("[{}] stopping.", self.name)
         # First, cancel the server tasks (serve_tcp etc)
         self._nursery.cancel_scope.cancel()
 
@@ -76,7 +57,7 @@ class ClientManager(Service):
                     await listener.aclose()
                 except trio.ClosedResourceError:
                     pass
-        logger.success(f"[{self.name}] stopped.")
+        logger.success("[{}] stopped.", self.name)
 
     # TODO: handler of trio.serve_tcp should be awaitable
     # Our current implementation is a never ending loop with
@@ -85,10 +66,6 @@ class ClientManager(Service):
         client_addr = stream.socket.getpeername()
         client_id = f"{client_addr[0]}:{client_addr[1]}"
         logger.info("[ClientManager] New client connected from {}", client_id)
-
-        # TODO: handle client closure (close channel etc)
-        if client_id not in self._client_id_to_channel:
-            self._client_id_to_channel[client_id] = Channel[str](10)
 
         async with stream:
             try:
@@ -109,16 +86,18 @@ class ClientManager(Service):
                     await stream.send_all((response + "\n\n").encode())
 
             except Exception as e:
-                logger.error(f"[ClientManager] Client error '{client_id}': {e}")
+                logger.error("[ClientManager] Client error '{}': {}", client_id, e)
                 await stream.send_all(f"Error: {str(e)}\n\n".encode())
 
     async def _process_query(self, sql_content: str, client_id: str) -> str:
         try:
-            await self._client_sql_request_producer.produce((client_id, sql_content))
+            await self._event_bus.publish(
+                "client.sql.requests", (client_id, sql_content)
+            )
             output_messages = []
 
-            current_client_channel = self._client_id_to_channel[client_id]
-            response = await current_client_channel.recv()
+            response = await self._event_bus.consumer(client_id).consume()
+
             output_messages.append(response)
 
             return "\n".join(output_messages)
@@ -128,13 +107,3 @@ class ClientManager(Service):
                 f"Client {client_id} - Error processing query: {type(e)} - {e}"
             )
             return f"Error: {str(e)}"
-
-    async def _dispatch_client_responses(self):
-        """
-        Re-route eval response to per-client response channels
-        """
-        async for client_id, response in self._client_sql_response_consumer.channel:
-            client_channel = self._client_id_to_channel.get(client_id)
-            if client_channel:
-                await client_channel.send(response)
-            logger.debug("[ClientManager] Re-routing eval response to {}", client_id)

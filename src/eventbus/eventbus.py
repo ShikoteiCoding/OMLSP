@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from loguru import logger
-from typing import Any, Awaitable, Callable, Generic, TypeVar
+from typing import Generic, TypeVar
 
-from eventbus.types import Address, DeliveryOptions, Message, Response
+from eventbus.types import Address, Message
 from channel import Channel
 
 
 T = TypeVar("T")
-type MessageHandler = Callable[[Message], Awaitable[Response] | None]
-type ReplyHandler = Any
 
 
 class Consumer(Generic[T]):
@@ -20,19 +18,17 @@ class Consumer(Generic[T]):
     #: Address for consumption
     address: Address
 
-    #: Message handler
-    # handler: MessageHandler
-
     #: Channel
     channel: Channel
 
-    def __init__(
-        self, event_bus: EventBus, address: Address, channel: Channel
-    ):  # , handler: MessageHandler):
+    def __init__(self, event_bus: EventBus, address: Address, channel: Channel):
         self.event_bus = event_bus
         self.address = address
-        # self.handler = handler
         self.channel = channel
+
+    async def consume(self):
+        # NOTE: not strictly a consume as it is waiting
+        return await self.channel.recv()
 
 
 class Producer(Generic[T]):
@@ -58,7 +54,9 @@ class EventBus:
     """
     Global singleton EventBus.
 
-    Use to communicate accross
+    NOTE: For now everything is unique (consumers, producers & channels)
+    This is because trio.membuffer are not broadcast variables anyway.
+
     """
 
     #: Flag to detect init
@@ -67,13 +65,13 @@ class EventBus:
     #: Singleton instance
     _instance: EventBus
 
-    #: Consumers
-    _consumers: defaultdict[Address, list[Consumer]] = defaultdict(list)
+    #: Consumers (unique per address)
+    _consumers: dict[Address, Consumer] = {}
 
-    #: Producer
-    _producer: defaultdict[Address, list[Producer]] = defaultdict(list)
+    #: Producers (unique per address)
+    _producers: dict[Address, Producer] = {}
 
-    #: Channel store, unique because trio mem buffer aren't broadcasters anyway
+    #: Channels (unique per address)
     _channels: dict[Address, Channel] = {}
 
     #: Round-robin track
@@ -100,74 +98,65 @@ class EventBus:
 
     def consumer(self, address: Address) -> Consumer:
         """
-        Creates a consumer for given address
+        Creates or get existing consumer for given address
         """
         channel = self._channels.get(address)
 
         if not channel:
             channel = Channel(100)
             self._channels[address] = channel
+            logger.debug("Channel created for address '{}'", address)
 
-        consumer = Consumer(self, address, channel)
+        consumer = self._consumers.get(address)
 
-        self._consumers[address].append(consumer)
+        if not consumer:
+            consumer = Consumer(self, address, channel)
+            logger.debug("Consumer created for address '{}'", address)
 
-        logger.debug("Consumer created on address '{}'", address)
+        self._consumers[address] = consumer
+
         return consumer
 
     def producer(self, address: Address) -> Producer:
         """
-        Creates a producer for given address
+        Creates or get existing producer for given address.
         """
         channel = self._channels.get(address)
 
         if not channel:
             channel = Channel(100)
             self._channels[address] = channel
+            logger.debug("Channel created for address '{}'", address)
 
-        producer = Producer(self, address, channel)
-        self._producer[address].append(producer)
+        producer = self._producers.get(address)
 
-        logger.debug("Producer created on address '{}'", address)
+        if not producer:
+            producer = Producer(self, address, channel)
+            logger.debug("Producer created for address '{}'", address)
+
+        self._producers[address] = producer
+
         return producer
 
-    async def publish[T](
-        self, address: Address, message: Message, options: DeliveryOptions | None = None
-    ):
+    async def publish(self, address: Address, message: Message):
         """
-        Pub/Sub pattern (i.e mutliple consumer is possible).
+        Pub/Sub pattern for unique consumer.
 
-        A receiver isn't expected to reply.
+        Allows for anonymous publish without keeping a producer client.
+
+        The consumer isn't expected to reply.
         """
-        consumers = self._consumers[address]
+        producer = self.producer(address)
+        logger.debug("Message published to '{}': '{}'", address, message)
+        await producer.produce(message)
 
-        if not consumers:
-            return  # ra
-
-        # publish to all registered handlers
-        for consumer in consumers:
-            logger.error("event received: {}", message)
-            await consumer.channel.send(message)
-
-        return
-
-    async def request[T](
-        self, address: Address, message: Message[T], reply_handler: ReplyHandler
-    ):
+    async def request[T](self, address: Address, message: Message[T]):
         """
         Request/Response pattern. Round robin delivery if multiple consumers.
 
         A receiver is expected to reply if request is received.
         """
-        consumers = self._consumers[address]
-
-        if not consumers:
-            return  # raise error
-
-        # select receiver through round-robin
-        consumer = consumers[self._round_robin[address] % len(consumers)]
-
-        await consumer.channel.send(message)
+        raise NotImplementedError("Not the most useful for now.")
 
     async def send[T](self, address: Address, message: Message):
         """
