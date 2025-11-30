@@ -9,6 +9,7 @@ from sql.types import (
     Properties,
     SourceHttpProperties,
     SourceWSProperties,
+    SinkProperties,
 )
 
 
@@ -137,7 +138,7 @@ class CreateViewContext(CreateContext):
 class CreateSinkContext(CreateContext):
     name: str
     upstreams: list[str]
-    properties: dict[str, Any]
+    properties: SinkProperties
     subquery: str
 
     # executable of ws table context

@@ -21,10 +21,25 @@ class Properties:
 
 
 @dataclass
+class EncodeJSON:
+    pass
+
+
+@dataclass
+class EncodeAvro:
+    schema: str
+    registry: str
+    subject: str
+
+
+EncodeType = EncodeJSON | EncodeAvro
+
+
+@dataclass
 class SinkProperties(Properties):
     topic: str
     server: str
-    format: str
+    encode: EncodeType
 
 
 @dataclass

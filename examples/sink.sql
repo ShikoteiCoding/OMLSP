@@ -19,4 +19,5 @@ WITH (
     connector = 'kafka',
     topic = 'tickers_topic_2',
     server = 'localhost:9092',
+    encode = 'json',
 );

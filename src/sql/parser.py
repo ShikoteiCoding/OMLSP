@@ -44,6 +44,9 @@ from sql.types import (
     SourceWSProperties,
     HttpMethod,
     JQ,
+    SinkProperties,
+    EncodeAvro,
+    EncodeJSON,
 )
 from utils import unnest_dict
 
@@ -463,6 +466,26 @@ def build_create_ws_table_context(
     )
 
 
+def build_sink_properties(properties: dict[str, str]) -> SinkProperties:
+    topic = properties["topic"]
+    server = properties["server"]
+    encode_type = properties["encode"]
+    match encode_type:
+        case "json":
+            encode = EncodeJSON()
+        case "avro":
+            schema = properties["schema"]
+            registry = properties["registry"]
+            subject = properties["subject"]
+            encode = EncodeAvro(schema=schema, registry=registry, subject=subject)
+
+    return SinkProperties(
+        topic=topic,
+        server=server,
+        encode=encode,
+    )
+
+
 def build_create_sink_context(
     statement: exp.Create, properties_schema: dict[str, Any]
 ) -> CreateSinkContext | InvalidContext:
@@ -495,7 +518,7 @@ def build_create_sink_context(
     return CreateSinkContext(
         name=statement.this.name,
         upstreams=upstreams,
-        properties=properties,
+        properties=build_sink_properties(properties),
         subquery=ctx.query,
     )
 

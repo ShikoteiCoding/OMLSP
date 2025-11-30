@@ -186,7 +186,8 @@
       "required": [
         "connector",
         "topic",
-        "server"
+        "server",
+        "encode"
       ],
       "properties": {
         "connector": {
@@ -201,12 +202,37 @@
           "type": "string",
           "description": "The Kafka bootstrap server address"
         },
-        "format": {
+        "encode": {
           "type": "string",
-          "description": "The data format",
-          "default": "json"
+          "enum": ["json", "avro"],
+          "default": "json",
+          "description": "The encoding format."
+        },
+        "schema": {
+          "type": "string",
+          "description": "Avro schema (Required if encode is avro)"
+        },
+        "registry": {
+          "type": ["string"],
+          "description": "Registry url (Required if encode is avro)"
+        },
+        "subject": {
+          "type": ["string"],
+          "description": "Registry url (Required if encode is avro)"
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "encode": { "const": "avro" }
+            }
+          },
+          "then": {
+            "required": ["schema", "registry", "subject"]
+          }
+        }
+      ],
       "additionalProperties": false
     },
     {

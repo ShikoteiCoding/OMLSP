@@ -1,4 +1,3 @@
-import json
 import numpy as np
 import polars as pl
 import pyarrow as pa
@@ -49,6 +48,7 @@ from store.lookup import callback_store
 from sql.types import SourceHttpProperties
 from transport.builder import TransportBuilder
 
+from serializer.serializer import SERIALIZER_DISPATCH, JsonSerializer, BaseSerializer
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
@@ -104,6 +104,7 @@ def substitute_http_properties(
         headers=properties.headers,
         json=properties.json,
         params=properties.params,
+        secrets=properties.secrets,
     )
 
 
@@ -555,8 +556,11 @@ def build_sink_executable(
     ctx: CreateSinkContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[None]]:
     properties = ctx.properties
-    producer = Producer({"bootstrap.servers": properties["server"]})
-    topic = properties["topic"]
+    producer = Producer({"bootstrap.servers": properties.server})
+    topic = properties.topic
+    serializer = SERIALIZER_DISPATCH.get(type(properties.encode), JsonSerializer).init(
+        properties.encode
+    )
     return partial(
         kafka_sink,
         first_upstream=ctx.upstreams[0],
@@ -564,6 +568,7 @@ def build_sink_executable(
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
         producer=producer,
         topic=topic,
+        serializer=serializer,
     )
 
 
@@ -576,6 +581,7 @@ async def kafka_sink(
     pl_ctx: pl.SQLContext,
     producer: Producer,
     topic: str,
+    serializer: BaseSerializer,
 ) -> None:
     logger.info("[{}] - starting sink executable", task_id)
     pl_ctx.register(first_upstream, df)
@@ -584,7 +590,7 @@ async def kafka_sink(
 
     def _produce_all():
         for record in records:
-            payload = json.dumps(record).encode("utf-8")
+            payload = serializer.serialize(record)
             producer.produce(topic, value=payload)
             producer.poll(0)
         producer.flush()
