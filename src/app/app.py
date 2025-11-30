@@ -1,6 +1,7 @@
 from typing import Any
 from duckdb import DuckDBPyConnection
 from loguru import logger
+
 from channel import Channel
 from context.context import (
     CreateContext,
@@ -10,13 +11,14 @@ from context.context import (
     DropContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
+from entity.entity_manager import EntityManager
+from eventbus.eventbus import _get_event_bus, Consumer, EventBus
+from services import Service
+from sql.parser import extract_one_query_context
 from store import (
     init_metadata_store,
 )
-from sql.parser import extract_one_query_context
-from task import TaskManager
-from services import Service
-from eventbus.eventbus import _get_event_bus, Consumer, EventBus
+
 
 __all__ = ["App"]
 
@@ -37,7 +39,7 @@ class App(Service):
     _internal_ref = "__runner"
 
     #: Outgoing Task context to be orchestrated by TaskManager
-    _task_events: Channel[CreateContext | DropContext]
+    _command_entity: Channel[CreateContext | DropContext]
 
     #: EventBus ref
     _event_bus: EventBus
@@ -53,29 +55,23 @@ class App(Service):
         super().__init__(name="App")
         self._conn = conn
         self._properties_schema = properties_schema
-
-        # Channels are created and own by App.
-        # Could be injected later when architrecture
-        # becomes more mature.
         self._event_bus = _get_event_bus()
-
-        self._task_events = Channel[CreateContext | DropContext](100)
-
+        self._command_entity = Channel[CreateContext | DropContext](100)
         # Create Client SQL request consumer & producer
         self._client_sql_request_consumer = self._event_bus.consumer(
             "client.sql.requests"
         )
 
-    def connect_task_manager(self, task_manager: TaskManager) -> None:
+    def connect_entity_manager(self, entity_manager: EntityManager) -> None:
         """
-        Connect App and TaskManager through one Channel.
+        Connect App and EntityManager through one Channel.
 
         Channel:
-            - Task Channel (incoming client SQL)
+            - Context Channel (incoming client SQL)
 
         See channel.py for Channel implementation.
         """
-        task_manager.add_taskctx_channel(self._task_events)
+        entity_manager.add_ctx_channel(self._command_entity)
 
     async def on_start(self):
         """
@@ -92,7 +88,7 @@ class App(Service):
         Callaback for parent Service class during :meth:`App.stop`.
         """
         logger.success("[App] stopping.")
-        await self._task_events.aclose()
+        await self._command_entity.aclose()
 
     async def submit(self, sql: str) -> None:
         """
@@ -145,7 +141,7 @@ class App(Service):
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):
-                await self._task_events.send(ctx)
+                await self._command_entity.send(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return
