@@ -4,53 +4,15 @@ from collections import defaultdict
 from loguru import logger
 from typing import Generic, TypeVar
 
-from eventbus.types import Address, Message
-from channel import Channel
+from channel.types import Address, Message
+from channel.channel import Channel
 
 
 T = TypeVar("T")
 
 
-class Consumer(Generic[T]):
-    #: Ref to event bus for callback
-    event_bus: EventBus
 
-    #: Address for consumption
-    address: Address
-
-    #: Channel
-    channel: Channel
-
-    def __init__(self, event_bus: EventBus, address: Address, channel: Channel):
-        self.event_bus = event_bus
-        self.address = address
-        self.channel = channel
-
-    async def consume(self):
-        # NOTE: not strictly a consume as it is waiting
-        return await self.channel.recv()
-
-
-class Producer(Generic[T]):
-    #: Ref to event bus for callback
-    event_bus: EventBus
-
-    #: Address for production
-    address: Address
-
-    #: Channel
-    channel: Channel
-
-    def __init__(self, event_bus: EventBus, address: Address, channel: Channel):
-        self.event_bus = event_bus
-        self.address = address
-        self.channel = channel
-
-    async def produce(self, data: T):
-        await self.channel.send(data)
-
-
-class EventBus:
+class ChannelBroker:
     """
     Global singleton EventBus.
 
@@ -63,7 +25,7 @@ class EventBus:
     _instanciated: bool = False
 
     #: Singleton instance
-    _instance: EventBus
+    _instance: ChannelBroker
 
     #: Consumers (unique per address)
     _consumers: dict[Address, Consumer] = {}
@@ -85,7 +47,7 @@ class EventBus:
         pass
 
     @classmethod
-    def get_instance(cls) -> EventBus:
+    def get_instance(cls) -> ChannelBroker:
         if cls._instanciated:
             logger.info("Instance already exist.")
             return cls._instance
@@ -167,5 +129,5 @@ class EventBus:
         raise NotImplementedError("Not the most useful for now.")
 
 
-def _get_event_bus() -> EventBus:
-    return EventBus.get_instance()
+def _get_event_bus() -> ChannelBroker:
+    return ChannelBroker.get_instance()

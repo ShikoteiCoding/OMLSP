@@ -8,7 +8,7 @@ import trio
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from eventbus.eventbus import _get_event_bus, EventBus
+from channel.channel_broker import _get_event_bus, ChannelBroker
 from services import Service
 
 ClientId = str
@@ -22,7 +22,7 @@ class ClientManager(Service):
     _conn: DuckDBPyConnection
 
     #: EventBus ref
-    _event_bus: EventBus
+    _event_bus: ChannelBroker
 
     def __init__(self, conn: DuckDBPyConnection):
         super().__init__(name="ClientManager")

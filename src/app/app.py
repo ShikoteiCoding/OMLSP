@@ -2,7 +2,7 @@ from typing import Any
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from channel import Channel
+from channel.channel import Channel
 from context.context import (
     CreateContext,
     EvaluableContext,
@@ -12,7 +12,7 @@ from context.context import (
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from entity.entity_manager import EntityManager
-from eventbus.eventbus import _get_event_bus, Consumer, EventBus
+from channel.channel_broker import _get_event_bus, Consumer, ChannelBroker
 from services import Service
 from sql.parser import extract_one_query_context
 from store import (
@@ -42,7 +42,7 @@ class App(Service):
     _command_entity: Channel[CreateContext | DropContext]
 
     #: EventBus ref
-    _event_bus: EventBus
+    _event_bus: ChannelBroker
 
     #: Consumer for client sql requests from ClientManager
     _client_sql_request_consumer: Consumer
