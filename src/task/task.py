@@ -8,7 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from services import Service
 
-from channel import Channel
+from channel.channel import Channel
 
 from scheduler.types import SchedulerCommand
 from task.types import TaskId, T

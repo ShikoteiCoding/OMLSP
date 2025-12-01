@@ -4,7 +4,7 @@ Task Manager managing registration and running of Tasks.
 
 from duckdb import DuckDBPyConnection
 
-from channel import Channel
+from channel.channel import Channel
 from scheduler.scheduler import TrioScheduler
 from scheduler.types import SchedulerCommand
 from context.context import (

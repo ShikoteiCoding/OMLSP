@@ -4,7 +4,7 @@ Entity Manager managing registration and dependancies of Context.
 
 from duckdb import DuckDBPyConnection
 
-from channel import Channel
+from channel.channel import Channel
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,

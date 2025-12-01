@@ -1,7 +1,8 @@
 from typing import Any
 from duckdb import DuckDBPyConnection
 from loguru import logger
-from channel import Channel
+
+from channel.channel import Channel
 from context.context import (
     CreateContext,
     EvaluableContext,
@@ -10,14 +11,15 @@ from context.context import (
     DropContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
+from entity.entity_manager import EntityManager
+from channel.broker import _get_event_bus, ChannelBroker
+from channel.consumer import Consumer
+from services import Service
+from sql.parser import extract_one_query_context
 from store import (
     init_metadata_store,
 )
-from server import ClientManager
-from sql.parser import extract_one_query_context
-from services import Service
-from app.types import ClientSQL, EvaledSQL
-from entity.entity_manager import EntityManager
+
 
 __all__ = ["App"]
 
@@ -37,14 +39,14 @@ class App(Service):
     #: Internal reference for when sql doesn't come from TCP
     _internal_ref = "__runner"
 
-    #: Incoming SQL from self.submit() or TCP client
-    _sql_to_eval: Channel[ClientSQL]
-
-    #: Outgoing SQL result to TCP client
-    _evaled_sql: Channel[EvaledSQL]
-
     #: Outgoing Task context to be orchestrated by TaskManager
     _command_entity: Channel[CreateContext | DropContext]
+
+    #: EventBus ref
+    _event_bus: ChannelBroker
+
+    #: Consumer for client sql requests from ClientManager
+    _client_sql_request_consumer: Consumer
 
     def __init__(
         self,
@@ -54,26 +56,12 @@ class App(Service):
         super().__init__(name="App")
         self._conn = conn
         self._properties_schema = properties_schema
-
-        # Channels are created and own by App.
-        # Could be injected later when architrecture
-        # becomes more mature.
-        self._sql_to_eval = Channel[ClientSQL](100)
-        self._evaled_sql = Channel[EvaledSQL](100)
+        self._event_bus = _get_event_bus()
         self._command_entity = Channel[CreateContext | DropContext](100)
-
-    def connect_client_manager(self, client_manager: ClientManager) -> None:
-        """
-        Connect App and ClientManager through Channels.
-
-        Channels:
-            - sql Channel (incoming client SQL)
-            - evaled Channel (outgoing evaled SQL)
-
-        See channel.py for Channel implementation.
-        """
-        client_manager.add_sql_channel(self._sql_to_eval)
-        client_manager.add_response_channel(self._evaled_sql)
+        # Create Client SQL request consumer & producer
+        self._client_sql_request_consumer = self._event_bus.consumer(
+            "client.sql.requests"
+        )
 
     def connect_entity_manager(self, entity_manager: EntityManager) -> None:
         """
@@ -101,8 +89,6 @@ class App(Service):
         Callaback for parent Service class during :meth:`App.stop`.
         """
         logger.success("[App] stopping.")
-        await self._sql_to_eval.aclose()
-        await self._evaled_sql.aclose()
         await self._command_entity.aclose()
 
     async def submit(self, sql: str) -> None:
@@ -113,14 +99,14 @@ class App(Service):
 
         TODO: move to entrypoint from path on __init__ + on_start
         """
-        await self._sql_to_eval.send((self._internal_ref, sql))
+        await self._event_bus.publish("client.sql.requests", (self._internal_ref, sql))
 
     async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
 
         # Each SQL keeps reference of a client_id for dispatch
-        async for client_id, sql in self._sql_to_eval:
+        async for client_id, sql in self._client_sql_request_consumer.channel:
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
 
@@ -150,8 +136,9 @@ class App(Service):
                 result = ""
 
             # Send back to client (unless internal query)
+            # Anonymous publish: i.e no internal ref to producer
             if client_id != self._internal_ref:
-                await self._evaled_sql.send((client_id, result))
+                await self._event_bus.publish(client_id, result)
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):

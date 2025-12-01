@@ -3,7 +3,7 @@ import trio
 
 from apscheduler.schedulers.base import BaseScheduler
 from services import Service
-from channel import Channel
+from channel.channel import Channel
 from typing import Callable
 
 

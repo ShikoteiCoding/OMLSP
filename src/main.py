@@ -37,7 +37,6 @@ async def main():
     # Connect ClientManager to App
     client_manager = ClientManager(backend_conn)
     app.add_dependency(client_manager)
-    app.connect_client_manager(client_manager)
 
     # Connect App to EntityManager
     entity_manager = EntityManager(backend_conn)
