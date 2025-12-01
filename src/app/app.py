@@ -12,7 +12,8 @@ from context.context import (
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from entity.entity_manager import EntityManager
-from channel.channel_broker import _get_event_bus, Consumer, ChannelBroker
+from channel.broker import _get_event_bus, ChannelBroker
+from channel.consumer import Consumer
 from services import Service
 from sql.parser import extract_one_query_context
 from store import (

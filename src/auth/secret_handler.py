@@ -39,9 +39,7 @@ class SecretsHandler(SecretsHandlerT):
                 secret = get_secret_value_by_name(conn, secret_name)
                 request_kwargs["headers"][header_key] = secret
                 self.cache[header_key] = secret
-                logger.debug(
-                    f"Secret loaded '{secret_name}' for header '{header_key}'"
-                )
+                logger.debug(f"Secret loaded '{secret_name}' for header '{header_key}'")
             # Make sure this is rendered to avoid future reloads
             self.is_rendered = True
             return request_kwargs

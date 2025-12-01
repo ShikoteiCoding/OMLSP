@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from loguru import logger
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from channel.types import Address, Message
 from channel.channel import Channel
+from channel.consumer import Consumer
+from channel.producer import Producer
 
 
 T = TypeVar("T")
-
 
 
 class ChannelBroker:
@@ -72,7 +73,7 @@ class ChannelBroker:
         consumer = self._consumers.get(address)
 
         if not consumer:
-            consumer = Consumer(self, address, channel)
+            consumer = Consumer(address, channel)
             logger.debug("Consumer created for address '{}'", address)
 
         self._consumers[address] = consumer
@@ -93,7 +94,7 @@ class ChannelBroker:
         producer = self._producers.get(address)
 
         if not producer:
-            producer = Producer(self, address, channel)
+            producer = Producer(address, channel)
             logger.debug("Producer created for address '{}'", address)
 
         self._producers[address] = producer

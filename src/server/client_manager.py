@@ -8,7 +8,7 @@ import trio
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from channel.channel_broker import _get_event_bus, ChannelBroker
+from channel.broker import _get_event_bus, ChannelBroker
 from services import Service
 
 ClientId = str
