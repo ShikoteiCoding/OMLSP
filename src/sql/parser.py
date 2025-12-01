@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 import jq as jqm
 import jsonschema
 import polars as pl
@@ -326,17 +326,24 @@ def extract_create_properties(statement: exp.Create) -> dict[str, str]:
 
 
 def build_create_http_properties(properties: dict[str, str]) -> SourceHttpProperties:
-    unnested_properties = unnest_dict(properties)
+    unnested = unnest_dict(properties)
+    headers: dict[str, str] = cast(dict, unnested.get("headers", {}))
+    secrets: list[tuple[str, str]] = []
+    pattern = re.compile(r"^SECRET\s+(.+)$")
+    for key, value in list(headers.items()):
+        if match := pattern.match(value.strip()):
+            secrets.append((key, match.group(1)))
 
     return SourceHttpProperties(
-        url=str(unnested_properties["url"]),
-        method=cast(HttpMethod, unnested_properties["method"]),
-        signer_class=str(unnested_properties.get("signer_class", "")),
-        jq=cast(JQ, jqm.compile(unnested_properties["jq"])),
-        pagination=cast(dict, unnested_properties.get("pagination", {})),
-        headers=cast(dict, unnested_properties.get("headers", {})),
-        json=cast(dict, unnested_properties.get("json", {})),
-        params=cast(dict, unnested_properties.get("params", {})),
+        url=str(unnested["url"]),
+        method=cast(HttpMethod, unnested["method"]),
+        signer_class=str(unnested.get("signer_class", "")),
+        jq=cast(JQ, jqm.compile(unnested["jq"])),
+        pagination=cast(dict, unnested.get("pagination", {})),
+        headers=headers,
+        json=cast(dict, unnested.get("json", {})),
+        params=cast(dict, unnested.get("params", {})),
+        secrets=secrets,
     )
 
 
