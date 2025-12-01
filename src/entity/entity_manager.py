@@ -100,12 +100,17 @@ class EntityManager(Service):
     async def _register_entity(self, ctx: CreateContext):
         dependency_grah.ensure_vertex(ctx.name)
         # Register dependencies in the graph
-        for parent in getattr(ctx, "upstreams", []):
-            dependency_grah.add_vertex(parent, ctx.name)
-        properties = getattr(ctx, "properties", object())
-        for _, secret_name in getattr(properties, "secrets", []):
-            dependency_grah.add_vertex(secret_name, ctx.name)
-
+        match ctx:
+            case CreateSinkContext() | CreateViewContext():
+                for parent in ctx.upstreams:
+                    dependency_grah.add_vertex(parent, ctx.name)
+            case (
+                CreateHTTPTableContext()
+                | CreateHTTPSourceContext()
+                | CreateHTTPLookupTableContext()
+            ):
+                for _, secret_name in ctx.properties.secrets:
+                    dependency_grah.add_vertex(secret_name, ctx.name)
         await self._task_events.send((TaskManagerCommand.CREATE, ctx))
         self._name_to_context[ctx.name] = ctx
         logger.success(f"[EntityManager] registered context '{ctx.name}'")
