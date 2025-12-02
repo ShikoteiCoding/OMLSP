@@ -489,11 +489,6 @@ def build_sink_properties(properties: dict[str, str]) -> SinkProperties:
 def build_create_sink_context(
     statement: exp.Create, properties_schema: dict[str, Any]
 ) -> CreateSinkContext | InvalidContext:
-    # extract subquery
-    ctx = extract_select_context(statement.expression)
-    if isinstance(ctx, InvalidContext):
-        return ctx
-
     # extract list of exp.Property
     # declared behind sql WITH statement
     properties = extract_create_properties(statement)
@@ -519,7 +514,7 @@ def build_create_sink_context(
         name=statement.this.name,
         upstreams=upstreams,
         properties=build_sink_properties(properties),
-        subquery=ctx.query,
+        transform_ctx=ctx,
     )
 
 

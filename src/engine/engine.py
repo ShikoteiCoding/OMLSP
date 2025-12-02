@@ -555,6 +555,15 @@ def build_sink_executable(
     ctx: CreateSinkContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[None]]:
     properties = ctx.properties
+    from_table = ctx.upstreams[0]
+    duckdb_tables = get_tables(backend_conn)
+    substitute_mapping = {}
+
+    for duckdb_table in duckdb_tables:
+        val = duckdb_table if duckdb_table != from_table else "df"
+        substitute_mapping[duckdb_table] = val
+
+    transform_sql = substitute_sql_template(ctx.transform_ctx, substitute_mapping)
     producer = Producer({"bootstrap.servers": properties.server})
     topic = properties.topic
     serializer = SERIALIZER_DISPATCH.get(type(properties.encode), JsonSerializer).init(
@@ -563,7 +572,7 @@ def build_sink_executable(
     return partial(
         kafka_sink,
         first_upstream=ctx.upstreams[0],
-        transform_query=ctx.subquery,
+        transform_query=transform_sql,
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
         producer=producer,
         topic=topic,

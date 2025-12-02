@@ -181,8 +181,7 @@ class SinkTask(BaseTaskReceiver, Generic[T]):
         # TODO: receive many upstreams
         receiver = self._receivers[0]
         async for df in receiver:
-            pass
-            # await self._executable(self.task_id, self._conn, df)
+            await self._executable(self.task_id, self.conn, df)
 
 
 class TransformTask(BaseTaskSender, BaseTaskReceiver, Generic[T]):

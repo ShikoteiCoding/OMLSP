@@ -21,3 +21,23 @@ WITH (
     server = 'localhost:9092',
     encode = 'json',
 );
+
+CREATE SINK all_tickers_sink_tris FROM all_tickers
+WITH (
+    connector = 'kafka',
+    topic     = 'tickers_avro_topic',
+    server    = 'localhost:9092',
+    encode    = 'avro',
+    registry  = 'http://localhost:8081',
+    subject   = 'tickers_avro_topic-value',
+    schema    = '{
+        "type": "record",
+        "name": "KucoinTickerSink",
+        "fields": [
+            {"name": "symbol", "type": "string"},
+            {"name": "symbolName", "type": "string"},
+            {"name": "buy", "type": "double"}, 
+            {"name": "sell", "type": "double"}
+        ]
+    }'
+);

@@ -139,7 +139,7 @@ class CreateSinkContext(CreateContext):
     name: str
     upstreams: list[str]
     properties: SinkProperties
-    subquery: str
+    transform_ctx: SelectContext
 
     # executable of ws table context
     # returns a polars dataframe
