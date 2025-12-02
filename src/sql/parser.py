@@ -232,8 +232,8 @@ def parse_lookup_table_schema(
         # Parse Columns name + type (and optionally generated columns)
         col_name, column_type, generated_column = parse_column_def(col)
 
+        # Lookup fields are prefixed with "$", handle them
         new_col_name = str(col_name).replace("$", "")
-
         if col_name.startswith("$"):
             lookup_fields.append(new_col_name)
 
@@ -634,10 +634,6 @@ def extract_create_context(
     )
 
 
-def get_table_name_placeholder(table_name: str):
-    return "$" + table_name
-
-
 def parse_select(
     statement: exp.Select,
 ) -> tuple[exp.Select, list[str], str, str, str, dict[str, str]]:
@@ -670,12 +666,6 @@ def parse_select(
     for table in statement.find_all(exp.Table):
         if isinstance(table.parent, exp.Join):
             join_tables[str(table.name)] = str(table.alias_or_name)
-
-        if table.name:  # filter away scalar functions / macros
-            table.set(
-                "this",
-                exp.to_identifier(get_table_name_placeholder(table.name), False),
-            )
 
     return statement, columns, table_name, table_alias, where, join_tables
 
