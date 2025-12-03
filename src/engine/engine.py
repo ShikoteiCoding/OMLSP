@@ -37,7 +37,6 @@ from store import (
     get_batch_id_from_table_metadata,
     get_duckdb_tables,
     get_lookup_tables,
-    get_tables,
     update_batch_id_in_table_metadata,
     create_secret,
     create_sink,
@@ -596,21 +595,16 @@ async def kafka_sink(
 def build_transform_executable(
     ctx: CreateViewContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[pl.DataFrame]]:
+    # TODO: handle more than one upstream when dealing with
+    # stateful entities
     from_table = ctx.upstreams[0]
-    duckdb_tables = get_tables(backend_conn)
-    substitute_mapping = {}
-
-    for duckdb_table in duckdb_tables:
-        val = duckdb_table if duckdb_table != from_table else "df"
-        substitute_mapping[duckdb_table] = val
-
-    transform_sql = substitute_sql_template(ctx.transform_ctx, substitute_mapping)
 
     return partial(
         transform_executable,
         backend_conn=backend_conn,
         name=ctx.name,
-        transform_query=transform_sql,
+        from_table=from_table,
+        transform_query=ctx.transform_ctx.query,
         is_materialized=ctx.materialized,
         # force eager to enforce read over write consistency
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
@@ -626,6 +620,7 @@ async def transform_executable(
     df: pl.DataFrame,
     backend_conn: DuckDBPyConnection,
     name: str,
+    from_table: str,
     transform_query: str,
     is_materialized: bool,
     pl_ctx: pl.SQLContext,
@@ -634,7 +629,7 @@ async def transform_executable(
     logger.info("[{}] Starting @ {}", task_id, datetime.now(timezone.utc))
 
     # Register input df (from upstream)
-    pl_ctx.register("df", df)
+    pl_ctx.register(from_table, df)
 
     # Register lookup if exist
     for lookup_table_name, func in lookup_callbacks.items():
@@ -666,8 +661,6 @@ async def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
     # add internal tables here for easier dev time
     duckdb_tables.append("duckdb_tables")
 
-    substitute_mapping = dict(zip(duckdb_tables, duckdb_tables))
-
     if table_name in lookup_tables:
         return f"'{table_name}' is a lookup table, there is nothing to query."
 
@@ -677,19 +670,24 @@ async def eval_select(conn: DuckDBPyConnection, ctx: SelectContext) -> str:
     pl_ctx = pl.SQLContext(register_globals=False, eager=True)
 
     # NOTE: to be deprecated
-    duckdb_sql = substitute_sql_template(ctx, substitute_mapping)
+    duckdb_sql = ctx.query
 
-    # Register main table
-    df = duckdb_to_pl(conn, f"SELECT * FROM {ctx.table}")
-    pl_ctx.register(table_name, df)
+    # If lookup join, we use the whole table for the lookup
+    # might be a non-wanted behavior to be removed later
+    if ctx.joins:
+        df = duckdb_to_pl(conn, f"SELECT * FROM {ctx.table}")
+        pl_ctx.register(table_name, df)
 
-    # Register lookup if exist
-    lookup_callbacks = callback_store.get_by_names(list(ctx.joins.keys()))
-    for lookup_table_name, func in lookup_callbacks.items():
-        lookup_df = await func(df)
-        pl_ctx.register(lookup_table_name, lookup_df)
+        # Register lookup if exist
+        lookup_callbacks = callback_store.get_by_names(list(ctx.joins.keys()))
+        for lookup_table_name, func in lookup_callbacks.items():
+            lookup_df = await func(df)
+            pl_ctx.register(lookup_table_name, lookup_df)
 
-    return str(pl_ctx.execute(duckdb_sql))
+        return str(pl_ctx.execute(duckdb_sql))
+
+    # Return requested table stored un duckdb
+    return str(duckdb_to_pl(conn, duckdb_sql))
 
 
 async def eval_set(conn: DuckDBPyConnection, ctx: SetContext):

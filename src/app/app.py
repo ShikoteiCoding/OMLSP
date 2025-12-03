@@ -156,4 +156,5 @@ class App(Service):
         try:
             return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
         except Exception as e:
-            return f"Fail to run sql: '{ctx}': {e}"
+            logger.error("Error evaluating context type '{}': {}", type(ctx), ctx)
+            return f"Error evaluating context type '{ctx}': {e}"
