@@ -29,5 +29,4 @@ WITH (
     server    = 'localhost:9092',
     encode    = 'avro',
     registry  = 'http://localhost:8081',
-    subject   = 'tickers_avro_topic-value',
 );

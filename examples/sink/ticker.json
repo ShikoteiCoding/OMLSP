@@ -1,0 +1,3 @@
+{
+  "schema": "{\"type\": \"record\", \"name\": \"KucoinTicker\", \"fields\": [{\"name\": \"symbol\", \"type\": \"string\"}, {\"name\": \"symbolName\", \"type\": \"string\"}, {\"name\": \"buy\", \"type\": \"double\"}, {\"name\": \"sell\", \"type\": \"double\"}]}"
+}

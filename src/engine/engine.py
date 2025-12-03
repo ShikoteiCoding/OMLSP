@@ -587,7 +587,6 @@ async def kafka_sink(
     serializer: BaseSerializer,
     lookup_callbacks: dict[str, Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]],
 ) -> None:
-    transform_df = pl_ctx.execute(transform_query)
     logger.info("[{}] - starting sink executable", task_id)
     pl_ctx.register(from_table, df)
 

@@ -35,3 +35,13 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "PLAINTEXT://broker:29092"
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+
+  schema-init:
+      image: curlimages/curl:latest
+      container_name: schema-init
+      depends_on:
+        - schema-registry
+      volumes:
+        - ./init-schemas.sh:/init-schemas.sh
+        - ./ticker.json:/schemas/ticker.json
+      entrypoint: ["/bin/sh", "/init-schemas.sh"]      

@@ -211,10 +211,6 @@
         "registry": {
           "type": ["string"],
           "description": "Registry url (Required if encode is avro)"
-        },
-        "subject": {
-          "type": ["string"],
-          "description": "Registry url (Required if encode is avro)"
         }
       },
       "allOf": [
@@ -225,7 +221,7 @@
             }
           },
           "then": {
-            "required": ["registry", "subject"]
+            "required": ["registry"]
           }
         }
       ],
