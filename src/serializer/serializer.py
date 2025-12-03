@@ -42,7 +42,6 @@ class AvroSerializer(BaseSerializer):
         registry_client = SchemaRegistryClient({"url": config.registry})
         new._serializer = ConfluentAvroSerializer(
             schema_registry_client=registry_client,  # type: ignore
-            schema_str=config.schema,  # type: ignore
             conf={"auto.register.schemas": True},  # type: ignore
         )
         # Tell the serializer which Subject to look up

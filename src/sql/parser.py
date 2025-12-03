@@ -474,10 +474,9 @@ def build_sink_properties(properties: dict[str, str]) -> SinkProperties:
         case "json":
             encode = EncodeJSON()
         case "avro":
-            schema = properties["schema"]
             registry = properties["registry"]
             subject = properties["subject"]
-            encode = EncodeAvro(schema=schema, registry=registry, subject=subject)
+            encode = EncodeAvro(registry=registry, subject=subject)
 
     return SinkProperties(
         topic=topic,

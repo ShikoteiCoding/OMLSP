@@ -27,7 +27,6 @@ class EncodeJSON:
 
 @dataclass
 class EncodeAvro:
-    schema: str
     registry: str
     subject: str
 

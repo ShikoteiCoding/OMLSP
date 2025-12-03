@@ -208,10 +208,6 @@
           "default": "json",
           "description": "The encoding format."
         },
-        "schema": {
-          "type": "string",
-          "description": "Avro schema (Required if encode is avro)"
-        },
         "registry": {
           "type": ["string"],
           "description": "Registry url (Required if encode is avro)"
@@ -229,7 +225,7 @@
             }
           },
           "then": {
-            "required": ["schema", "registry", "subject"]
+            "required": ["registry", "subject"]
           }
         }
       ],
