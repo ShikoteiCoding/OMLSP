@@ -4,7 +4,7 @@ Entity Manager managing registration and dependancies of Context.
 
 from duckdb import DuckDBPyConnection
 
-from channel import Channel
+from channel.channel import Channel
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
@@ -100,10 +100,17 @@ class EntityManager(Service):
     async def _register_entity(self, ctx: CreateContext):
         dependency_grah.ensure_vertex(ctx.name)
         # Register dependencies in the graph
-        # TODO: add SECRET
-        for parent in getattr(ctx, "upstreams", []):
-            dependency_grah.add_vertex(parent, ctx.name)
-
+        match ctx:
+            case CreateSinkContext() | CreateViewContext():
+                for parent in ctx.upstreams:
+                    dependency_grah.add_vertex(parent, ctx.name)
+            case (
+                CreateHTTPTableContext()
+                | CreateHTTPSourceContext()
+                | CreateHTTPLookupTableContext()
+            ):
+                for _, secret_name in ctx.properties.secrets:
+                    dependency_grah.add_vertex(secret_name, ctx.name)
         await self._task_events.send((TaskManagerCommand.CREATE, ctx))
         self._name_to_context[ctx.name] = ctx
         logger.success(f"[EntityManager] registered context '{ctx.name}'")

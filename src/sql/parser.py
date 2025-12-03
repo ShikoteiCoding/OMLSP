@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 import jq as jqm
 import jsonschema
 import polars as pl
@@ -235,8 +235,8 @@ def parse_lookup_table_schema(
         # Parse Columns name + type (and optionally generated columns)
         col_name, column_type, generated_column = parse_column_def(col)
 
+        # Lookup fields are prefixed with "$", handle them
         new_col_name = str(col_name).replace("$", "")
-
         if col_name.startswith("$"):
             lookup_fields.append(new_col_name)
 
@@ -329,17 +329,24 @@ def extract_create_properties(statement: exp.Create) -> dict[str, str]:
 
 
 def build_create_http_properties(properties: dict[str, str]) -> SourceHttpProperties:
-    unnested_properties = unnest_dict(properties)
+    unnested = unnest_dict(properties)
+    headers: dict[str, str] = cast(dict, unnested.get("headers", {}))
+    secrets: list[tuple[str, str]] = []
+    pattern = re.compile(r"^SECRET\s+(.+)$")
+    for key, value in list(headers.items()):
+        if match := pattern.match(value.strip()):
+            secrets.append((key, match.group(1)))
 
     return SourceHttpProperties(
-        url=str(unnested_properties["url"]),
-        method=cast(HttpMethod, unnested_properties["method"]),
-        signer_class=str(unnested_properties.get("signer_class", "")),
-        jq=cast(JQ, jqm.compile(unnested_properties["jq"])),
-        pagination=cast(dict, unnested_properties.get("pagination", {})),
-        headers=cast(dict, unnested_properties.get("headers", {})),
-        json=cast(dict, unnested_properties.get("json", {})),
-        params=cast(dict, unnested_properties.get("params", {})),
+        url=str(unnested["url"]),
+        method=cast(HttpMethod, unnested["method"]),
+        signer_class=str(unnested.get("signer_class", "")),
+        jq=cast(JQ, jqm.compile(unnested["jq"])),
+        pagination=cast(dict, unnested.get("pagination", {})),
+        headers=headers,
+        json=cast(dict, unnested.get("json", {})),
+        params=cast(dict, unnested.get("params", {})),
+        secrets=secrets,
     )
 
 
@@ -644,10 +651,6 @@ def extract_create_context(
     )
 
 
-def get_table_name_placeholder(table_name: str):
-    return "$" + table_name
-
-
 def parse_select(
     statement: exp.Select,
 ) -> tuple[exp.Select, list[str], str, str, str, dict[str, str]]:
@@ -680,12 +683,6 @@ def parse_select(
     for table in statement.find_all(exp.Table):
         if isinstance(table.parent, exp.Join):
             join_tables[str(table.name)] = str(table.alias_or_name)
-
-        if table.name:  # filter away scalar functions / macros
-            table.set(
-                "this",
-                exp.to_identifier(get_table_name_placeholder(table.name), False),
-            )
 
     return statement, columns, table_name, table_alias, where, join_tables
 

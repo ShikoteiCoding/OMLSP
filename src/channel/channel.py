@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Generic, TypeVar
 from loguru import logger
 
@@ -52,13 +54,18 @@ class Channel(Generic[T]):
         except trio.EndOfChannel:
             raise StopAsyncIteration
 
-    def clone(self) -> "Channel[T]":
+    def clone(self) -> Channel[T]:
         send, recv = trio.open_memory_channel[T](self.size)
         self._subscribers.append(send)
         return Channel._from_existing(send, recv, self.size)
 
     @classmethod
-    def _from_existing(cls, send_ch, recv_ch, size):
+    def _from_existing(
+        cls,
+        send_ch: trio.MemorySendChannel,
+        recv_ch: trio.MemoryReceiveChannel,
+        size: int,
+    ):
         ch = cls.__new__(cls)
         ch._send_ch = send_ch
         ch._recv_ch = recv_ch
