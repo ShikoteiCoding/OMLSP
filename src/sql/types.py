@@ -28,7 +28,6 @@ class EncodeJSON:
 @dataclass
 class EncodeAvro:
     registry: str
-    subject: str
 
 
 EncodeType = EncodeJSON | EncodeAvro

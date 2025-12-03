@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any
+from typing import Any, TypeVar, Generic
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import (
     AvroSerializer as ConfluentAvroSerializer,
@@ -11,10 +11,12 @@ from sql.types import (
     EncodeAvro,
 )
 
+T = TypeVar("T")
 
-class BaseSerializer:
+
+class BaseSerializer(Generic[T]):
     @classmethod
-    def init(cls, config):
+    def init(cls, config: T, topic: str):
         raise NotImplementedError
 
     def serialize(self, record: dict[str, Any]) -> bytes | None:
@@ -23,7 +25,7 @@ class BaseSerializer:
 
 class JsonSerializer(BaseSerializer):
     @classmethod
-    def init(cls, config: EncodeJSON) -> JsonSerializer:
+    def init(cls, config: EncodeJSON, topic: str) -> JsonSerializer:
         return cls.__new__(cls)
 
     def serialize(self, record: dict[str, Any]) -> bytes | None:
@@ -36,7 +38,7 @@ class AvroSerializer(BaseSerializer):
     _ctx: SerializationContext
 
     @classmethod
-    def init(cls, config: EncodeAvro) -> "AvroSerializer":
+    def init(cls, config: EncodeAvro, topic: str) -> AvroSerializer:
         new = cls.__new__(cls)
         # Setup the Registry Client
         registry_client = SchemaRegistryClient({"url": config.registry})
@@ -44,8 +46,8 @@ class AvroSerializer(BaseSerializer):
             schema_registry_client=registry_client,  # type: ignore
             conf={"auto.register.schemas": True},  # type: ignore
         )
-        # Tell the serializer which Subject to look up
-        new._ctx = SerializationContext(config.subject, MessageField.VALUE)
+        # Tell the serializer which subject to look up
+        new._ctx = SerializationContext(topic, MessageField.VALUE)
         return new
 
     def serialize(self, record: dict[str, Any]) -> bytes | None:

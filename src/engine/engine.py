@@ -556,27 +556,22 @@ def build_sink_executable(
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[None]]:
     properties = ctx.properties
     from_table = ctx.upstreams[0]
-    duckdb_tables = get_tables(backend_conn)
-    substitute_mapping = {}
-
-    for duckdb_table in duckdb_tables:
-        val = duckdb_table if duckdb_table != from_table else "df"
-        substitute_mapping[duckdb_table] = val
-
-    transform_sql = substitute_sql_template(ctx.transform_ctx, substitute_mapping)
     producer = Producer({"bootstrap.servers": properties.server})
     topic = properties.topic
     serializer = SERIALIZER_DISPATCH.get(type(properties.encode), JsonSerializer).init(
-        properties.encode
+        properties.encode, topic
     )
     return partial(
         kafka_sink,
-        first_upstream=ctx.upstreams[0],
-        transform_query=transform_sql,
+        from_table=from_table,
+        transform_query=ctx.transform_ctx.query,
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
         producer=producer,
         topic=topic,
         serializer=serializer,
+        lookup_callbacks=callback_store.get_by_names(
+            list(ctx.transform_ctx.joins.keys())
+        ),
     )
 
 
@@ -584,16 +579,25 @@ async def kafka_sink(
     task_id: str,
     _: DuckDBPyConnection,
     df: pl.DataFrame,
-    first_upstream: str,
+    from_table: str,
     transform_query: str,
     pl_ctx: pl.SQLContext,
     producer: Producer,
     topic: str,
     serializer: BaseSerializer,
+    lookup_callbacks: dict[str, Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]],
 ) -> None:
-    logger.info("[{}] - starting sink executable", task_id)
-    pl_ctx.register(first_upstream, df)
     transform_df = pl_ctx.execute(transform_query)
+    logger.info("[{}] - starting sink executable", task_id)
+    pl_ctx.register(from_table, df)
+
+    # Register lookup if exist
+    for lookup_table_name, func in lookup_callbacks.items():
+        lookup_df = await func(df)
+        pl_ctx.register(lookup_table_name, lookup_df)
+
+    transform_df = pl_ctx.execute(transform_query)
+
     records = transform_df.to_dicts()
 
     def _produce_all():
