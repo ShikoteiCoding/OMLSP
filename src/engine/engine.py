@@ -1,4 +1,3 @@
-import json
 import numpy as np
 import polars as pl
 import pyarrow as pa
@@ -48,6 +47,7 @@ from store.lookup import callback_store
 from sql.types import SourceHttpProperties
 from transport.builder import TransportBuilder
 
+from serializer.serializer import SERIALIZER_DISPATCH, JsonSerializer, BaseSerializer
 
 DUCKDB_TO_PYARROW_PYTYPE = {
     "VARCHAR": pa.string(),
@@ -555,15 +555,23 @@ def build_sink_executable(
     ctx: CreateSinkContext, backend_conn: DuckDBPyConnection
 ) -> Callable[[str, DuckDBPyConnection, pl.DataFrame], Awaitable[None]]:
     properties = ctx.properties
-    producer = Producer({"bootstrap.servers": properties["server"]})
-    topic = properties["topic"]
+    from_table = ctx.upstreams[0]
+    producer = Producer({"bootstrap.servers": properties.server})
+    topic = properties.topic
+    serializer = SERIALIZER_DISPATCH.get(type(properties.encode), JsonSerializer).init(
+        properties.encode, topic
+    )
     return partial(
         kafka_sink,
-        first_upstream=ctx.upstreams[0],
-        transform_query=ctx.subquery,
+        from_table=from_table,
+        transform_query=ctx.transform_ctx.query,
         pl_ctx=pl.SQLContext(register_globals=False, eager=True),
         producer=producer,
         topic=topic,
+        serializer=serializer,
+        lookup_callbacks=callback_store.get_by_names(
+            list(ctx.transform_ctx.joins.keys())
+        ),
     )
 
 
@@ -571,20 +579,29 @@ async def kafka_sink(
     task_id: str,
     _: DuckDBPyConnection,
     df: pl.DataFrame,
-    first_upstream: str,
+    from_table: str,
     transform_query: str,
     pl_ctx: pl.SQLContext,
     producer: Producer,
     topic: str,
+    serializer: BaseSerializer,
+    lookup_callbacks: dict[str, Callable[[pl.DataFrame], Awaitable[pl.DataFrame]]],
 ) -> None:
     logger.info("[{}] - starting sink executable", task_id)
-    pl_ctx.register(first_upstream, df)
+    pl_ctx.register(from_table, df)
+
+    # Register lookup if exist
+    for lookup_table_name, func in lookup_callbacks.items():
+        lookup_df = await func(df)
+        pl_ctx.register(lookup_table_name, lookup_df)
+
     transform_df = pl_ctx.execute(transform_query)
+
     records = transform_df.to_dicts()
 
     def _produce_all():
         for record in records:
-            payload = json.dumps(record).encode("utf-8")
+            payload = serializer.serialize(record)
             producer.produce(topic, value=payload)
             producer.poll(0)
         producer.flush()

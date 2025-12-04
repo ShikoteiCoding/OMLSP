@@ -9,6 +9,7 @@ from sql.types import (
     Properties,
     SourceHttpProperties,
     SourceWSProperties,
+    SinkProperties,
 )
 
 
@@ -137,8 +138,8 @@ class CreateViewContext(CreateContext):
 class CreateSinkContext(CreateContext):
     name: str
     upstreams: list[str]
-    properties: dict[str, Any]
-    subquery: str
+    properties: SinkProperties
+    transform_ctx: SelectContext
 
     # executable of ws table context
     # returns a polars dataframe

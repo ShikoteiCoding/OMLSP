@@ -18,7 +18,7 @@ dependencies = [
   "sqlglot==27.1.0",
   "prompt-toolkit>=3.0",
   "trio>=0.30.0",
-  "confluent-kafka>=2.11.1",
+  "confluent-kafka[schemaregistry]>=2.11.1",
   "trio-websocket>=0.12.2",
 ]
 

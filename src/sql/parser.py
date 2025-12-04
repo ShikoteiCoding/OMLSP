@@ -44,6 +44,9 @@ from sql.types import (
     SourceWSProperties,
     HttpMethod,
     JQ,
+    SinkProperties,
+    EncodeAvro,
+    EncodeJSON,
 )
 from utils import unnest_dict
 
@@ -470,14 +473,27 @@ def build_create_ws_table_context(
     )
 
 
+def build_sink_properties(properties: dict[str, str]) -> SinkProperties:
+    topic = properties["topic"]
+    server = properties["server"]
+    encode_type = properties["encode"]
+    match encode_type:
+        case "json":
+            encode = EncodeJSON()
+        case "avro":
+            registry = properties["registry"]
+            encode = EncodeAvro(registry=registry)
+
+    return SinkProperties(
+        topic=topic,
+        server=server,
+        encode=encode,
+    )
+
+
 def build_create_sink_context(
     statement: exp.Create, properties_schema: dict[str, Any]
 ) -> CreateSinkContext | InvalidContext:
-    # extract subquery
-    ctx = extract_select_context(statement.expression)
-    if isinstance(ctx, InvalidContext):
-        return ctx
-
     # extract list of exp.Property
     # declared behind sql WITH statement
     properties = extract_create_properties(statement)
@@ -502,8 +518,8 @@ def build_create_sink_context(
     return CreateSinkContext(
         name=statement.this.name,
         upstreams=upstreams,
-        properties=properties,
-        subquery=ctx.query,
+        properties=build_sink_properties(properties),
+        transform_ctx=ctx,
     )
 
 
