@@ -41,12 +41,10 @@ async def main():
     # Connect App to EntityManager
     entity_manager = EntityManager(backend_conn)
     app.add_dependency(entity_manager)
-    app.connect_entity_manager(entity_manager)
 
     # Connect TaskManager to EntityManager
     task_manager = TaskManager(backend_conn, transform_conn)
     entity_manager.add_dependency(task_manager)
-    entity_manager.connect_task_manager(task_manager)
 
     # Connect Scheduler to TaskManager
     scheduler = TrioScheduler()

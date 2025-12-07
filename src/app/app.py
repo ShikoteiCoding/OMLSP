@@ -2,7 +2,6 @@ from typing import Any
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from channel.channel import Channel
 from context.context import (
     CreateContext,
     EvaluableContext,
@@ -11,9 +10,9 @@ from context.context import (
     DropContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
-from entity.entity_manager import EntityManager
 from channel.broker import _get_event_bus, ChannelBroker
 from channel.consumer import Consumer
+from channel.producer import Producer
 from services import Service
 from sql.parser import extract_one_query_context
 from store import (
@@ -39,14 +38,14 @@ class App(Service):
     #: Internal reference for when sql doesn't come from TCP
     _internal_ref = "__runner"
 
-    #: Outgoing Task context to be orchestrated by TaskManager
-    _command_entity: Channel[CreateContext | DropContext]
-
-    #: EventBus ref
+    #: ChannelBroker ref
     _event_bus: ChannelBroker
 
     #: Consumer for client sql requests from ClientManager
     _client_sql_request_consumer: Consumer
+
+    #: Producer for entity commands to EntityManager
+    _entity_commands_producer: Producer
 
     def __init__(
         self,
@@ -57,22 +56,11 @@ class App(Service):
         self._conn = conn
         self._properties_schema = properties_schema
         self._event_bus = _get_event_bus()
-        self._command_entity = Channel[CreateContext | DropContext](100)
-        # Create Client SQL request consumer & producer
+
         self._client_sql_request_consumer = self._event_bus.consumer(
             "client.sql.requests"
         )
-
-    def connect_entity_manager(self, entity_manager: EntityManager) -> None:
-        """
-        Connect App and EntityManager through one Channel.
-
-        Channel:
-            - Context Channel (incoming client SQL)
-
-        See channel.py for Channel implementation.
-        """
-        entity_manager.add_ctx_channel(self._command_entity)
+        self._entity_commands_producer = self._event_bus.producer("entity.commands")
 
     async def on_start(self):
         """
@@ -89,7 +77,6 @@ class App(Service):
         Callaback for parent Service class during :meth:`App.stop`.
         """
         logger.success("[App] stopping.")
-        await self._command_entity.aclose()
 
     async def submit(self, sql: str) -> None:
         """
@@ -142,7 +129,7 @@ class App(Service):
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):
-                await self._command_entity.send(ctx)
+                await self._entity_commands_producer.produce(ctx)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return

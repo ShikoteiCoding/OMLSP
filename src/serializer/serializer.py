@@ -40,28 +40,28 @@ class AvroSerializer(BaseSerializer):
     @classmethod
     def init(cls, config: EncodeAvro, topic: str) -> "AvroSerializer":
         new = cls.__new__(cls)
-    
+
         registry_client = SchemaRegistryClient({"url": config.registry})
-        
+
         expected_subject = f"{topic}-value"
         registered_version = registry_client.get_latest_version(expected_subject)
-    
+
         # Extract the actual schema
         fetched_schema_str = registered_version.schema.schema_str  # type: ignore
-        
+
         new._serializer = ConfluentAvroSerializer(
-            schema_registry_client=registry_client, # type: ignore
-            schema_str=fetched_schema_str, # type: ignore
-            conf={"auto.register.schemas": False}, # type: ignore
+            schema_registry_client=registry_client,  # type: ignore
+            schema_str=fetched_schema_str,  # type: ignore
+            conf={"auto.register.schemas": False},  # type: ignore
         )
-        
+
         new._ctx = SerializationContext(topic, MessageField.VALUE)
         return new
 
     def serialize(self, record: dict[str, Any]) -> bytes:
         # ID + Data
         payload = self._serializer(record, self._ctx)
-        return payload # type: ignore
+        return payload  # type: ignore
 
 
 SERIALIZER_DISPATCH: dict[type, type[BaseSerializer]] = {

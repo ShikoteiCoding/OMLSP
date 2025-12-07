@@ -2,35 +2,32 @@
 Task Manager managing registration and running of Tasks.
 """
 
-from duckdb import DuckDBPyConnection
+from typing import Callable
 
+from apscheduler.triggers.cron import CronTrigger
+from duckdb import DuckDBPyConnection
+from loguru import logger
+
+from channel.broker import ChannelBroker, _get_event_bus
 from channel.channel import Channel
+from channel.consumer import Consumer
 from scheduler.scheduler import TrioScheduler
 from scheduler.types import SchedulerCommand
 from context.context import (
     CreateContext,
 )
-from apscheduler.triggers.cron import CronTrigger
 
 from context.context import CreateHTTPSourceContext, CreateHTTPTableContext
 
+from services import Service
+
+from task.builder_registry import TASK_REGISTER
+from task.supervisor import TaskSupervisor
 from task.task import (
     BaseTaskSender,
     ScheduledSourceTask,
 )
 from task.types import TaskId, TaskManagerCommand
-
-
-from task.supervisor import TaskSupervisor
-from task.builder_registry import TASK_REGISTER
-
-from services import Service
-
-from typing import Callable
-
-from loguru import logger
-
-__all__ = ["TaskManager"]
 
 
 class TaskManager(Service):
@@ -48,17 +45,19 @@ class TaskManager(Service):
     #: Supervisor to restart tasks
     supervisor: TaskSupervisor
 
-    #: Reference to all sources by task id
-    #: TODO: to deprecate for below mapping
-    _sources: dict[TaskId, BaseTaskSender] = {}
-
-    #: Outgoing Task context to be orchestrated
-    _task_events: Channel[tuple[TaskManagerCommand, CreateContext]]
+    #: Reference to BaseTaskSender by task id
+    _senders: dict[TaskId, BaseTaskSender] = {}
 
     #: Outgoing channel to send jobs to scheduler
     _scheduled_executables: Channel[
         tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
     ]
+
+    #: ChannelBroker ref
+    _event_bus: ChannelBroker
+
+    #: Consumer for task commands from EntityManager
+    _task_commands_consumer: Consumer
 
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
@@ -70,11 +69,8 @@ class TaskManager(Service):
             tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
         ](100)
         self.supervisor = TaskSupervisor()
-
-    def add_taskctx_channel(
-        self, channel: Channel[tuple[TaskManagerCommand, CreateContext]]
-    ):
-        self._task_events = channel
+        self._event_bus = _get_event_bus()
+        self._task_commands_consumer = self._event_bus.consumer("task.commands")
 
     def connect_scheduler(self, scheduler: TrioScheduler) -> None:
         """
@@ -98,7 +94,7 @@ class TaskManager(Service):
         await self._scheduled_executables.aclose()
 
     async def _process(self):
-        async for cmd, ctx in self._task_events:
+        async for cmd, ctx in self._task_commands_consumer.channel:
             if cmd is TaskManagerCommand.CREATE:
                 await self._create_task(ctx)
             elif cmd is TaskManagerCommand.DELETE:
