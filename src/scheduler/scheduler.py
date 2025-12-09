@@ -2,20 +2,17 @@ import sys
 import trio
 
 from apscheduler.schedulers.base import BaseScheduler
-from services import Service
-from channel.channel import Channel
-from typing import Callable
-
-
 from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
 from apscheduler.util import iscoroutinefunction_partial
-from apscheduler.triggers.cron import CronTrigger
+from loguru import logger
 
-from task.types import TaskId
+
+from channel.broker import ChannelBroker, _get_channel_broker
+from channel.consumer import Consumer
+from services import Service
 
 from scheduler.types import SchedulerCommand
-
-from loguru import logger
+from task.types import TaskId
 
 
 class TrioExecutor(BaseExecutor):
@@ -120,33 +117,30 @@ class TrioScheduler(Service, BaseScheduler):
     #: Cancel scope for the wait timer
     _timer_cancel_scope: trio.CancelScope | None = None
 
-    #: Executable receiver from TaskManager
-    _executable_receiver: Channel[
-        tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
-    ]
-
     #: Trio token to keep track of threaded tasks
     _trio_token: trio.lowlevel.TrioToken | None
+
+    #: ChannelBroker ref
+    _channel_broker: ChannelBroker
+
+    #: Tasks to be scheduled from TaskManager
+    _scheduler_commands_consumer: Consumer
 
     def __init__(self, *args, **kwargs):
         Service.__init__(self, name="TrioScheduler")
         BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token = trio.lowlevel.current_trio_token()
         self._is_shutting_down = False
-
-    def add_executable_channel(
-        self,
-        channel: Channel[
-            tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
-        ],
-    ):
-        self._executable_receiver = channel
+        self._channel_broker = _get_channel_broker()
+        self._scheduler_commands_consumer = self._channel_broker.consumer(
+            "scheduler.commands"
+        )
 
     async def on_start(self):
         self._configure({"_nursery": self._nursery, "_trio_token": self._trio_token})
         BaseScheduler.start(self, paused=False)
 
-        async for cmd, payload in self._executable_receiver:
+        async for cmd, payload in self._scheduler_commands_consumer.channel:
             if cmd is SchedulerCommand.ADD:
                 job_id, trigger, func = payload
                 job = self.add_job(func=func, trigger=trigger, id=job_id)
@@ -171,10 +165,6 @@ class TrioScheduler(Service, BaseScheduler):
         for executor in self._executors.values():
             if hasattr(executor, "shutdown"):
                 executor.shutdown(wait=False)
-
-        # Close the incoming executable receiver
-        if getattr(self, "_executable_receiver", None):
-            await self._executable_receiver.aclose()
 
         logger.success(f"[{self.name}] stopping.")
 

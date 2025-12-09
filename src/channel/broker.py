@@ -15,7 +15,7 @@ T = TypeVar("T")
 
 class ChannelBroker:
     """
-    Global singleton EventBus.
+    Global singleton ChannekBroker.
 
     NOTE: For now everything is unique (consumers, producers & channels)
     This is because trio.membuffer are not broadcast variables anyway.
@@ -130,5 +130,5 @@ class ChannelBroker:
         raise NotImplementedError("Not the most useful for now.")
 
 
-def _get_event_bus() -> ChannelBroker:
+def _get_channel_broker() -> ChannelBroker:
     return ChannelBroker.get_instance()

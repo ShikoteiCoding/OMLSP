@@ -49,7 +49,7 @@ def build_sink(manager: TaskManager, ctx: CreateSinkContext):
     task = SinkTask[ctx._out_type](ctx.name, manager.transform_conn)
     # TODO: subscribe to many upstreams
     for upstream in ctx.upstreams:
-        task.subscribe(manager._senders[upstream])
+        task.subscribe(manager.senders[upstream])
 
     task.register(build_sink_executable(ctx, manager.backend_conn))
     logger.warning(f"Registering task={ctx.name}, upstreams={ctx.upstreams}")
@@ -64,11 +64,10 @@ def build_http_scheduled(
     task = ScheduledSourceTask[ctx._out_type](
         ctx.name,
         manager.backend_conn,
-        manager._scheduled_executables,
         ctx.trigger,
     )
 
-    manager._senders[ctx.name] = task.register(build_scheduled_source_executable(ctx))
+    manager.senders[ctx.name] = task.register(build_scheduled_source_executable(ctx))
 
     return task
 
@@ -81,7 +80,7 @@ def build_ws(manager: TaskManager, ctx: CreateWSTableContext | CreateWSSourceCon
     )
 
     # TODO: make WS Task dynamic by registering the on_start function
-    manager._senders[ctx.name] = task.register(
+    manager.senders[ctx.name] = task.register(
         build_continuous_source_executable(ctx, manager.backend_conn)
     )
 
@@ -99,7 +98,7 @@ def build_view(manager: TaskManager, ctx: CreateViewContext):
     task = TransformTask[ctx._out_type](ctx.name, manager.transform_conn)
 
     for upstream in ctx.upstreams:
-        task.subscribe(manager._senders[upstream])
+        task.subscribe(manager.senders[upstream])
 
     task.register(build_transform_executable(ctx, manager.backend_conn))
     return task

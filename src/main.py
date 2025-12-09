@@ -33,23 +33,15 @@ async def main():
     transform_conn: DuckDBPyConnection = backend_conn
 
     app = App(backend_conn, PROPERTIES_SCHEMA)
-
-    # Connect ClientManager to App
     client_manager = ClientManager(backend_conn)
-    app.add_dependency(client_manager)
-
-    # Connect App to EntityManager
     entity_manager = EntityManager(backend_conn)
-    app.add_dependency(entity_manager)
-
-    # Connect TaskManager to EntityManager
     task_manager = TaskManager(backend_conn, transform_conn)
-    entity_manager.add_dependency(task_manager)
-
-    # Connect Scheduler to TaskManager
     scheduler = TrioScheduler()
+
+    app.add_dependency(client_manager)
+    app.add_dependency(entity_manager)
+    entity_manager.add_dependency(task_manager)
     task_manager.add_dependency(scheduler)
-    task_manager.connect_scheduler(scheduler)
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(app.start, nursery)

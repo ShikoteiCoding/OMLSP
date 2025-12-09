@@ -8,7 +8,9 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from services import Service
 
+from channel.broker import ChannelBroker, _get_channel_broker
 from channel.channel import Channel
+from channel.producer import Producer
 
 from scheduler.types import SchedulerCommand
 from task.types import TaskId, T
@@ -103,31 +105,42 @@ class BaseTaskReceiver(BaseTask[T]):
 
 
 class ScheduledSourceTask(BaseTaskSender, Generic[T]):
+    #: Trigger for Scheduler
+    trigger: CronTrigger
+
+    #: ChannelBroker ref
+    _channel_broker: ChannelBroker
+
+    #: Tasks to be scheduled to Scheduler
+    _scheduler_commands_producer: Producer
+
     def __init__(
         self,
         task_id: TaskId,
         conn: DuckDBPyConnection,
-        scheduled_executables: Channel[
-            tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
-        ],
         trigger: CronTrigger,
     ):
         super().__init__(task_id, conn)
-        self.scheduled_executables = scheduled_executables
         self.trigger = trigger
+        self._channel_broker = _get_channel_broker()
+        self._scheduler_commands_producer = self._channel_broker.producer(
+            "scheduler.commands"
+        )
 
     async def on_start(self) -> None:
         logger.info(f"[{self.task_id}] task running")
         self._cancel_scope = trio.CancelScope()
 
+        # NOTE: for now scheduled task register itself to scheduler
+        # to simplify the task lifecycle. This is not proper pattern
         async def _task_runner():
             with self._cancel_scope:
                 try:
-                    await self.scheduled_executables.send(
+                    await self._scheduler_commands_producer.produce(
                         (SchedulerCommand.ADD, (self.task_id, self.trigger, self.run))
                     )
                 except trio.Cancelled:
-                    pass  # Normal shutdown path
+                    pass
 
         # Start the real task inside the cancel scope
         self._nursery.start_soon(_task_runner)

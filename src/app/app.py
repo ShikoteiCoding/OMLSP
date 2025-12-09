@@ -10,7 +10,7 @@ from context.context import (
     DropContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
-from channel.broker import _get_event_bus, ChannelBroker
+from channel.broker import _get_channel_broker, ChannelBroker
 from channel.consumer import Consumer
 from channel.producer import Producer
 from services import Service
@@ -39,7 +39,7 @@ class App(Service):
     _internal_ref = "__runner"
 
     #: ChannelBroker ref
-    _event_bus: ChannelBroker
+    _channel_broker: ChannelBroker
 
     #: Consumer for client sql requests from ClientManager
     _client_sql_request_consumer: Consumer
@@ -55,12 +55,14 @@ class App(Service):
         super().__init__(name="App")
         self._conn = conn
         self._properties_schema = properties_schema
-        self._event_bus = _get_event_bus()
+        self._channel_broker = _get_channel_broker()
 
-        self._client_sql_request_consumer = self._event_bus.consumer(
+        self._client_sql_request_consumer = self._channel_broker.consumer(
             "client.sql.requests"
         )
-        self._entity_commands_producer = self._event_bus.producer("entity.commands")
+        self._entity_commands_producer = self._channel_broker.producer(
+            "entity.commands"
+        )
 
     async def on_start(self):
         """
@@ -86,7 +88,9 @@ class App(Service):
 
         TODO: move to entrypoint from path on __init__ + on_start
         """
-        await self._event_bus.publish("client.sql.requests", (self._internal_ref, sql))
+        await self._channel_broker.publish(
+            "client.sql.requests", (self._internal_ref, sql)
+        )
 
     async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
@@ -125,7 +129,7 @@ class App(Service):
             # Send back to client (unless internal query)
             # Anonymous publish: i.e no internal ref to producer
             if client_id != self._internal_ref:
-                await self._event_bus.publish(client_id, result)
+                await self._channel_broker.publish(client_id, result)
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):

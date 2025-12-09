@@ -4,7 +4,7 @@ Entity Manager managing registration and dependancies of Context.
 
 from duckdb import DuckDBPyConnection
 
-from channel.broker import ChannelBroker, _get_event_bus
+from channel.broker import ChannelBroker, _get_channel_broker
 from channel.consumer import Consumer
 from channel.producer import Producer
 
@@ -59,7 +59,7 @@ class EntityManager(Service):
     _name_to_context: dict[str, CreateContext] = {}
 
     #: ChannelBroker ref
-    _event_bus: ChannelBroker
+    _channel_broker: ChannelBroker
 
     #: Consumer for entity commands from App
     _entity_commands_consumer: Consumer
@@ -70,9 +70,11 @@ class EntityManager(Service):
     def __init__(self, backend_conn: DuckDBPyConnection):
         super().__init__(name="EntityManager")
         self.backend_conn = backend_conn
-        self._event_bus = _get_event_bus()
-        self._entity_commands_consumer = self._event_bus.consumer("entity.commands")
-        self._task_commands_producer = self._event_bus.producer("task.commands")
+        self._channel_broker = _get_channel_broker()
+        self._entity_commands_consumer = self._channel_broker.consumer(
+            "entity.commands"
+        )
+        self._task_commands_producer = self._channel_broker.producer("task.commands")
 
     async def on_start(self):
         """Main loop for the EntityManager, runs forever."""
