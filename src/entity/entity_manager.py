@@ -4,7 +4,10 @@ Entity Manager managing registration and dependancies of Context.
 
 from duckdb import DuckDBPyConnection
 
-from channel.channel import Channel
+from channel.broker import ChannelBroker, _get_event_bus
+from channel.consumer import Consumer
+from channel.producer import Producer
+
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
     METADATA_VIEW_TABLE_NAME,
@@ -28,7 +31,6 @@ from context.context import (
     DropCascadeContext,
 )
 from graph.dependency_graph import dependency_grah
-from task.manager import TaskManager
 from task.types import TaskManagerCommand
 from store.lookup import callback_store
 
@@ -56,42 +58,36 @@ class EntityManager(Service):
     #: Reference to all tasks by task id
     _name_to_context: dict[str, CreateContext] = {}
 
-    #: Outgoing Task context to be orchestrated by TaskManager
-    _task_events: Channel[tuple[TaskManagerCommand, CreateContext]]
+    #: ChannelBroker ref
+    _event_bus: ChannelBroker
 
-    #: Outgoing Context channel to add in DependencyGrah
-    _command_entity: Channel[CreateContext | DropContext]
+    #: Consumer for entity commands from App
+    _entity_commands_consumer: Consumer
+
+    #: Producer for tasks commands to TaskManager
+    _task_commands_producer: Producer
 
     def __init__(self, backend_conn: DuckDBPyConnection):
         super().__init__(name="EntityManager")
         self.backend_conn = backend_conn
-        self._task_events = Channel[tuple[TaskManagerCommand, CreateContext]](100)
-        self._command_entity = Channel[CreateContext | DropContext](100)
-
-    def add_ctx_channel(self, channel: Channel[CreateContext | DropContext]):
-        self._command_entity = channel
-
-    def connect_task_manager(self, task_manager: TaskManager) -> None:
-        """
-        Connect EntityManager through one Channel.
-
-        Channel:
-            - Task Event Channel
-
-        See channel.py for Channel implementation.
-        """
-        task_manager.add_taskctx_channel(self._task_events)
+        self._event_bus = _get_event_bus()
+        self._entity_commands_consumer = self._event_bus.consumer("entity.commands")
+        self._task_commands_producer = self._event_bus.producer("task.commands")
 
     async def on_start(self):
         """Main loop for the EntityManager, runs forever."""
         self._nursery.start_soon(self._process)
 
-    async def on_stop(self):
-        """Close channel."""
-        await self._task_events.aclose()
-
     async def _process(self):
-        async for ctx in self._command_entity:
+        # NOTE: We intentionally operate on the original CreateContext rather
+        # than converting to a dedicated Entity type.
+        # This keeps task lifecycle logic simple until the future Entity
+        # abstraction is introduced
+
+        # Commands supported:
+        # CREATE
+        # DROP
+        async for ctx in self._entity_commands_consumer.channel:
             if isinstance(ctx, CreateContext):
                 await self._register_entity(ctx)
             elif isinstance(ctx, DropContext):
@@ -99,11 +95,17 @@ class EntityManager(Service):
 
     async def _register_entity(self, ctx: CreateContext):
         dependency_grah.ensure_vertex(ctx.name)
+
         # Register dependencies in the graph
         match ctx:
+            # Receiver tasks can have multiple upstream, each of
+            # the upstream correspond to a vertex
             case CreateSinkContext() | CreateViewContext():
                 for parent in ctx.upstreams:
                     dependency_grah.add_vertex(parent, ctx.name)
+
+            # NOTE: For now secrets are only supported in Http
+            # properties
             case (
                 CreateHTTPTableContext()
                 | CreateHTTPSourceContext()
@@ -111,7 +113,8 @@ class EntityManager(Service):
             ):
                 for _, secret_name in ctx.properties.secrets:
                     dependency_grah.add_vertex(secret_name, ctx.name)
-        await self._task_events.send((TaskManagerCommand.CREATE, ctx))
+
+        await self._task_commands_producer.produce((TaskManagerCommand.CREATE, ctx))
         self._name_to_context[ctx.name] = ctx
         logger.success(f"[EntityManager] registered context '{ctx.name}'")
 
@@ -125,7 +128,9 @@ class EntityManager(Service):
             dependency_grah.remove(ctx.name)
             ctx_node = self._name_to_context.get(ctx.name)
             if ctx_node is not None:
-                await self._task_events.send((TaskManagerCommand.DELETE, ctx_node))
+                await self._task_commands_producer.produce(
+                    (TaskManagerCommand.DELETE, ctx_node)
+                )
                 await self._destroy_entity(ctx_node)
 
             logger.success(f"[EntityManager] removed entity: {ctx.name}")
@@ -135,20 +140,20 @@ class EntityManager(Service):
             if not removed_nodes:
                 logger.warning(f"[EntityManager] nothing to remove for '{ctx.name}'")
                 return
-            for n in removed_nodes:
-                ctx_node = self._name_to_context.get(n)
+            for node in removed_nodes:
+                ctx_node = self._name_to_context.get(node)
                 if ctx_node is not None:
-                    await self._task_events.send((TaskManagerCommand.DELETE, ctx_node))
+                    await self._task_commands_producer.produce(
+                        (TaskManagerCommand.DELETE, ctx_node)
+                    )
                     await self._destroy_entity(ctx_node)
-                logger.info(f"[EntityManager] removed entity: {n} from system")
+                logger.info(f"[EntityManager] removed entity: {node}")
 
-            logger.success(f"[EntityManager] removed cascade entities: {removed_nodes}")
+            logger.success(
+                f"[EntityManager] removed entities (CASCADE): {removed_nodes}"
+            )
 
     async def _destroy_entity(self, ctx: CreateContext):
-        # NOTE: We intentionally operate on the original CreateContext rather than
-        # converting to a dedicated Entity type.
-        # This keeps task lifecycle logic simple until the future Entity abstraction is introduced.
-
         if isinstance(ctx, CreateHTTPLookupTableContext):
             callback_store.delete(ctx.name)
 
