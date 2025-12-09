@@ -2,15 +2,12 @@
 Task Manager managing registration and running of Tasks.
 """
 
-from typing import Callable
-
-from apscheduler.triggers.cron import CronTrigger
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from channel.broker import ChannelBroker, _get_event_bus
-from channel.channel import Channel
+from channel.broker import ChannelBroker, _get_channel_broker
 from channel.consumer import Consumer
+from channel.producer import Producer
 from scheduler.scheduler import TrioScheduler
 from scheduler.types import SchedulerCommand
 from context.context import (
@@ -46,18 +43,16 @@ class TaskManager(Service):
     supervisor: TaskSupervisor
 
     #: Reference to BaseTaskSender by task id
-    _senders: dict[TaskId, BaseTaskSender] = {}
-
-    #: Outgoing channel to send jobs to scheduler
-    _scheduled_executables: Channel[
-        tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
-    ]
+    senders: dict[TaskId, BaseTaskSender] = {}
 
     #: ChannelBroker ref
-    _event_bus: ChannelBroker
+    _channel_broker: ChannelBroker
 
     #: Consumer for task commands from EntityManager
     _task_commands_consumer: Consumer
+
+    #: Tasks to be scheduled to Scheduler
+    _scheduler_commands_producer: Producer
 
     def __init__(
         self, backend_conn: DuckDBPyConnection, transform_conn: DuckDBPyConnection
@@ -65,23 +60,12 @@ class TaskManager(Service):
         super().__init__(name="TaskManager")
         self.backend_conn = backend_conn
         self.transform_conn = transform_conn
-        self._scheduled_executables = Channel[
-            tuple[SchedulerCommand, TaskId | tuple[TaskId, CronTrigger, Callable]]
-        ](100)
         self.supervisor = TaskSupervisor()
-        self._event_bus = _get_event_bus()
-        self._task_commands_consumer = self._event_bus.consumer("task.commands")
-
-    def connect_scheduler(self, scheduler: TrioScheduler) -> None:
-        """
-        Connect TaskManager and Scheduler through one Channel.
-
-        Channel:
-            - Executable Channel
-
-        See channel.py for Channel implementation.
-        """
-        scheduler.add_executable_channel(self._scheduled_executables)
+        self._channel_broker = _get_channel_broker()
+        self._task_commands_consumer = self._channel_broker.consumer("task.commands")
+        self._scheduler_commands_producer = self._channel_broker.producer(
+            "scheduler.commands"
+        )
 
     async def on_start(self):
         """Main loop for the TaskManager, runs forever."""
@@ -89,9 +73,8 @@ class TaskManager(Service):
         self._nursery.start_soon(self._process)
 
     async def on_stop(self):
-        """Close channel."""
+        """Stop supervisor strategy."""
         await self.supervisor.stop()
-        await self._scheduled_executables.aclose()
 
     async def _process(self):
         async for cmd, ctx in self._task_commands_consumer.channel:
@@ -119,6 +102,8 @@ class TaskManager(Service):
     async def _delete_task(self, ctx: CreateContext):
         if isinstance(ctx, CreateHTTPSourceContext | CreateHTTPTableContext):
             # If task is a ScheduledSourceTask, evict it from the scheduler
-            await self._scheduled_executables.send((SchedulerCommand.EVICT, ctx.name))
+            await self._scheduler_commands_producer.produce(
+                (SchedulerCommand.EVICT, ctx.name)
+            )
         else:
             await self.supervisor.stop_supervising(ctx.name)
