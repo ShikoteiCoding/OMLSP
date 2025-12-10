@@ -97,7 +97,8 @@ async def async_http_requester(
 ) -> list[dict]:
     async with httpx.AsyncClient() as client:
         logger.debug(f"running async request with {request_kwargs}")
-        results, cursor = [], None
+        results = []
+        cursor: str | None = None
         base_params: dict = request_kwargs.get("params", {}).copy()
 
         while True:
@@ -122,10 +123,8 @@ async def async_http_requester(
                 results.extend(batch)
 
                 # Condition to continue as Cursor Based Pagination or exit
-                if (
-                    cursor := pagination_strategy.extract_next_cursor(batch, response)
-                    is None
-                ):
+                cursor = pagination_strategy.extract_next_cursor(batch, response)
+                if cursor is None:
                     break
 
         return results

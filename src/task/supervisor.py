@@ -62,7 +62,7 @@ class TaskSupervisor(Service):
                         logger.error(f"[{task.task_id}] exceeded max retries: {e}")
                         break
                     logger.warning(
-                        "[{}] crashed (attempt {}/{}).\n{}",
+                        "[{}] crashed (attempt {}/{}). {}",
                         task.task_id,
                         attempt,
                         max_retries,
