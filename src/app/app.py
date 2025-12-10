@@ -13,6 +13,7 @@ from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from channel.broker import _get_event_bus, ChannelBroker
 from channel.consumer import Consumer
 from channel.producer import Producer
+from channel.promise import Promise
 from services import Service
 from sql.parser import extract_one_query_context
 from store import (
@@ -86,14 +87,17 @@ class App(Service):
 
         TODO: move to entrypoint from path on __init__ + on_start
         """
-        await self._event_bus.publish("client.sql.requests", (self._internal_ref, sql))
+        await self._event_bus.send(
+                "client.sql.requests", (self._internal_ref, sql)
+            )
 
     async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
 
         # Each SQL keeps reference of a client_id for dispatch
-        async for client_id, sql in self._client_sql_request_consumer.channel:
+        async for payload, promise in self._client_sql_request_consumer.channel:
+            client_id, sql = payload
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
 
@@ -109,7 +113,7 @@ class App(Service):
             # Evaluable Context are simple statements which
             # can be executed and simply return a result.
             if isinstance(ctx, EvaluableContext):
-                result = await self._eval_ctx(ctx)
+                result = await self._eval_ctx(ctx, promise)
 
             # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):
@@ -125,7 +129,7 @@ class App(Service):
             # Send back to client (unless internal query)
             # Anonymous publish: i.e no internal ref to producer
             if client_id != self._internal_ref:
-                await self._event_bus.publish(client_id, result)
+                promise.set(result)
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):
@@ -139,9 +143,9 @@ class App(Service):
     # Client terminal gets "blocked" till response is received,
     # so it is safe to assume we can queue per client and defer
     # results to keep ordering per client
-    async def _eval_ctx(self, ctx: EvaluableContext) -> str:
+    async def _eval_ctx(self, ctx: EvaluableContext, promise: Promise) -> str | None:
         try:
             return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
         except Exception as e:
+            promise.set(f"Error evaluating context type '{ctx}': {e}")
             logger.error("Error evaluating context type '{}': {}", type(ctx), ctx)
-            return f"Error evaluating context type '{ctx}': {e}"

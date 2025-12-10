@@ -1,10 +1,13 @@
 from __future__ import annotations
+from loguru import logger
 from typing import Any, TypeVar, Generic
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import (
     AvroSerializer as ConfluentAvroSerializer,
 )
+from confluent_kafka.schema_registry.error import SchemaRegistryError
 from confluent_kafka.serialization import SerializationContext, MessageField
+from httpx import ConnectError
 import json
 from sql.types import (
     EncodeJSON,
@@ -38,14 +41,22 @@ class AvroSerializer(BaseSerializer):
     _ctx: SerializationContext
 
     @classmethod
-    def init(cls, config: EncodeAvro, topic: str) -> "AvroSerializer":
+    def init(cls, config: EncodeAvro, topic: str) -> AvroSerializer | None:
         new = cls.__new__(cls)
 
         registry_client = SchemaRegistryClient({"url": config.registry})
 
         expected_subject = f"{topic}-value"
-        registered_version = registry_client.get_latest_version(expected_subject)
 
+        try:
+            registered_version = registry_client.get_latest_version(expected_subject)
+        except (ConnectError, SchemaRegistryError) as e:
+            logger.error(
+                f"SKIPPING Sink for topic '{topic}': "
+                f"Could not connect to Schema Registry at {config.registry}. "
+                f"Error: {e}"
+            )
+            return None
         # Extract the actual schema
         fetched_schema_str = registered_version.schema.schema_str  # type: ignore
 

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from loguru import logger
-from typing import TypeVar
+from typing import TypeVar, Any
 
 from channel.types import Address, Message
 from channel.channel import Channel
 from channel.consumer import Consumer
 from channel.producer import Producer
-
+from channel.promise import Promise
 
 T = TypeVar("T")
 
@@ -121,13 +121,16 @@ class ChannelBroker:
         """
         raise NotImplementedError("Not the most useful for now.")
 
-    async def send[T](self, address: Address, message: Message):
-        """
-        Point-to-point pattern. Round robin delivery if multiple consumers.
-
-        A consumer can .reply() to the message but isn't obligated
-        """
-        raise NotImplementedError("Not the most useful for now.")
+    async def send[T](self, address: Address, message: Message) -> Any:
+            """
+            Point-to-point pattern with Request-Reply semantics.
+            Returns a Promise that can be awaited.
+            """
+            producer = self.producer(address)
+            promise = Promise[T]()
+            
+            await producer.produce((message, promise))
+            return await promise.await_result()
 
 
 def _get_event_bus() -> ChannelBroker:

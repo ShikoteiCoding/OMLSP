@@ -91,12 +91,11 @@ class ClientManager(Service):
 
     async def _process_query(self, sql_content: str, client_id: str) -> str:
         try:
-            await self._event_bus.publish(
-                "client.sql.requests", (client_id, sql_content)
-            )
             output_messages = []
 
-            response = await self._event_bus.consumer(client_id).consume()
+            response = await self._event_bus.send(
+                "client.sql.requests", (client_id, sql_content)
+            )
 
             output_messages.append(response)
 
