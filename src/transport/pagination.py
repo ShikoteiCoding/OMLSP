@@ -10,7 +10,9 @@ class BasePagination:
     def update_params(self, cursor: str | None, params: dict[str, str]):
         pass
 
-    def extract_next_cursor(self, batch: list[dict[str, Any]], response: Response):
+    def extract_next_cursor(
+        self, batch: list[dict[str, Any]], response: Response
+    ) -> Any:
         pass
 
 
@@ -21,7 +23,9 @@ class NoPagination(BasePagination):
     def update_params(self, _: str | None, params: dict[str, str]) -> dict:
         return {}
 
-    def extract_next_cursor(self, batch: list[dict[str, Any]], response: Response):
+    def extract_next_cursor(
+        self, batch: list[dict[str, Any]], response: Response
+    ) -> Any:
         """Return the next cursor or None"""
         return None
 

@@ -1,22 +1,24 @@
 from __future__ import annotations
 
-from typing import Generic, TypeVar
-from loguru import logger
-
 import trio
 
-T = TypeVar("T")
+from typing import Generic
+from loguru import logger
 
 
-class Channel(Generic[T]):
-    def __init__(self, size: int = 100):
+from channel.types import ChannelT, T, _Msg
+
+
+class Channel(ChannelT, Generic[T]):
+    def __init__(self, size: int, broadcast_lock: trio.Lock | None = None):
         """
         If size == 0, the channel becomes blocked till closed.
         """
         self._send_ch, self._recv_ch = trio.open_memory_channel[T](size)
         self._subscribers: list[trio.MemorySendChannel] = []  # for clones
-        self.size = size
         self._closed = trio.Event()
+
+        self._ack_lock = broadcast_lock or trio.Lock()
 
     async def send(self, data: T) -> None:
         if self._closed.is_set():
@@ -54,21 +56,56 @@ class Channel(Generic[T]):
         except trio.EndOfChannel:
             raise StopAsyncIteration
 
-    def clone(self) -> Channel[T]:
-        send, recv = trio.open_memory_channel[T](self.size)
-        self._subscribers.append(send)
-        return Channel._from_existing(send, recv, self.size)
+class BroadcastChannel(ChannelT, Generic[T]):
+    #: Fan-out channels of this instance
+    _subscribers: list[Channel[_Msg[T]]]
+    
+    #: Close event
+    _closed: trio.Event
 
-    @classmethod
-    def _from_existing(
-        cls,
-        send_ch: trio.MemorySendChannel,
-        recv_ch: trio.MemoryReceiveChannel,
-        size: int,
-    ):
-        ch = cls.__new__(cls)
-        ch._send_ch = send_ch
-        ch._recv_ch = recv_ch
-        ch._subscribers = []
-        ch.size = size
-        return ch
+    #: Channel(s) for spawned subscribed channels
+    _size: int
+
+    def __init__(self, size: int = 100):
+        self._subscribers: list[Channel[_Msg[T]]] = []
+        self._closed = trio.Event()
+        self.size = size
+
+        # Lock to be shared with subscribers
+        self._ack_lock = trio.Lock()
+
+    async def send(self, data: T) -> None:
+        if self._closed.is_set():
+            raise trio.ClosedResourceError("Channel is closed")
+
+        if len(self._subscribers) == 0:
+            return
+
+        msg = _Msg[T](data, len(self._subscribers), trio.Event())
+
+        for sub in list(self._subscribers):
+            try:
+                await sub.send(msg)
+            except trio.BrokenResourceError:
+                self._subscribers.remove(sub)
+
+        # NOTE: might require timeout
+        await msg.done.wait()
+
+    async def aclose(self):
+        if self._closed.is_set():
+            return
+        self._closed.set()
+        logger.debug(f"[Channel] closing {len(self._subscribers)} subscribers")
+        for sub in self._subscribers:
+            await sub.aclose()
+        self._subscribers.clear()
+        logger.debug("[Channel] send side closed")
+
+    def __aiter__(self):
+        return self
+
+    def spawn(self) -> Channel[_Msg[T]]:
+        channel = Channel[_Msg[T]](self.size, self._ack_lock)
+        self._subscribers.append(channel)
+        return channel

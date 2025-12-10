@@ -9,8 +9,9 @@ from loguru import logger
 from services import Service
 
 from channel.broker import ChannelBroker, _get_channel_broker
-from channel.channel import Channel
+from channel.channel import BroadcastChannel, Channel
 from channel.producer import Producer
+from channel.types import _Msg
 
 from scheduler.types import SchedulerCommand
 from task.types import TaskId, T
@@ -63,45 +64,49 @@ class BaseTask(Service, Generic[T]):
 
 class BaseTaskSender(BaseTask[T]):
     #: Channel to write output for downstream tasks
-    _sender: Channel[T]
+    _sender: BroadcastChannel[T]
 
-    #: Sender watchguard
-    _has_sender: bool = False
+    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection) -> None:
+        super().__init__(task_id, conn)
+        self._sender = BroadcastChannel[T](DEFAULT_CAPACITY)
 
-    def get_sender(self) -> Channel[T]:
+    def get_sender(self) -> BroadcastChannel[T]:
         """
         Lazily create and return the sender channel
         Get sender when asked. If doesn't exist, creates one.
 
         NOTE: This implementation isn't very robust, we are
-         assuming that any resuester of :meth:`get_sender` will
+         assuming that any requester of :meth:`get_sender` will
          succeed and that we indeed instanciate a sender. This
          could lead to stuck Tasks if a sender channel is created
-         without anyt true consummer on the other side.
+         without any true consummer on the other side.
         """
-        if not self._has_sender:
-            self._sender = Channel[T](100)  # first-time creation
-            self._has_sender = True
         return self._sender
 
     async def on_stop(self) -> None:
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_event.set()
-        if hasattr(self, "_sender"):
-            await self._sender.aclose()
+        await self._sender.aclose()
         self._cancel_scope.cancel()
 
 
 class BaseTaskReceiver(BaseTask[T]):
-    # Channel to receive data from upstream tasks
-    _receivers: list[Channel[T]]
+    # List of channels to receive upstream data
+    _receivers: list[Channel[_Msg[T]]]
+
+    def __init__(self, task_id: TaskId, conn: DuckDBPyConnection) -> None:
+        super().__init__(task_id, conn)
+        self._receivers = []
 
     async def on_stop(self) -> None:
         logger.info(f"[{self.task_id}] task stopping")
         self._cancel_scope.cancel()
 
     def subscribe(self, sender: BaseTaskSender):
-        self._receivers.append(sender.get_sender().clone())
+        logger.warning(
+            "Task '{}' subscribed to task '{}'", self.task_id, sender.task_id
+        )
+        self._receivers.append(sender.get_sender().spawn())
 
 
 class ScheduledSourceTask(BaseTaskSender, Generic[T]):
@@ -155,11 +160,14 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         if not self._cancel_event.is_set():
             result = await self._executable(task_id=self.task_id, conn=self.conn)
 
-            if self._has_sender:
-                await self._sender.send(result)
+            await self._sender.send(result)
 
 
 class ContinuousSourceTask(BaseTaskSender, Generic[T]):
+    #: Continuous task is a generator and needs
+    # a nursery for internal fan-in
+    nursery: trio.Nursery
+
     def __init__(self, task_id: str, conn: DuckDBPyConnection, nursery: trio.Nursery):
         super().__init__(task_id, conn)
         self.nursery = nursery
@@ -181,31 +189,35 @@ class ContinuousSourceTask(BaseTaskSender, Generic[T]):
             nursery=self.nursery,
             cancel_event=self._cancel_event,
         ):
-            if self._has_sender:
-                await self._sender.send(result)
+            await self._sender.send(result)
 
 
 class SinkTask(BaseTaskReceiver, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
-        self._receivers: list[Channel[T]] = []
 
     async def run(self):
         # TODO: receive many upstreams
-        receiver = self._receivers[0]
-        async for df in receiver:
+        receiver: Channel[_Msg[T]] = self._receivers[0]
+        async for msg in receiver:
+            df = msg.payload
             await self._executable(self.task_id, self.conn, df)
+
+            async with receiver._ack_lock:
+                msg.ack()
 
 
 class TransformTask(BaseTaskSender, BaseTaskReceiver, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
-        super().__init__(task_id, conn)
-        self._receivers: list[Channel[T]] = []
-        self._sender = Channel[T](DEFAULT_CAPACITY)
+        super().__init__(task_id=task_id, conn=conn)
 
     async def run(self):
-        receiver = self._receivers[0]
-        async for df in receiver:
+        receiver: Channel[_Msg[T]] = self._receivers[0]
+        async for msg in receiver:
+            df = msg.payload
             result = await self._executable(self.task_id, self.conn, df)
-            if self._has_sender:
-                await self._sender.send(result)
+
+            async with receiver._ack_lock:
+                msg.ack()
+
+            await self._sender.send(result)
