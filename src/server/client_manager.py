@@ -97,7 +97,6 @@ class ClientManager(Service):
             response = await self._channel_broker.send(
                 "client.sql.requests", sql_content
             )
-            print(response)
 
             if isinstance(response, ValidResponse):
                 output_messages.append(response.data)
