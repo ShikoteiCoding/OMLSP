@@ -6,9 +6,11 @@ type Message = Any
 type Response = Any
 type DeliveryOptions = str
 
+
 @dataclass
 class ValidResponse:
     data: Any
+
 
 @dataclass
 class InvalidResponse:

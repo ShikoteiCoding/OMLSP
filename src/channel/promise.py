@@ -1,8 +1,9 @@
 import trio
-from typing import Generic, TypeVar, Any
+from typing import Generic, TypeVar
 from channel.types import ValidResponse, InvalidResponse
 
 T = TypeVar("T")
+
 
 class Promise(Generic[T]):
     def __init__(self):

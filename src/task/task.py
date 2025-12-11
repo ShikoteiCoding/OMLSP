@@ -80,7 +80,7 @@ class BaseTaskSender(BaseTask[T]):
          without anyt true consummer on the other side.
         """
         if not self._has_sender:
-            self._sender = Channel[T](1)  # first-time creation
+            self._sender = Channel[T](100)  # first-time creation
             self._has_sender = True
         return self._sender
 

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from loguru import logger
-from typing import TypeVar, Any
+from typing import TypeVar
 
-from channel.types import Address, Message
+from channel.types import Address, Message, ValidResponse, InvalidResponse
 from channel.channel import Channel
 from channel.consumer import Consumer
 from channel.producer import Producer
@@ -66,7 +66,7 @@ class ChannelBroker:
         channel = self._channels.get(address)
 
         if not channel:
-            channel = Channel(1)
+            channel = Channel(100)
             self._channels[address] = channel
             logger.debug("Channel created for address '{}'", address)
 
@@ -87,7 +87,7 @@ class ChannelBroker:
         channel = self._channels.get(address)
 
         if not channel:
-            channel = Channel(1)
+            channel = Channel(100)
             self._channels[address] = channel
             logger.debug("Channel created for address '{}'", address)
 
@@ -121,16 +121,17 @@ class ChannelBroker:
         """
         raise NotImplementedError("Not the most useful for now.")
 
-    async def send[T](self, address: Address, message: Message) -> Any:
-            """
-            Point-to-point pattern with Request-Reply semantics.
-            Returns a Promise that can be awaited.
-            """
-            producer = self.producer(address)
-            promise = Promise[T]()
-            
-            await producer.produce((message, promise))
-            return await promise.await_result()
+    async def send[T](
+        self, address: Address, message: Message
+    ) -> ValidResponse | InvalidResponse:
+        """
+        Point-to-point pattern with Request-Reply semantics.
+        """
+        producer = self.producer(address)
+        promise = Promise[T]()
+
+        await producer.produce((message, promise))
+        return await promise.await_result()
 
 
 def _get_channel_broker() -> ChannelBroker:

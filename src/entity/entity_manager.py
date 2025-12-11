@@ -128,7 +128,11 @@ class EntityManager(Service):
         if isinstance(ctx, DropSimpleContext):
             is_leaf = dependency_grah.is_a_leaf(ctx.name)
             if not is_leaf:
-                promise.set(InvalidResponse(f"Cannot drop '{ctx.name}', it has dependencies or doesn't exist"))
+                promise.set(
+                    InvalidResponse(
+                        f"Cannot drop '{ctx.name}', it has dependencies or doesn't exist"
+                    )
+                )
                 logger.warning(f"[EntityManager] entity is not a leaf '{ctx.name}'")
                 return
             dependency_grah.remove(ctx.name)
@@ -145,7 +149,9 @@ class EntityManager(Service):
         if isinstance(ctx, DropCascadeContext):
             removed_nodes = dependency_grah.remove_recursive(ctx.name)
             if not removed_nodes:
-                promise.set(InvalidResponse (f"Nothing to drop, '{ctx.name}' doesn't exist"))
+                promise.set(
+                    InvalidResponse(f"Nothing to drop, '{ctx.name}' doesn't exist")
+                )
                 logger.warning(f"[EntityManager] nothing to remove for '{ctx.name}'")
                 return
             for node in removed_nodes:
@@ -157,7 +163,11 @@ class EntityManager(Service):
                     await self._destroy_entity(ctx_node)
                 logger.info(f"[EntityManager] removed entity: {node}")
 
-            promise.set(ValidResponse(f"Successfully dropped '{ctx.name}' and dependencies '{removed_nodes}'"))
+            promise.set(
+                ValidResponse(
+                    f"Successfully dropped '{ctx.name}' and dependencies '{removed_nodes}'"
+                )
+            )
             logger.success(
                 f"[EntityManager] removed entities (CASCADE): '{removed_nodes}'"
             )

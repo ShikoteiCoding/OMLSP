@@ -102,8 +102,8 @@ class ClientManager(Service):
             if isinstance(response, ValidResponse):
                 output_messages.append(response.data)
             elif isinstance(response, InvalidResponse):
-                output_messages.append(response.reason)              
-        
+                output_messages.append(response.reason)
+
             return "\n".join(output_messages)
 
         except Exception as e:

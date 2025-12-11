@@ -13,7 +13,6 @@ from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from channel.broker import _get_channel_broker, ChannelBroker
 from channel.consumer import Consumer
 from channel.producer import Producer
-from channel.promise import Promise
 from channel.types import ValidResponse, InvalidResponse
 from services import Service
 from sql.parser import extract_one_query_context
@@ -90,9 +89,7 @@ class App(Service):
 
         TODO: move to entrypoint from path on __init__ + on_start
         """
-        await self._channel_broker.send(
-                "client.sql.requests",  sql
-            )
+        await self._channel_broker.send("client.sql.requests", sql)
 
     async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
@@ -120,7 +117,9 @@ class App(Service):
                     promise.set(ValidResponse(result))
                 except Exception as e:
                     logger.error(f"Error evaluating context type '{type(ctx)}': {e}")
-                    promise.set(InvalidResponse(f"Error evaluating query '{ctx.query}': {e}"))
+                    promise.set(
+                        InvalidResponse(f"Error evaluating query '{ctx.query}': {e}")
+                    )
 
             # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):
