@@ -9,7 +9,7 @@ T = TypeVar("T")
 
 
 class Channel(Generic[T]):
-    def __init__(self, size: int = 100):
+    def __init__(self, size: int = 1):
         """
         If size == 0, the channel becomes blocked till closed.
         """

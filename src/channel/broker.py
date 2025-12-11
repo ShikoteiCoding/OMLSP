@@ -15,7 +15,7 @@ T = TypeVar("T")
 
 class ChannelBroker:
     """
-    Global singleton EventBus.
+    Global singleton ChannekBroker.
 
     NOTE: For now everything is unique (consumers, producers & channels)
     This is because trio.membuffer are not broadcast variables anyway.
@@ -66,7 +66,7 @@ class ChannelBroker:
         channel = self._channels.get(address)
 
         if not channel:
-            channel = Channel(100)
+            channel = Channel(1)
             self._channels[address] = channel
             logger.debug("Channel created for address '{}'", address)
 
@@ -87,7 +87,7 @@ class ChannelBroker:
         channel = self._channels.get(address)
 
         if not channel:
-            channel = Channel(100)
+            channel = Channel(1)
             self._channels[address] = channel
             logger.debug("Channel created for address '{}'", address)
 
@@ -133,5 +133,5 @@ class ChannelBroker:
             return await promise.await_result()
 
 
-def _get_event_bus() -> ChannelBroker:
+def _get_channel_broker() -> ChannelBroker:
     return ChannelBroker.get_instance()

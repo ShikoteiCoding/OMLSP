@@ -4,9 +4,11 @@ Entity Manager managing registration and dependancies of Context.
 
 from duckdb import DuckDBPyConnection
 
-from channel.broker import ChannelBroker, _get_event_bus
+from channel.broker import ChannelBroker, _get_channel_broker
 from channel.consumer import Consumer
 from channel.producer import Producer
+from channel.promise import Promise
+from channel.types import ValidResponse, InvalidResponse
 
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
@@ -59,7 +61,7 @@ class EntityManager(Service):
     _name_to_context: dict[str, CreateContext] = {}
 
     #: ChannelBroker ref
-    _event_bus: ChannelBroker
+    _channel_broker: ChannelBroker
 
     #: Consumer for entity commands from App
     _entity_commands_consumer: Consumer
@@ -70,9 +72,11 @@ class EntityManager(Service):
     def __init__(self, backend_conn: DuckDBPyConnection):
         super().__init__(name="EntityManager")
         self.backend_conn = backend_conn
-        self._event_bus = _get_event_bus()
-        self._entity_commands_consumer = self._event_bus.consumer("entity.commands")
-        self._task_commands_producer = self._event_bus.producer("task.commands")
+        self._channel_broker = _get_channel_broker()
+        self._entity_commands_consumer = self._channel_broker.consumer(
+            "entity.commands"
+        )
+        self._task_commands_producer = self._channel_broker.producer("task.commands")
 
     async def on_start(self):
         """Main loop for the EntityManager, runs forever."""
@@ -87,13 +91,13 @@ class EntityManager(Service):
         # Commands supported:
         # CREATE
         # DROP
-        async for ctx in self._entity_commands_consumer.channel:
+        async for ctx, promise in self._entity_commands_consumer.channel:
             if isinstance(ctx, CreateContext):
-                await self._register_entity(ctx)
+                await self._register_entity(ctx, promise)
             elif isinstance(ctx, DropContext):
-                await self._delete_entity(ctx)
+                await self._delete_entity(ctx, promise)
 
-    async def _register_entity(self, ctx: CreateContext):
+    async def _register_entity(self, ctx: CreateContext, promise: Promise):
         dependency_grah.ensure_vertex(ctx.name)
 
         # Register dependencies in the graph
@@ -116,16 +120,19 @@ class EntityManager(Service):
 
         await self._task_commands_producer.produce((TaskManagerCommand.CREATE, ctx))
         self._name_to_context[ctx.name] = ctx
+        promise.set(ValidResponse(f"Successfully created '{ctx.name}"))
         logger.success(f"[EntityManager] registered context '{ctx.name}'")
 
-    async def _delete_entity(self, ctx: DropContext):
+    async def _delete_entity(self, ctx: DropContext, promise: Promise):
         # TODO: emit real-time deletion events to clients
         if isinstance(ctx, DropSimpleContext):
             is_leaf = dependency_grah.is_a_leaf(ctx.name)
             if not is_leaf:
+                promise.set(InvalidResponse(f"Cannot drop '{ctx.name}', it has dependencies or doesn't exist"))
                 logger.warning(f"[EntityManager] entity is not a leaf '{ctx.name}'")
                 return
             dependency_grah.remove(ctx.name)
+            promise.set(ValidResponse(f"Successfully dropped '{ctx.name}'"))
             ctx_node = self._name_to_context.get(ctx.name)
             if ctx_node is not None:
                 await self._task_commands_producer.produce(
@@ -133,11 +140,12 @@ class EntityManager(Service):
                 )
                 await self._destroy_entity(ctx_node)
 
-            logger.success(f"[EntityManager] removed entity: {ctx.name}")
+            logger.success(f"[EntityManager] removed entity: '{ctx.name}'")
 
         if isinstance(ctx, DropCascadeContext):
             removed_nodes = dependency_grah.remove_recursive(ctx.name)
             if not removed_nodes:
+                promise.set(InvalidResponse (f"Nothing to drop, '{ctx.name}' doesn't exist"))
                 logger.warning(f"[EntityManager] nothing to remove for '{ctx.name}'")
                 return
             for node in removed_nodes:
@@ -149,8 +157,9 @@ class EntityManager(Service):
                     await self._destroy_entity(ctx_node)
                 logger.info(f"[EntityManager] removed entity: {node}")
 
+            promise.set(ValidResponse(f"Successfully dropped '{ctx.name}' and dependencies '{removed_nodes}'"))
             logger.success(
-                f"[EntityManager] removed entities (CASCADE): {removed_nodes}"
+                f"[EntityManager] removed entities (CASCADE): '{removed_nodes}'"
             )
 
     async def _destroy_entity(self, ctx: CreateContext):
