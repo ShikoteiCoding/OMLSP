@@ -93,11 +93,11 @@ class EntityManager(Service):
         # DROP
         async for ctx, promise in self._entity_commands_consumer.channel:
             if isinstance(ctx, CreateContext):
-                await self._register_entity(ctx, promise)
+                await self._register_entity(ctx)
             elif isinstance(ctx, DropContext):
                 await self._delete_entity(ctx, promise)
 
-    async def _register_entity(self, ctx: CreateContext, promise: Promise):
+    async def _register_entity(self, ctx: CreateContext):
         dependency_grah.ensure_vertex(ctx.name)
 
         # Register dependencies in the graph
@@ -120,7 +120,6 @@ class EntityManager(Service):
 
         await self._task_commands_producer.produce((TaskManagerCommand.CREATE, ctx))
         self._name_to_context[ctx.name] = ctx
-        promise.set(ValidResponse(f"Successfully created '{ctx.name}"))
         logger.success(f"[EntityManager] registered context '{ctx.name}'")
 
     async def _delete_entity(self, ctx: DropContext, promise: Promise):
