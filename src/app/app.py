@@ -120,6 +120,7 @@ class App(Service):
                     promise.set(
                         InvalidResponse(f"Error evaluating query '{ctx.query}': {e}")
                     )
+                    continue
 
             # Warn of invalid context for tracing.
             elif isinstance(ctx, InvalidContext):
