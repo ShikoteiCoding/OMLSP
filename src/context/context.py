@@ -79,6 +79,7 @@ class CreateHTTPLookupTableContext(CreateTableContext):
     lookup_fields: list[str]
     generated_columns: dict[str, Callable]
     lookup: bool = True
+    has_data = True
 
 
 # ---------- Source Contexts ----------

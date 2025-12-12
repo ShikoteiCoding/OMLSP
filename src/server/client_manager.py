@@ -91,19 +91,15 @@ class ClientManager(Service):
 
     async def _process_query(self, sql_content: str, client_id: str) -> str:
         try:
-            await self._channel_broker.publish(
-                "client.sql.requests", (client_id, sql_content)
-            )
             output_messages = []
 
-            response = await self._channel_broker.consumer(client_id).consume()
-
-            output_messages.append(response)
+            response_data = await self._channel_broker.send(
+                "client.sql.requests", sql_content
+            )
+            output_messages.append(response_data)
 
             return "\n".join(output_messages)
 
         except Exception as e:
-            logger.error(
-                f"Client {client_id} - Error processing query: {type(e)} - {e}"
-            )
+        # already loggers everywhere in the code, no need to log here
             return f"Error: {str(e)}"

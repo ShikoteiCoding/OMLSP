@@ -15,7 +15,7 @@ from channel.producer import Producer
 from scheduler.types import SchedulerCommand
 from task.types import TaskId, T
 
-DEFAULT_CAPACITY = 100
+DEFAULT_CAPACITY = 1
 
 
 class BaseTask(Service, Generic[T]):
