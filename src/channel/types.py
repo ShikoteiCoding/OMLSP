@@ -3,7 +3,6 @@ from dataclasses import dataclass
 
 type Address = str
 type Message = Any
-type Response = Any
 type DeliveryOptions = str
 
 

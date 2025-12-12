@@ -9,7 +9,6 @@ from duckdb import DuckDBPyConnection
 from loguru import logger
 
 from channel.broker import _get_channel_broker, ChannelBroker
-from channel.types import ValidResponse, InvalidResponse
 from services import Service
 
 ClientId = str
@@ -94,19 +93,13 @@ class ClientManager(Service):
         try:
             output_messages = []
 
-            response = await self._channel_broker.send(
+            response_data = await self._channel_broker.send(
                 "client.sql.requests", sql_content
             )
-
-            if isinstance(response, ValidResponse):
-                output_messages.append(response.data)
-            elif isinstance(response, InvalidResponse):
-                output_messages.append(response.reason)
+            output_messages.append(response_data)
 
             return "\n".join(output_messages)
 
         except Exception as e:
-            logger.error(
-                f"Client {client_id} - Error processing query: {type(e)} - {e}"
-            )
+        # already loggers everywhere in the code, no need to log here
             return f"Error: {str(e)}"

@@ -133,6 +133,7 @@ class App(Service):
 
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):
+                # TODO keep promise in app.py
                 await self._entity_commands_producer.produce((ctx, promise))
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")

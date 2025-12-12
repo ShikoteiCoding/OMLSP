@@ -11,14 +11,14 @@ class Promise(Generic[T]):
         self._result: ValidResponse | InvalidResponse
 
     def set(self, value: ValidResponse | InvalidResponse) -> None:
-        """Called by the consumer to return a success value."""
         self._result = value
         self._event.set()
 
-    async def await_result(self) -> ValidResponse | InvalidResponse:
-        """Called by the producer to wait for the reply."""
+    async def await_result(self) -> T:
         with trio.move_on_after(10):
             await self._event.wait()
-            return self._result
+            if isinstance(self._result, InvalidResponse):
+                raise RuntimeError(self._result.reason)
+            return self._result.data
 
-        return InvalidResponse("No response received within 10 seconds")
+        raise TimeoutError("No response received within 10 seconds")

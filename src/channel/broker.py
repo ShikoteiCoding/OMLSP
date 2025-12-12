@@ -4,7 +4,7 @@ from collections import defaultdict
 from loguru import logger
 from typing import TypeVar
 
-from channel.types import Address, Message, ValidResponse, InvalidResponse
+from channel.types import Address, Message
 from channel.channel import Channel
 from channel.consumer import Consumer
 from channel.producer import Producer
@@ -121,16 +121,14 @@ class ChannelBroker:
         """
         raise NotImplementedError("Not the most useful for now.")
 
-    async def send[T](
-        self, address: Address, message: Message
-    ) -> ValidResponse | InvalidResponse:
+    async def send[T](self, address: Address, message: Message) -> T:
         """
-        Point-to-point pattern with Request-Reply semantics.
+        Point-to-point pattern.
+        Returns the data directly on valid response.
+        Raises exception on invalid response.
         """
-        producer = self.producer(address)
         promise = Promise[T]()
-
-        await producer.produce((message, promise))
+        await self.publish(address, (message, promise))
         return await promise.await_result()
 
 
