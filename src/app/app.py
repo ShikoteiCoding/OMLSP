@@ -19,6 +19,7 @@ from sql.parser import extract_one_query_context
 from store import (
     init_metadata_store,
 )
+from graph.dependency_graph import dependency_grah
 
 
 __all__ = ["App"]
@@ -100,30 +101,7 @@ class App(Service):
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
 
-            # Handle context with on_start eval conditions
-            if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query != "":
-                on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
-                if len(on_start_result) == 0:
-                    # Override context to bypass next
-                    ctx = InvalidContext(
-                        reason=f"Response from '{ctx.on_start_query}' is empty. Cannot proceed."
-                    )
-
-            # Evaluable Context are simple statements which
-            # can be executed and simply return a result.
-            if isinstance(ctx, EvaluableContext):
-                try:
-                    result = await self._eval_ctx(ctx)
-                    promise.set(ValidResponse(result))
-                except Exception as e:
-                    logger.error(f"Error evaluating context type '{type(ctx)}': {e}")
-                    promise.set(
-                        InvalidResponse(f"Error evaluating query '{ctx.query}': {e}")
-                    )
-                    continue
-
-            # Warn of invalid context for tracing.
-            elif isinstance(ctx, InvalidContext):
+            if isinstance(ctx, InvalidContext):
                 logger.warning(
                     "[App] Invalid SQL received: {} - reason: {}",
                     sql,
@@ -132,18 +110,52 @@ class App(Service):
                 result = str(ctx.reason)
                 promise.set(InvalidResponse(result))
 
-            # Dispatch CreateContext and DropContext to task manager
-            if isinstance(ctx, CreateContext | DropContext):
-                # TODO keep promise in app.py
+            # Check and dispatch CreateContext to manager
+            elif isinstance(ctx, CreateContext):
+                # Pyton check, faster than Duckdb
+                if dependency_grah.exist(ctx.name):
+                    promise.set(
+                        InvalidResponse(
+                            f"Entity '{ctx.name}' already exists. DROP it first."
+                        )
+                    )
+                    continue
+
+                # Handle context with on_start eval conditions
+                if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query:
+                    on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
+                    if len(on_start_result) == 0:
+                        promise.set(
+                            InvalidResponse(
+                                f"Pre-check failed: '{ctx.on_start_query}' returned empty."
+                            )
+                        )
+                        continue
+
+                await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
+                # Handover to Entity Manager
                 await self._entity_commands_producer.produce((ctx, promise))
+
+            elif isinstance(ctx, DropContext):
+                if not dependency_grah.exist(ctx.name):
+                    promise.set(
+                        InvalidResponse(
+                            f"Entity '{ctx.name}' does not exist. CREATE it first."
+                        )
+                    )
+                    continue
+                # Handover to Entity Manager
+                await self._entity_commands_producer.produce((ctx, promise))
+
+            elif isinstance(ctx, EvaluableContext):
+                try:
+                    result = await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
+                    promise.set(ValidResponse(result))
+                except Exception as e:
+                    logger.error(f"Error evaluating context type '{type(ctx)}': {e}")
+                    promise.set(
+                        InvalidResponse(f"Error evaluating query '{ctx.query}': {e}")
+                    )
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return
-
-    # TODO: Run eval_ctx in background to avoid thread blocking.
-    # This is currently a blocking operation in _handle_messages.
-    # Client terminal gets "blocked" till response is received,
-    # so it is safe to assume we can queue per client and defer
-    # results to keep ordering per client
-    async def _eval_ctx(self, ctx: EvaluableContext) -> str:
-        return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)

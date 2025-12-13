@@ -64,6 +64,9 @@ class DependencyGraph:
         else:
             self.add_edge(parent, child)
 
+    def exist(self, node_id: str) -> bool:
+        return node_id in self.nodes
+
     def is_a_leaf(self, node_id: str) -> bool:
         return node_id in self.leaves
 

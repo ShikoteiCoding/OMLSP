@@ -93,11 +93,11 @@ class EntityManager(Service):
         # DROP
         async for ctx, promise in self._entity_commands_consumer.channel:
             if isinstance(ctx, CreateContext):
-                await self._register_entity(ctx)
+                await self._register_entity(ctx, promise)
             elif isinstance(ctx, DropContext):
                 await self._delete_entity(ctx, promise)
 
-    async def _register_entity(self, ctx: CreateContext):
+    async def _register_entity(self, ctx: CreateContext, promise: Promise):
         dependency_grah.ensure_vertex(ctx.name)
 
         # Register dependencies in the graph
@@ -120,6 +120,7 @@ class EntityManager(Service):
 
         await self._task_commands_producer.produce((TaskManagerCommand.CREATE, ctx))
         self._name_to_context[ctx.name] = ctx
+        promise.set(ValidResponse(f"Successfully created '{ctx.name}'"))
         logger.success(f"[EntityManager] registered context '{ctx.name}'")
 
     async def _delete_entity(self, ctx: DropContext, promise: Promise):
@@ -128,9 +129,7 @@ class EntityManager(Service):
             is_leaf = dependency_grah.is_a_leaf(ctx.name)
             if not is_leaf:
                 promise.set(
-                    InvalidResponse(
-                        f"Cannot drop '{ctx.name}', it has dependencies or doesn't exist"
-                    )
+                    InvalidResponse(f"Cannot drop '{ctx.name}', it has dependencies")
                 )
                 logger.warning(f"[EntityManager] entity is not a leaf '{ctx.name}'")
                 return
@@ -147,12 +146,6 @@ class EntityManager(Service):
 
         if isinstance(ctx, DropCascadeContext):
             removed_nodes = dependency_grah.remove_recursive(ctx.name)
-            if not removed_nodes:
-                promise.set(
-                    InvalidResponse(f"Nothing to drop, '{ctx.name}' doesn't exist")
-                )
-                logger.warning(f"[EntityManager] nothing to remove for '{ctx.name}'")
-                return
             for node in removed_nodes:
                 ctx_node = self._name_to_context.get(node)
                 if ctx_node is not None:

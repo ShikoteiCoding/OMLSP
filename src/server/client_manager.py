@@ -81,7 +81,7 @@ class ClientManager(Service):
 
                     logger.info("[ClientManager] Client sent query: {}", sql_content)
 
-                    response = await self._process_query(sql_content, client_id)
+                    response = await self._process_query(sql_content)
 
                     await stream.send_all((response + "\n\n").encode())
 
@@ -89,7 +89,7 @@ class ClientManager(Service):
                 logger.error("[ClientManager] Client error '{}': {}", client_id, e)
                 await stream.send_all(f"Error: {str(e)}\n\n".encode())
 
-    async def _process_query(self, sql_content: str, client_id: str) -> str:
+    async def _process_query(self, sql_content: str) -> str:
         try:
             output_messages = []
 
@@ -101,5 +101,5 @@ class ClientManager(Service):
             return "\n".join(output_messages)
 
         except Exception as e:
-        # already loggers everywhere in the code, no need to log here
+            # already loggers everywhere in the code, no need to log here
             return f"Error: {str(e)}"
