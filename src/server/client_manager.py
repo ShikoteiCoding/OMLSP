@@ -81,7 +81,7 @@ class ClientManager(Service):
 
                     logger.info("[ClientManager] Client sent query: {}", sql_content)
 
-                    response = await self._process_query(sql_content, client_id)
+                    response = await self._process_query(sql_content)
 
                     await stream.send_all((response + "\n\n").encode())
 
@@ -89,21 +89,17 @@ class ClientManager(Service):
                 logger.error("[ClientManager] Client error '{}': {}", client_id, e)
                 await stream.send_all(f"Error: {str(e)}\n\n".encode())
 
-    async def _process_query(self, sql_content: str, client_id: str) -> str:
+    async def _process_query(self, sql_content: str) -> str:
         try:
-            await self._channel_broker.publish(
-                "client.sql.requests", (client_id, sql_content)
-            )
             output_messages = []
 
-            response = await self._channel_broker.consumer(client_id).consume()
-
-            output_messages.append(response)
+            response_data = await self._channel_broker.send(
+                "client.sql.requests", sql_content
+            )
+            output_messages.append(response_data)
 
             return "\n".join(output_messages)
 
         except Exception as e:
-            logger.error(
-                f"Client {client_id} - Error processing query: {type(e)} - {e}"
-            )
+            # already loggers everywhere in the code, no need to log here
             return f"Error: {str(e)}"

@@ -8,7 +8,7 @@ from channel.types import Address, Message
 from channel.channel import Channel
 from channel.consumer import Consumer
 from channel.producer import Producer
-
+from channel.promise import Promise
 
 T = TypeVar("T")
 
@@ -121,13 +121,15 @@ class ChannelBroker:
         """
         raise NotImplementedError("Not the most useful for now.")
 
-    async def send[T](self, address: Address, message: Message):
+    async def send[T](self, address: Address, message: Message) -> T:
         """
-        Point-to-point pattern. Round robin delivery if multiple consumers.
-
-        A consumer can .reply() to the message but isn't obligated
+        Point-to-point pattern.
+        Returns the data directly on valid response.
+        Raises exception on invalid response.
         """
-        raise NotImplementedError("Not the most useful for now.")
+        promise = Promise[T]()
+        await self.publish(address, (message, promise))
+        return await promise.await_result()
 
 
 def _get_channel_broker() -> ChannelBroker:

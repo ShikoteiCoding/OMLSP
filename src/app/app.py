@@ -13,11 +13,13 @@ from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from channel.broker import _get_channel_broker, ChannelBroker
 from channel.consumer import Consumer
 from channel.producer import Producer
+from channel.types import ValidResponse, InvalidResponse
 from services import Service
 from sql.parser import extract_one_query_context
 from store import (
     init_metadata_store,
 )
+from graph.dependency_graph import dependency_grah
 
 
 __all__ = ["App"]
@@ -88,64 +90,72 @@ class App(Service):
 
         TODO: move to entrypoint from path on __init__ + on_start
         """
-        await self._channel_broker.publish(
-            "client.sql.requests", (self._internal_ref, sql)
-        )
+        await self._channel_broker.send("client.sql.requests", sql)
 
     async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
 
         # Each SQL keeps reference of a client_id for dispatch
-        async for client_id, sql in self._client_sql_request_consumer.channel:
+        async for sql, promise in self._client_sql_request_consumer.channel:
             # Convert SQL to "OMLSP" interpretable Context
             ctx = extract_one_query_context(sql, self._properties_schema)
 
-            # Handle context with on_start eval conditions
-            if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query != "":
-                on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
-                if len(on_start_result) == 0:
-                    # Override context to bypass next
-                    ctx = InvalidContext(
-                        reason=f"Response from '{ctx.on_start_query}' is empty. Cannot proceed."
-                    )
-
-            # Evaluable Context are simple statements which
-            # can be executed and simply return a result.
-            if isinstance(ctx, EvaluableContext):
-                result = await self._eval_ctx(ctx)
-
-            # Warn of invalid context for tracing.
-            elif isinstance(ctx, InvalidContext):
+            if isinstance(ctx, InvalidContext):
                 logger.warning(
                     "[App] Invalid SQL received: {} - reason: {}",
                     sql,
                     str(ctx.reason),
                 )
                 result = str(ctx.reason)
-            else:
-                result = ""
+                promise.set(InvalidResponse(result))
 
-            # Send back to client (unless internal query)
-            # Anonymous publish: i.e no internal ref to producer
-            if client_id != self._internal_ref:
-                await self._channel_broker.publish(client_id, result)
+            # Check and dispatch CreateContext to manager
+            elif isinstance(ctx, CreateContext):
+                # Pyton check, faster than Duckdb
+                if dependency_grah.exist(ctx.name):
+                    promise.set(
+                        InvalidResponse(
+                            f"Entity '{ctx.name}' already exists. DROP it first."
+                        )
+                    )
+                    continue
 
-            # Dispatch CreateContext and DropContext to task manager
-            if isinstance(ctx, CreateContext | DropContext):
-                await self._entity_commands_producer.produce(ctx)
+                # Handle context with on_start eval conditions
+                if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query:
+                    on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
+                    if len(on_start_result) == 0:
+                        promise.set(
+                            InvalidResponse(
+                                f"Pre-check failed: '{ctx.on_start_query}' returned empty."
+                            )
+                        )
+                        continue
+
+                await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
+                # Handover to Entity Manager
+                await self._entity_commands_producer.produce((ctx, promise))
+
+            elif isinstance(ctx, DropContext):
+                if not dependency_grah.exist(ctx.name):
+                    promise.set(
+                        InvalidResponse(
+                            f"Entity '{ctx.name}' does not exist. CREATE it first."
+                        )
+                    )
+                    continue
+                # Handover to Entity Manager
+                await self._entity_commands_producer.produce((ctx, promise))
+
+            elif isinstance(ctx, EvaluableContext):
+                try:
+                    result = await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
+                    promise.set(ValidResponse(result))
+                except Exception as e:
+                    logger.error(f"Error evaluating context type '{type(ctx)}': {e}")
+                    promise.set(
+                        InvalidResponse(f"Error evaluating query '{ctx.query}': {e}")
+                    )
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return
-
-    # TODO: Run eval_ctx in background to avoid thread blocking.
-    # This is currently a blocking operation in _handle_messages.
-    # Client terminal gets "blocked" till response is received,
-    # so it is safe to assume we can queue per client and defer
-    # results to keep ordering per client
-    async def _eval_ctx(self, ctx: EvaluableContext) -> str:
-        try:
-            return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
-        except Exception as e:
-            logger.error("Error evaluating context type '{}': {}", type(ctx), ctx)
-            return f"Error evaluating context type '{ctx}': {e}"
