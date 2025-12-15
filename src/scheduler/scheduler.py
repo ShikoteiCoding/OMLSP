@@ -261,6 +261,7 @@ class TrioScheduler(Service, BaseScheduler):
         job = self.get_job(job_id)
         if not job:
             return False
+
         # Remove from jobstore
         self.remove_job(job_id)
 

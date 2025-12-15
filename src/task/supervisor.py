@@ -1,7 +1,14 @@
+from __future__ import annotations
+
 import trio
 from loguru import logger
-from task.task import BaseTask
+from typing import TYPE_CHECKING
+
 from services import Service
+
+if TYPE_CHECKING:
+    from task.types import TaskId
+    from task.task import BaseTask
 
 
 class TaskSupervisor(Service):
@@ -9,15 +16,17 @@ class TaskSupervisor(Service):
     Supervisor owned by TaskManager.
     """
 
+    #: cancel scope per supervised task (controls supervision loop)
+    _task_id_to_supervised_task: dict[TaskId, tuple[BaseTask, trio.CancelScope]]
+
     def __init__(self):
         super().__init__(name="TaskSupervisor")
-        # cancel scope per supervised task (controls supervision loop)
-        self._supervised: dict[str, trio.CancelScope] = {}
+        self._task_id_to_supervised_task: dict[TaskId, tuple[BaseTask, trio.CancelScope]] = {}
 
     async def start_supervising(self, task: BaseTask):
         task_id = task.task_id
         # already supervising
-        if task_id in self._supervised:
+        if task_id in self._task_id_to_supervised_task:
             logger.debug(f"[Supervisor] already supervising '{task_id}'")
             return
 
@@ -26,15 +35,19 @@ class TaskSupervisor(Service):
         self._nursery.start_soon(self._supervise_task, task)
 
     async def stop_supervising(self, task_id: str):
-        scope = self._supervised.get(task_id)
-        if not scope:
+        task, scope = self._task_id_to_supervised_task.get(task_id, (None, None))
+        if not task or not scope:
             logger.debug(f"[Supervisor] '{task_id}' not supervised")
             return
 
         logger.info(f"[Supervisor] stop supervising '{task_id}'")
 
+        # Stop supervising first then stop task
         scope.cancel()
-        del self._supervised[task_id]
+        await task.stop()
+
+        # Clean resources
+        del self._task_id_to_supervised_task[task_id]
 
     async def _supervise_task(self, task: BaseTask):
         task_id = task.task_id
@@ -42,8 +55,8 @@ class TaskSupervisor(Service):
         attempt = 1
         backoff_base = 2.0
 
-        with trio.CancelScope() as scope:
-            self._supervised[task_id] = scope
+        with trio.CancelScope() as supervising_scope:
+            self._task_id_to_supervised_task[task_id] = (task, supervising_scope)
 
             while True:
                 try:
@@ -62,7 +75,7 @@ class TaskSupervisor(Service):
                         logger.error(f"[{task.task_id}] exceeded max retries: {e}")
                         break
                     logger.warning(
-                        "[{}] crashed (attempt {}/{}).\n{}",
+                        "[{}] crashed (attempt {}/{}). {}",
                         task.task_id,
                         attempt,
                         max_retries,
@@ -72,4 +85,5 @@ class TaskSupervisor(Service):
                     logger.debug(f"[{task.task_id}] retrying in {backoff:.1f}s")
                     await trio.sleep(backoff)
                     attempt += 1
+
         logger.info(f"[Supervisor] supervision ended for '{task_id}'")

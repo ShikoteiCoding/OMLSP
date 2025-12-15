@@ -100,10 +100,11 @@ class TaskManager(Service):
             logger.success(f"[TaskManager] registered task '{ctx.name}'")
 
     async def _delete_task(self, ctx: CreateContext):
+        # Scheduled Task rely on the Scheduler for supervising
         if isinstance(ctx, CreateHTTPSourceContext | CreateHTTPTableContext):
-            # If task is a ScheduledSourceTask, evict it from the scheduler
             await self._scheduler_commands_producer.produce(
                 (SchedulerCommand.EVICT, ctx.name)
             )
+        # Other Task(s) rely on the Supervisor
         else:
             await self.supervisor.stop_supervising(ctx.name)
