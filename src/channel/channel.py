@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import trio
 
-from typing import Generic
+from functools import partial
+from typing import Callable, Generic, TYPE_CHECKING
 from loguru import logger
 
 
 from channel.types import ChannelT, T, _Msg
+
+if TYPE_CHECKING:
+    from task.types import TaskId
 
 
 class Channel(ChannelT, Generic[T]):
@@ -56,18 +60,23 @@ class Channel(ChannelT, Generic[T]):
         except trio.EndOfChannel:
             raise StopAsyncIteration
 
+
 class BroadcastChannel(ChannelT, Generic[T]):
+    #: Name for easier debug
+    _name: TaskId
+
     #: Fan-out channels of this instance
-    _subscribers: list[Channel[_Msg[T]]]
-    
+    _subscribers: dict[TaskId, Channel[_Msg[T]]]
+
     #: Close event
     _closed: trio.Event
 
     #: Channel(s) for spawned subscribed channels
     _size: int
 
-    def __init__(self, size: int = 100):
-        self._subscribers: list[Channel[_Msg[T]]] = []
+    def __init__(self, name: str, size: int = 100):
+        self._name = name
+        self._subscribers: dict[TaskId, Channel[_Msg[T]]] = {}
         self._closed = trio.Event()
         self.size = size
 
@@ -76,36 +85,69 @@ class BroadcastChannel(ChannelT, Generic[T]):
 
     async def send(self, data: T) -> None:
         if self._closed.is_set():
-            raise trio.ClosedResourceError("Channel is closed")
+            raise trio.ClosedResourceError(
+                f"[BroadcastChannel{{{self._name}}}] is closed"
+            )
 
         if len(self._subscribers) == 0:
             return
 
         msg = _Msg[T](data, len(self._subscribers), trio.Event())
 
-        for sub in list(self._subscribers):
+        for task_id, sub_chan in self._subscribers.items():
             try:
-                await sub.send(msg)
-            except trio.BrokenResourceError:
-                self._subscribers.remove(sub)
+                await sub_chan.send(msg)
+            except trio.BrokenResourceError as e:
+                logger.error(
+                    "[BroadcastChannel{{{}}}] Error broadcasting to subchannel '{}' - {}",
+                    self._name,
+                    task_id,
+                    e,
+                )
 
+        logger.debug("[BroadcastChannel{{{}}}] is awaiting ack", self._name)
         # NOTE: might require timeout
         await msg.done.wait()
+        logger.debug("[BroadcastChannel{{{}}}] got msg ack", self._name)
 
     async def aclose(self):
         if self._closed.is_set():
             return
         self._closed.set()
-        logger.debug(f"[Channel] closing {len(self._subscribers)} subscribers")
-        for sub in self._subscribers:
+        logger.debug(
+            "[BroadcastChannel{{{}}}] closing {len(self._subscribers)} subscribers",
+            self._name,
+        )
+        for task_id, sub in self._subscribers.items():
             await sub.aclose()
         self._subscribers.clear()
-        logger.debug("[Channel] send side closed")
+        logger.debug("[BroadcastChannel{{{}}}] send side closed", self._name)
 
     def __aiter__(self):
         return self
 
-    def spawn(self) -> Channel[_Msg[T]]:
+    def spawn(self, task_id: TaskId) -> tuple[Channel[_Msg[T]], Callable[[], None]]:
+        """
+        Spawning a subchannel to existing broadcaster of :class:`task.task.BaseTaskSender`.
+
+        This assume the task_id doesn't already exist.
+        """
         channel = Channel[_Msg[T]](self.size, self._ack_lock)
-        self._subscribers.append(channel)
-        return channel
+        self._subscribers[task_id] = channel
+        return channel, partial(self.unsubscribe, task_id)
+
+    def unsubscribe(self, task_id: TaskId) -> None:
+        try:
+            logger.debug(
+                "[BroadcastChannel{{{}}}] got unsubscribed by task '{}'",
+                self._name,
+                task_id,
+            )
+            del self._subscribers[task_id]
+        except Exception as e:
+            logger.error(
+                "[BroadcastChannel{{{}}}] Attempted to drop '{}' but failed - {}",
+                self._name,
+                task_id,
+                e,
+            )

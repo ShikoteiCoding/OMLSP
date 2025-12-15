@@ -47,7 +47,7 @@ class BaseTask(Service, Generic[T]):
         return self
 
     async def on_start(self) -> None:
-        logger.info(f"[{self.task_id}] task running")
+        logger.info(f"[Task{{{self.task_id}}}] task running")
         self._cancel_scope = trio.CancelScope()
 
         async def _task_runner():
@@ -64,11 +64,11 @@ class BaseTask(Service, Generic[T]):
 
 class BaseTaskSender(BaseTask[T]):
     #: Channel to write output for downstream tasks
-    _sender: BroadcastChannel[T]
+    _to: BroadcastChannel[T]
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection) -> None:
         super().__init__(task_id, conn)
-        self._sender = BroadcastChannel[T](DEFAULT_CAPACITY)
+        self._to = BroadcastChannel[T](task_id, DEFAULT_CAPACITY)
 
     def get_sender(self) -> BroadcastChannel[T]:
         """
@@ -78,35 +78,43 @@ class BaseTaskSender(BaseTask[T]):
         NOTE: This implementation isn't very robust, we are
          assuming that any requester of :meth:`get_sender` will
          succeed and that we indeed instanciate a sender. This
-         could lead to stuck Tasks if a sender channel is created
+         could lead to stuck Task(s) if a sender channel is created
          without any true consummer on the other side.
         """
-        return self._sender
+        return self._to
 
     async def on_stop(self) -> None:
-        logger.info(f"[{self.task_id}] task stopping")
+        logger.info("[Task{{{}}}] sender task stopping", self.task_id)
         self._cancel_event.set()
-        await self._sender.aclose()
+        await self._to.aclose()
         self._cancel_scope.cancel()
 
 
 class BaseTaskReceiver(BaseTask[T]):
-    # List of channels to receive upstream data
-    _receivers: list[Channel[_Msg[T]]]
+    #: List of channels to receive upstream data
+    _from: list[Channel[_Msg[T]]]
+
+    #: List of channel to unsubscribe during DROP operation
+    _callbacks: list[Callable[[], None]]
 
     def __init__(self, task_id: TaskId, conn: DuckDBPyConnection) -> None:
         super().__init__(task_id, conn)
-        self._receivers = []
+        self._from = []
+        self._callbacks = []
 
     async def on_stop(self) -> None:
-        logger.info(f"[{self.task_id}] task stopping")
+        logger.info("[Task{{{}}}] receiver task stopping", self.task_id)
         self._cancel_scope.cancel()
+        for callback in self._callbacks:
+            callback()
 
     def subscribe(self, sender: BaseTaskSender):
-        logger.warning(
-            "Task '{}' subscribed to task '{}'", self.task_id, sender.task_id
+        logger.info(
+            "[Task{{{}}}] subscribed to task '{}'", self.task_id, sender.task_id
         )
-        self._receivers.append(sender.get_sender().spawn())
+        chan, drop_callback = sender.get_sender().spawn(self.task_id)
+        self._from.append(chan)
+        self._callbacks.append(drop_callback)
 
 
 class ScheduledSourceTask(BaseTaskSender, Generic[T]):
@@ -133,7 +141,7 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         )
 
     async def on_start(self) -> None:
-        logger.info(f"[{self.task_id}] task running")
+        logger.info(f"[Task{{{self.task_id}}}] task running")
         self._cancel_scope = trio.CancelScope()
 
         # NOTE: for now scheduled task register itself to scheduler
@@ -160,7 +168,7 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         if not self._cancel_event.is_set():
             result = await self._executable(task_id=self.task_id, conn=self.conn)
 
-            await self._sender.send(result)
+            await self._to.send(result)
 
 
 class ContinuousSourceTask(BaseTaskSender, Generic[T]):
@@ -189,7 +197,7 @@ class ContinuousSourceTask(BaseTaskSender, Generic[T]):
             nursery=self.nursery,
             cancel_event=self._cancel_event,
         ):
-            await self._sender.send(result)
+            await self._to.send(result)
 
 
 class SinkTask(BaseTaskReceiver, Generic[T]):
@@ -198,7 +206,7 @@ class SinkTask(BaseTaskReceiver, Generic[T]):
 
     async def run(self):
         # TODO: receive many upstreams
-        receiver: Channel[_Msg[T]] = self._receivers[0]
+        receiver: Channel[_Msg[T]] = self._from[0]
         async for msg in receiver:
             df = msg.payload
             await self._executable(self.task_id, self.conn, df)
@@ -211,8 +219,17 @@ class TransformTask(BaseTaskSender, BaseTaskReceiver, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id=task_id, conn=conn)
 
+    async def on_stop(self) -> None:
+        """
+        Writing custom on_stop as both implementations need to be handled.
+        """
+        logger.info("[Task{{{}}}] transform task stopping", self.task_id)
+        self._cancel_scope.cancel()
+        for callback in self._callbacks:
+            callback()
+
     async def run(self):
-        receiver: Channel[_Msg[T]] = self._receivers[0]
+        receiver: Channel[_Msg[T]] = self._from[0]
         async for msg in receiver:
             df = msg.payload
             result = await self._executable(self.task_id, self.conn, df)
@@ -220,4 +237,4 @@ class TransformTask(BaseTaskSender, BaseTaskReceiver, Generic[T]):
             async with receiver._ack_lock:
                 msg.ack()
 
-            await self._sender.send(result)
+            await self._to.send(result)
