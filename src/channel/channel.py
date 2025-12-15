@@ -115,10 +115,11 @@ class BroadcastChannel(ChannelT, Generic[T]):
             return
         self._closed.set()
         logger.debug(
-            "[BroadcastChannel{{{}}}] closing {len(self._subscribers)} subscribers",
+            "[BroadcastChannel{{{}}}] closing {} subscribers",
             self._name,
+            len(self._subscribers),
         )
-        for task_id, sub in self._subscribers.items():
+        for _, sub in self._subscribers.items():
             await sub.aclose()
         self._subscribers.clear()
         logger.debug("[BroadcastChannel{{{}}}] send side closed", self._name)
@@ -134,6 +135,11 @@ class BroadcastChannel(ChannelT, Generic[T]):
         """
         channel = Channel[_Msg[T]](self.size, self._ack_lock)
         self._subscribers[task_id] = channel
+        logger.debug(
+            "[BroadcastChannel{{{}}}] got subscription from task '{}",
+            self._name,
+            task_id,
+        )
         return channel, partial(self.unsubscribe, task_id)
 
     def unsubscribe(self, task_id: TaskId) -> None:
