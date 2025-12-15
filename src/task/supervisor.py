@@ -17,16 +17,16 @@ class TaskSupervisor(Service):
     """
 
     #: cancel scope per supervised task (controls supervision loop)
-    _task_id_to_task: dict[TaskId, tuple[BaseTask, trio.CancelScope]]
+    _task_id_to_supervised_task: dict[TaskId, tuple[BaseTask, trio.CancelScope]]
 
     def __init__(self):
         super().__init__(name="TaskSupervisor")
-        self._task_id_to_task: dict[TaskId, tuple[BaseTask, trio.CancelScope]] = {}
+        self._task_id_to_supervised_task: dict[TaskId, tuple[BaseTask, trio.CancelScope]] = {}
 
     async def start_supervising(self, task: BaseTask):
         task_id = task.task_id
         # already supervising
-        if task_id in self._task_id_to_task:
+        if task_id in self._task_id_to_supervised_task:
             logger.debug(f"[Supervisor] already supervising '{task_id}'")
             return
 
@@ -35,7 +35,7 @@ class TaskSupervisor(Service):
         self._nursery.start_soon(self._supervise_task, task)
 
     async def stop_supervising(self, task_id: str):
-        task, scope = self._task_id_to_task.get(task_id, (None, None))
+        task, scope = self._task_id_to_supervised_task.get(task_id, (None, None))
         if not task or not scope:
             logger.debug(f"[Supervisor] '{task_id}' not supervised")
             return
@@ -47,7 +47,7 @@ class TaskSupervisor(Service):
         await task.stop()
 
         # Clean resources
-        del self._task_id_to_task[task_id]
+        del self._task_id_to_supervised_task[task_id]
 
     async def _supervise_task(self, task: BaseTask):
         task_id = task.task_id
@@ -56,7 +56,7 @@ class TaskSupervisor(Service):
         backoff_base = 2.0
 
         with trio.CancelScope() as supervising_scope:
-            self._task_id_to_task[task_id] = (task, supervising_scope)
+            self._task_id_to_supervised_task[task_id] = (task, supervising_scope)
 
             while True:
                 try:
