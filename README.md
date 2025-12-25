@@ -5,7 +5,7 @@ It enables you to define streaming data pipelines using SQL transformations, fol
 
 OMLSP is primarily designed to handle HTTP-based data sources and perform HTTP lookups, making it ideal for integrating with APIs, webhooks, and microservices.
 
-## What OMLSP Does
+## What OMLSP has
 
 OMLSP orchestrates data flow pipelines from HTTP sources to output sinks with:
 
@@ -17,6 +17,12 @@ OMLSP orchestrates data flow pipelines from HTTP sources to output sinks with:
 
 The engine continuously fetches, transforms, and routes data asynchronously using Trio
 , with channels acting as internal communication streams (similar to Go channels).
+
+## What OMSL doesn't have
+
+- Streaming joins. i.e multiple upstream (join with 1 lookup is possible)
+- Failover recovery
+- Stateful tasks
 
 ## Examples
 Basic example, this table will call every 60s the endpoint of httbin for GET method and store the url inside a 'url' column.
@@ -53,83 +59,12 @@ The central component is the Runner class, which coordinates client SQL submissi
 
 Everything happens asynchronously, with each component communicating through Channel objects.
 
-### Flowchart
-
-```mermaid
-flowchart LR
-    %% Nodes
-    Client["Client (TCP)"]
-    ClientManager["ClientManager"]
-    Runner["Runner"]
-    TaskManager["TaskManager"]
-
-    %% Channels as h-cyl
-    SQLChannel[["SQL Channel"]]:::channel
-    ClientChannel[["Response Channel"]]:::channel
-    TaskCtxChannel[["Task Context Channel"]]:::channel
-
-    %% Flow
-    Client -->|Submits SQL| ClientManager
-    ClientManager -->|Send SQL| SQLChannel
-    SQLChannel --> Runner
-
-    Runner -->|Parse + Eval| Runner
-    Runner -->|Send Result| ClientChannel
-    Runner -->|Send Task| TaskCtxChannel
-
-    ClientChannel --> ClientManager
-    ClientManager -->|Return Result| Client
-
-    TaskCtxChannel --> TaskManager
-    TaskManager -->|Execute Task| TaskManager
-
-    %% Style for cylinder shape
-    classDef channel fill:#f0f0f0,stroke:#555,stroke-width:1px
-```
-
-### Channels
-| Channel Name       | Type                       | Purpose                                  |
-| ------------------ | -------------------------- | ---------------------------------------- |
-| `sql`     | `Channel[tuple[str, str]]` | SQL queries from client → runner         |
-| `client / response`  | `Channel[tuple[str, str]]` | Execution results from runner → client   |
-| `task context` | `Channel[TaskContext]`     | Task contexts from runner → task manager |
-
-### Sequence
-```mermaid
-sequenceDiagram
-    participant Client
-    participant ClientManager
-    participant Runner
-    participant TaskManager
-
-    Client->>ClientManager: Send SQL query
-    ClientManager->>Runner: SQL via _sql_channel
-    Runner->>Runner: Parse SQL into context
-    Runner->>TaskManager: Register TaskContext to TaskManager
-    Runner->>ClientManager: Send SQL results
-    ClientManager->>Client: Send SQL results
-```
-
-## Stream Processor
-
-```mermaid
-sequenceDiagram
-    participant APScheduler
-    participant TaskManager
-    participant SourceTask
-    participant Channel
-    participant DownstreamTask
-
-    APScheduler->>SourceTask: Trigger task.run() (on schedule)
-    SourceTask->>SourceTask: Execute SQL / Data Fetch
-    SourceTask-->>Channel: send(result)
-    
-    loop for each subscriber
-        Channel-->>DownstreamTask: recv(result)
-        DownstreamTask->>DownstreamTask: Execute transformation / processing
-        DownstreamTask-->>Channel: send(result)
-    end
-```
+Core components:
+- App: Main actor, used to dispatch sql to relevant managers
+- ClientManager: Interface with clients for SQL (act as a terminal)
+- EntityManager: Translate SQL commands (Create / Drop) into backend entities. Forward task commands to TaskManager for execution.
+- TaskManager: Schedule task commands and handle their lifecycle
+- ChannelBroker: Centralized Channel broker registry for anonymous dynamic publishes
 
 # Improvements
 
