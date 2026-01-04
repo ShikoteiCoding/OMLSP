@@ -24,7 +24,7 @@ The engine continuously fetches, transforms, and routes data asynchronously usin
 - Failover recovery
 - Stateful tasks
 
-## Examples
+## Example
 Basic example, this table will call every 60s the endpoint of httbin for GET method and store the url inside a 'url' column.
 ```sql
 -- Create a table which keeps all tickers list in batch
@@ -52,6 +52,14 @@ WITH (
 );
 ```
 
+Check other examples in `examples` folder, such as:
+- Websockets
+- Generated columns
+- Secrets
+- Kafka sink
+- Views / Materialized views
+- Lookup joins
+
 ## Architecture
 This project implements a lightweight asynchronous SQL orchestration engine using DuckDB and Trio.
 
@@ -66,16 +74,24 @@ Core components:
 - TaskManager: Schedule task commands and handle their lifecycle
 - ChannelBroker: Centralized Channel broker registry for anonymous dynamic publishes
 
-# Improvements
+# Usage
 
-| Area                | Current                       | Suggested Improvement                              |
-| ------------------- | ----------------------------- | -------------------------------------------------- |
-| **Task structure**  | Single `Task` class           | Separate `SourceTask`, `TransformTask`, `SinkTask` |
-| **DAG definition**  | Built inline in `TaskManager` | Use `Pipeline` / `Topology` builder object                      |
-| **Channels**        | Fixed-size only               | Add backpressure and overflow strategies           |
-| **Error handling**  | Minimal                       | Add retries, error channels, graceful shutdown     |
-| **Scheduler**       | APScheduler only              | Abstract scheduler interface                       |
-| **Parallelism**     | 1 instance per task           | Configurable concurrency                           |
-| **Recovery**        | None                          | Add persistence & checkpointing                    |
-| **Monitoring**      | None                          | Metrics, tracing, visualization                    |
-| **Dynamic changes** | Static DAG                    | Support runtime DAG updates                        |
+## Dependencies
+- Python >= 3.13.1
+- uv package manager
+
+## Installation
+As we do not have pip for this small project, you will have to create a clean environment and build the package yourself.
+
+In your virtual environment
+```shell
+uv sync --active
+
+# Default sql file run is examples/basic.sql
+make run
+```
+
+Additionally, in another  console / virtual environmment, you can provide SQL statements through the interactive shell client
+```shell
+make client
+```

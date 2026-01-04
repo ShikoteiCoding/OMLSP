@@ -21,7 +21,9 @@ class TaskSupervisor(Service):
 
     def __init__(self):
         super().__init__(name="TaskSupervisor")
-        self._task_id_to_supervised_task: dict[TaskId, tuple[BaseTask, trio.CancelScope]] = {}
+        self._task_id_to_supervised_task: dict[
+            TaskId, tuple[BaseTask, trio.CancelScope]
+        ] = {}
 
     async def start_supervising(self, task: BaseTask):
         task_id = task.task_id
