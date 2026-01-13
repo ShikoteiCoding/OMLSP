@@ -4,7 +4,10 @@ from typing import Generator
 from loguru import logger
 
 
-def iter_sql_statements(path: Path | str) -> Generator[str, None, None]:
+def iter_sql_statements(path: Path | None) -> Generator[str, None, None]:
+    if not path:
+        return
+
     content = ""
 
     with open(path, "r", encoding="utf-8") as f:
@@ -34,7 +37,7 @@ if __name__ == "__main__":
         """)
 
     try:
-        for i, sql_statement in enumerate(iter_sql_statements("example.sql")):
+        for i, sql_statement in enumerate(iter_sql_statements(Path("example.sql"))):
             logger.success(sql_statement)
     except (FileNotFoundError, IOError) as e:
         logger.error(e)

@@ -24,8 +24,22 @@ The engine continuously fetches, transforms, and routes data asynchronously usin
 - Failover recovery
 - Stateful tasks
 
-## Example
-Basic example, this table will call every 60s the endpoint of httbin for GET method and store the url inside a 'url' column.
+## Quickstart
+
+OMLSP requires python > 3.13 (just because) and uv.
+
+In one terminal:
+```sh
+make server
+```
+Once started, in a second terminal
+```sh
+make client
+```
+
+The client is the prefered way of interacting with the streaming processor, if you want to start with an entrypoint, you can also supply a sql filepath to the main function.
+
+
 ```sql
 -- Create a table which keeps all tickers list in batch
 CREATE TABLE all_tickers (
@@ -52,13 +66,31 @@ WITH (
 );
 ```
 
-Check other examples in `examples` folder, such as:
+Inspect your entities:
+```sql
+SHOW TABLES;
+```
+
+Drop your entities:
+```sql
+DROP TABLE CASCADE all_tickers;
+```
+
+Check examples in `examples` folder, such as:
 - Websockets
 - Generated columns
 - Secrets
 - Kafka sink
 - Views / Materialized views
 - Lookup joins
+
+### Supported syntaxes
+
+```
+CREATE {TABLE, SOURCE, SINK, SECRET, VIEW, MATERIALIZED VIEW}
+DROP {TABLE, SOURCE, SINK, SECRET, VIEW, MATERIALIZED VIEW} {CASCADE}
+SHOW {TABLES, SOURCES, SINKS, SECRETS, VIEWS}
+```
 
 ## Architecture
 This project implements a lightweight asynchronous SQL orchestration engine using DuckDB and Trio.
@@ -86,9 +118,7 @@ As we do not have pip for this small project, you will have to create a clean en
 In your virtual environment
 ```shell
 uv sync --active
-
-# Default sql file run is examples/basic.sql
-make run
+make server
 ```
 
 Additionally, in another  console / virtual environmment, you can provide SQL statements through the interactive shell client

@@ -80,18 +80,6 @@ class App(Service):
         """
         logger.success("[App] stopping.")
 
-    async def submit(self, sql: str) -> None:
-        """
-        Convenient method to submit SQL to the app.
-
-        This can be used to provide SQL file.
-
-        TODO: move to entrypoint from path on __init__ + on_start
-        """
-        await self._channel_broker.publish(
-            "client.sql.requests", (self._internal_ref, sql)
-        )
-
     async def _handle_messages(self) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
@@ -126,14 +114,13 @@ class App(Service):
             else:
                 result = ""
 
-            # Send back to client (unless internal query)
-            # Anonymous publish: i.e no internal ref to producer
-            if client_id != self._internal_ref:
-                await self._channel_broker.publish(client_id, result)
-
             # Dispatch CreateContext and DropContext to task manager
             if isinstance(ctx, CreateContext | DropContext):
                 await self._entity_commands_producer.produce(ctx)
+
+            # Send back reply to client
+            if client_id != self.name:
+                await self._channel_broker.publish(client_id, result)
 
         logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
         return
