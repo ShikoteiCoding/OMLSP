@@ -73,7 +73,7 @@ SHOW TABLES;
 
 Drop your entities:
 ```sql
-DROP TABLE CASCADE all_tickers;
+DROP TABLE all_tickers CASCADE;
 ```
 
 Check examples in `examples` folder, such as:

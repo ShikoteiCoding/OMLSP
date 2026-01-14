@@ -8,6 +8,14 @@ import trio
 
 from loguru import logger
 
+from typing import Any, TYPE_CHECKING
+
+from channel.broker import _get_channel_broker
+
+if TYPE_CHECKING:
+    from channel.consumer import Consumer
+    from channel.broker import ChannelBroker
+
 __all__ = ["Service"]
 
 
@@ -129,6 +137,10 @@ class ServiceCallbacks:
         """Service is being restarted."""
         pass
 
+    async def on_message(self) -> None:
+        """Service received a message."""
+        pass
+
 
 class Service(ServiceCallbacks):
     """
@@ -138,13 +150,19 @@ class Service(ServiceCallbacks):
     """
 
     __slots__ = (
+        "name",
         "shutdown_timeout",
         "_nursery",
         "_started",
         "_stopped",
         "_shutdown",
         "_dependencies",
+        "_channel_broker",
+        "inbox",
     )
+
+    #: Name of the service
+    name: str
 
     #: Default timeout for graceful shutdown after stop()
     shutdown_timeout: float
@@ -164,14 +182,23 @@ class Service(ServiceCallbacks):
     #: List of child services
     _dependencies: list[Service]
 
+    #: Channel broker for intra-service mailing
+    _channel_broker: ChannelBroker
+
+    #: Inbox of received messages
+    inbox: Consumer
+
     def __init__(self, name: str, shutdown_timeout: float = 1.0) -> None:
+        self.name = name
+        self.shutdown_timeout = shutdown_timeout
+
         self._started = trio.Event()
         self._stopped = trio.Event()
         self._shutdown = trio.Event()
         self._dependencies = []
 
-        self.name = name
-        self.shutdown_timeout = shutdown_timeout
+        self.channel_broker = _get_channel_broker()
+        self.inbox = self.channel_broker.consumer(self.name)
 
         # TODO: Not implemented yet
         # self._polling_started = False
@@ -181,25 +208,36 @@ class Service(ServiceCallbacks):
         """
         Default method being started in start().
 
-        To be implemented by the derived class.
+        May be implemented by the derived class.
         """
-        logger.success("[{}] starting.", self.name)
 
     async def on_stop(self) -> None:
         """
         Default method being started in stop().
 
-        To be implemented by the derived class.
+        May be implemented by the derived class.
         """
-        logger.success("[{}] stopping.", self.name)
 
     async def on_shutdown(self) -> None:
         """
         Default method after completing stop().
 
-        To be implemented by the derived class.
+        May be implemented by the derived class.
         """
-        logger.success("[{}] shutdown.", self.name)
+
+    async def on_receive(self, message: Any) -> None:
+        """
+        Default method for message received.
+
+        May be implemented by the derived class.
+        """
+        logger.warning("[{}] Unexpected received message: '{}'", self.name, message)
+
+    async def _loop_runner(self) -> None:
+        async for message in self.inbox.channel:
+            response = await self.on_receive(*message)
+            if response:
+                pass
 
     async def start(self, nursery: trio.Nursery) -> None:
         """
@@ -214,6 +252,7 @@ class Service(ServiceCallbacks):
             nursery.start_soon(dep.start, nursery)
 
         logger.success("[{}] started.", self.name)
+        self._nursery.start_soon(self._loop_runner)
 
     async def stop(self) -> None:
         """

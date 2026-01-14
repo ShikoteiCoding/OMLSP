@@ -50,7 +50,7 @@ async def main():
         nursery.start_soon(app.start, nursery)
 
         for sql in iter_sql_statements(entrypoint):
-            await channel_broker.publish("client.sql.requests", (app.name, sql))
+            await channel_broker.publish(app.name, (app.name, sql))
 
         try:
             await app.wait_until_stopped()

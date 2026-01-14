@@ -367,7 +367,7 @@ def build_continuous_source_executable(
     generated_columns = ctx.generated_columns
     on_start_results = []
 
-    if ctx.on_start_query != "":
+    if ctx.on_start_query:
         # If we come all the way here, we already evaled on_start_query
         # consider passing it from App to TaskManager for improved design
         on_start_results = duckdb_to_dicts(conn, ctx.on_start_query)

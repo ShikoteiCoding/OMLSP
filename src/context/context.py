@@ -60,7 +60,7 @@ class CreateWSTableContext(CreateTableContext):
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
-    on_start_query: str
+    on_start_query: str | None
     has_data = True
     lookup: bool = False
     source: bool = False

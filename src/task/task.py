@@ -52,12 +52,12 @@ class BaseTask(Service, Generic[T]):
 
         async def _task_runner():
             with self._cancel_scope:
-                await self.run()
+                await self._loop_runner()
 
         # Start the real task inside the cancel scope
         self._nursery.start_soon(_task_runner)
 
-    async def run(self) -> None:
+    async def _loop_runner(self) -> None:
         """Override in subclasses."""
         await self._executable()
 
@@ -150,7 +150,10 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
             with self._cancel_scope:
                 try:
                     await self._scheduler_commands_producer.produce(
-                        (SchedulerCommand.ADD, (self.task_id, self.trigger, self.run))
+                        (
+                            SchedulerCommand.ADD,
+                            (self.task_id, self.trigger, self._loop_runner),
+                        )
                     )
                 except trio.Cancelled:
                     pass
@@ -164,7 +167,7 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         self._executable = executable
         return self
 
-    async def run(self):
+    async def _loop_runner(self):
         if not self._cancel_event.is_set():
             result = await self._executable(task_id=self.task_id, conn=self.conn)
 
@@ -190,7 +193,7 @@ class ContinuousSourceTask(BaseTaskSender, Generic[T]):
         self._executable = executable  # type: ignore
         return self
 
-    async def run(self):
+    async def _loop_runner(self):
         async for result in self._executable(  # type: ignore
             task_id=self.task_id,
             conn=self.conn,
@@ -204,7 +207,7 @@ class SinkTask(BaseTaskReceiver, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
 
-    async def run(self):
+    async def _loop_runner(self):
         # TODO: receive many upstreams
         receiver: Channel[_Msg[T]] = self._from[0]
         async for msg in receiver:
@@ -228,7 +231,7 @@ class TransformTask(BaseTaskSender, BaseTaskReceiver, Generic[T]):
         for callback in self._callbacks:
             callback()
 
-    async def run(self):
+    async def _loop_runner(self):
         receiver: Channel[_Msg[T]] = self._from[0]
         async for msg in receiver:
             df = msg.payload
