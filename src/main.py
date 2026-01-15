@@ -8,12 +8,12 @@ from loguru import logger
 from pathlib import Path
 
 from app import App
-from channel.broker import _get_channel_broker
+from channel.registry import _get_channel_broker
 from entity.entity_manager import EntityManager
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
-from task.manager import TaskManager
+from task.task_manager import TaskManager
 
 PROPERTIES_SCHEMA = json.loads(
     open(Path("src/properties.schema.json"), "rb").read().decode("utf-8")

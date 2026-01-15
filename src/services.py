@@ -10,11 +10,11 @@ from loguru import logger
 
 from typing import Any, TYPE_CHECKING
 
-from channel.broker import _get_channel_broker
+from channel.registry import _get_channel_broker
 
 if TYPE_CHECKING:
     from channel.consumer import Consumer
-    from channel.broker import ChannelBroker
+    from channel.registry import ChannelBroker
 
 __all__ = ["Service"]
 
@@ -157,7 +157,7 @@ class Service(ServiceCallbacks):
         "_stopped",
         "_shutdown",
         "_dependencies",
-        "_channel_broker",
+        "channel_broker",
         "inbox",
     )
 
@@ -183,7 +183,7 @@ class Service(ServiceCallbacks):
     _dependencies: list[Service]
 
     #: Channel broker for intra-service mailing
-    _channel_broker: ChannelBroker
+    channel_broker: ChannelBroker
 
     #: Inbox of received messages
     inbox: Consumer
@@ -235,7 +235,7 @@ class Service(ServiceCallbacks):
 
     async def _loop_runner(self) -> None:
         async for message in self.inbox.channel:
-            response = await self.on_receive(*message)
+            response = await self.on_receive(*self._message_handler(message))
             if response:
                 pass
 
@@ -288,6 +288,11 @@ class Service(ServiceCallbacks):
         The parent service will manager start/stop/shutdown/restarts.
         """
         self._dependencies.append(service)
+
+    def _message_handler(self, message: Any) -> tuple:
+        if isinstance(message, tuple):
+            return message
+        return (message,)
 
     # XXX: Not useful for now but might solve later the hang task problems
     # we will face when we trigger change upon events

@@ -2,11 +2,9 @@
 Entity Manager managing registration and dependancies of Context.
 """
 
-from duckdb import DuckDBPyConnection
+from __future__ import annotations
 
-from channel.broker import ChannelBroker, _get_channel_broker
-from channel.consumer import Consumer
-from channel.producer import Producer
+from typing import TYPE_CHECKING
 
 from store.db import (
     METADATA_TABLE_TABLE_NAME,
@@ -31,12 +29,16 @@ from context.context import (
     DropCascadeContext,
 )
 from graph.dependency_graph import dependency_grah
-from task.types import TaskManagerCommand
-from store.lookup import callback_store
 
+from store.lookup import callback_store
 from services import Service
+from task.types import TaskManagerCommand
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from duckdb import DuckDBPyConnection
+
 
 __all__ = ["EntityManager"]
 
@@ -58,29 +60,15 @@ class EntityManager(Service):
     #: Reference to all tasks by task id
     _name_to_context: dict[str, CreateContext] = {}
 
-    #: ChannelBroker ref
-    _channel_broker: ChannelBroker
-
-    #: Consumer for entity commands from App
-    _entity_commands_consumer: Consumer
-
-    #: Producer for tasks commands to TaskManager
-    _task_commands_producer: Producer
-
     def __init__(self, backend_conn: DuckDBPyConnection):
         super().__init__(name="EntityManager")
         self.backend_conn = backend_conn
-        self._channel_broker = _get_channel_broker()
-        self._entity_commands_consumer = self._channel_broker.consumer(
-            "entity.commands"
-        )
-        self._task_commands_producer = self._channel_broker.producer("task.commands")
 
     async def on_start(self):
         """Main loop for the EntityManager, runs forever."""
-        self._nursery.start_soon(self._process)
+        # self._nursery.start_soon(self._process)
 
-    async def _process(self):
+    async def on_receive(self, ctx: CreateContext | DropContext):
         # NOTE: We intentionally operate on the original CreateContext rather
         # than converting to a dedicated Entity type.
         # This keeps task lifecycle logic simple until the future Entity
@@ -89,13 +77,12 @@ class EntityManager(Service):
         # Commands supported:
         # CREATE
         # DROP
-        async for ctx in self._entity_commands_consumer.channel:
-            if isinstance(ctx, CreateContext):
-                await self._register_entity(ctx)
-            elif isinstance(ctx, DropContext):
-                await self._delete_entity(ctx)
+        if isinstance(ctx, CreateContext):
+            await self._create_entity(ctx)
+        elif isinstance(ctx, DropContext):
+            await self._drop_entity(ctx)
 
-    async def _register_entity(self, ctx: CreateContext):
+    async def _create_entity(self, ctx: CreateContext):
         dependency_grah.ensure_vertex(ctx.name)
 
         # Register dependencies in the graph
@@ -116,11 +103,13 @@ class EntityManager(Service):
                 for _, secret_name in ctx.properties.secrets:
                     dependency_grah.add_vertex(secret_name, ctx.name)
 
-        await self._task_commands_producer.produce((TaskManagerCommand.CREATE, ctx))
+        await self.channel_broker.publish(
+            "TaskManager", (TaskManagerCommand.CREATE, ctx)
+        )
         self._name_to_context[ctx.name] = ctx
         logger.success(f"[EntityManager] registered context '{ctx.name}'")
 
-    async def _delete_entity(self, ctx: DropContext):
+    async def _drop_entity(self, ctx: DropContext):
         # TODO: emit real-time deletion events to clients
         if isinstance(ctx, DropSimpleContext):
             is_leaf = dependency_grah.is_a_leaf(ctx.name)
@@ -130,8 +119,8 @@ class EntityManager(Service):
             dependency_grah.remove(ctx.name)
             ctx_node = self._name_to_context.get(ctx.name)
             if ctx_node is not None:
-                await self._task_commands_producer.produce(
-                    (TaskManagerCommand.DELETE, ctx_node)
+                await self.channel_broker.publish(
+                    "TaskManager", (TaskManagerCommand.DELETE, ctx_node)
                 )
                 await self._destroy_entity(ctx_node)
 
@@ -145,8 +134,8 @@ class EntityManager(Service):
             for node in removed_nodes:
                 ctx_node = self._name_to_context.get(node)
                 if ctx_node is not None:
-                    await self._task_commands_producer.produce(
-                        (TaskManagerCommand.DELETE, ctx_node)
+                    await self.channel_broker.publish(
+                        "TaskManager", (TaskManagerCommand.DELETE, ctx_node)
                     )
                     await self._destroy_entity(ctx_node)
                 logger.info(f"[EntityManager] removed entity: {node}")

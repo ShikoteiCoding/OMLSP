@@ -32,7 +32,7 @@ from loguru import logger
 TASK_REGISTER: Dict[type, Callable] = {}
 
 if TYPE_CHECKING:
-    from task.manager import TaskManager
+    from task.task_manager import TaskManager
 
 
 # Registry decorator

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import trio
 
@@ -6,9 +8,6 @@ from apscheduler.executors.base import BaseExecutor, run_coroutine_job, run_job
 from apscheduler.util import iscoroutinefunction_partial
 from loguru import logger
 
-
-from channel.broker import ChannelBroker, _get_channel_broker
-from channel.consumer import Consumer
 from services import Service
 
 from scheduler.types import SchedulerCommand
@@ -120,41 +119,32 @@ class TrioScheduler(Service, BaseScheduler):
     #: Trio token to keep track of threaded tasks
     _trio_token: trio.lowlevel.TrioToken | None
 
-    #: ChannelBroker ref
-    _channel_broker: ChannelBroker
-
-    #: Tasks to be scheduled from TaskManager
-    _scheduler_commands_consumer: Consumer
+    #: Trio event for shutdown
+    _is_shutting_down: bool
 
     def __init__(self, *args, **kwargs):
         Service.__init__(self, name="TrioScheduler")
         BaseScheduler.__init__(self, *args, **kwargs)
         self._trio_token = trio.lowlevel.current_trio_token()
         self._is_shutting_down = False
-        self._channel_broker = _get_channel_broker()
-        self._scheduler_commands_consumer = self._channel_broker.consumer(
-            "scheduler.commands"
-        )
+
+    async def on_receive(self, cmd: SchedulerCommand, payload) -> None:
+        if cmd is SchedulerCommand.ADD:
+            job_id, trigger, func = payload
+            job = self.add_job(func=func, trigger=trigger, id=job_id)
+            logger.info(f"[Scheduler] Added job {job.id}")
+        # TODO EVICT should not be included in on_start
+        elif cmd is SchedulerCommand.EVICT:
+            job_id = payload
+            existed = self.evict_job_by_id(job_id)  # type: ignore
+            if existed:
+                logger.info(f"[Scheduler] Evicted job {job_id}")
+            else:
+                logger.warning(f"[Scheduler] Evict failed — unknown job_id '{job_id}'")
 
     async def on_start(self):
         self._configure({"_nursery": self._nursery, "_trio_token": self._trio_token})
         BaseScheduler.start(self, paused=False)
-
-        async for cmd, payload in self._scheduler_commands_consumer.channel:
-            if cmd is SchedulerCommand.ADD:
-                job_id, trigger, func = payload
-                job = self.add_job(func=func, trigger=trigger, id=job_id)
-                logger.info(f"[Scheduler] Added job {job.id}")
-            # TODO EVICT should not be included in on_start
-            elif cmd is SchedulerCommand.EVICT:
-                job_id = payload
-                existed = self.evict_job_by_id(job_id)  # type: ignore
-                if existed:
-                    logger.info(f"[Scheduler] Evicted job {job_id}")
-                else:
-                    logger.warning(
-                        f"[Scheduler] Evict failed — unknown job_id '{job_id}'"
-                    )
 
     async def on_stop(self) -> None:
         """Gracefully stop scheduler timer and executors."""
@@ -182,7 +172,7 @@ class TrioScheduler(Service, BaseScheduler):
         control methods are synchronous
         """
 
-        def wrapper(self, *args, **kwargs):
+        def wrapper(self: TrioScheduler, *args, **kwargs):
             if self._is_shutting_down:
                 logger.debug(f"[{self.name}] Ignoring {func.__name__} during shutdown.")
                 return

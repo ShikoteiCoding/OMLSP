@@ -8,7 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from services import Service
 
-from channel.broker import ChannelBroker, _get_channel_broker
+from channel.registry import ChannelBroker, _get_channel_broker
 from channel.channel import BroadcastChannel, Channel
 from channel.producer import Producer
 from channel.types import _Msg

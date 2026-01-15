@@ -12,9 +12,6 @@ from context.context import (
     DropContext,
 )
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
-from channel.broker import _get_channel_broker, ChannelBroker
-from channel.consumer import Consumer
-from channel.producer import Producer
 from services import Service
 from sql.parser import extract_one_query_context
 from store import (
@@ -39,18 +36,6 @@ class App(Service):
     #: SQL properties json schema for properties validation
     _properties_schema: dict[str, Any]
 
-    #: Internal reference for when sql doesn't come from TCP
-    _internal_ref = "__runner"
-
-    #: ChannelBroker ref
-    _channel_broker: ChannelBroker
-
-    #: Consumer for client sql requests from ClientManager
-    _client_sql_request_consumer: Consumer
-
-    #: Producer for entity commands to EntityManager
-    _entity_commands_producer: Producer
-
     def __init__(
         self,
         conn: DuckDBPyConnection,
@@ -59,14 +44,6 @@ class App(Service):
         super().__init__(name="App")
         self._conn = conn
         self._properties_schema = properties_schema
-        self._channel_broker = _get_channel_broker()
-
-        self._client_sql_request_consumer = self._channel_broker.consumer(
-            "client.sql.requests"
-        )
-        self._entity_commands_producer = self._channel_broker.producer(
-            "entity.commands"
-        )
 
     async def on_start(self):
         """
@@ -74,7 +51,6 @@ class App(Service):
         """
         # Init metastore backend
         init_metadata_store(self._conn)
-
 
     async def on_stop(self):
         """
@@ -107,7 +83,8 @@ class App(Service):
         # Warn of invalid context for tracing.
         elif isinstance(ctx, InvalidContext):
             logger.warning(
-                "[App] Invalid SQL received: {} - reason: {}",
+                "[{}] Invalid SQL received: {} - reason: {}",
+                self.name,
                 sql,
                 str(ctx.reason),
             )
@@ -117,21 +94,25 @@ class App(Service):
 
         # Dispatch CreateContext and DropContext to task manager
         if isinstance(ctx, CreateContext | DropContext):
-            await self._entity_commands_producer.produce(ctx)
+            await self.channel_broker.publish("EntityManager", ctx)
 
         # Send back reply to client
         if client_id != self.name:
-            await self._channel_broker.publish(client_id, result)
+            await self.channel_broker.publish(client_id, result)
 
-        logger.debug("[App] _handle_messages exited cleanly (input channel closed).")
+        logger.debug(
+            "[{}] _handle_messages exited cleanly (input channel closed).", self.name
+        )
         return
 
-    # TODO: Run eval_ctx in background to avoid thread blocking.
-    # This is currently a blocking operation in _handle_messages.
-    # Client terminal gets "blocked" till response is received,
-    # so it is safe to assume we can queue per client and defer
-    # results to keep ordering per client
     async def _eval_ctx(self, ctx: EvaluableContext) -> str:
+        """
+        TODO: Run eval_ctx in background to avoid thread blocking.
+        This is currently a blocking operation in _handle_messages.
+        Client terminal gets "blocked" till response is received,
+        so it is safe to assume we can queue per client and defer
+        results to keep ordering per client
+        """
         try:
             return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
         except Exception as e:
