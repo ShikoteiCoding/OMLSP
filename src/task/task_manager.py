@@ -89,7 +89,7 @@ class TaskManager(Service):
     async def _delete_task(self, ctx: CreateContext):
         # Scheduled Task rely on the Scheduler for supervising
         if isinstance(ctx, CreateHTTPSourceContext | CreateHTTPTableContext):
-            await self.channel_broker.publish(
+            await self.channel_registry.publish(
                 "TrioScheduler", (SchedulerCommand.EVICT, ctx.name)
             )
         # Other Task(s) rely on the Supervisor

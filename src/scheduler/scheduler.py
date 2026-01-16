@@ -168,7 +168,7 @@ class TrioScheduler(Service, BaseScheduler):
         """
         Decorator to skip method execution when the scheduler is shutting down.
 
-        This version only supports synchronous methods because TrioScheduler’s
+        This version only supports synchronous methods because TrioScheduler's
         control methods are synchronous
         """
 

@@ -94,16 +94,11 @@ class App(Service):
 
         # Dispatch CreateContext and DropContext to task manager
         if isinstance(ctx, CreateContext | DropContext):
-            await self.channel_broker.publish("EntityManager", ctx)
+            await self.channel_registry.publish("EntityManager", ctx)
 
         # Send back reply to client
         if client_id != self.name:
-            await self.channel_broker.publish(client_id, result)
-
-        logger.debug(
-            "[{}] _handle_messages exited cleanly (input channel closed).", self.name
-        )
-        return
+            await self.channel_registry.publish(client_id, result)
 
     async def _eval_ctx(self, ctx: EvaluableContext) -> str:
         """

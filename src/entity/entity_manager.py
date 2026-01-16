@@ -103,7 +103,7 @@ class EntityManager(Service):
                 for _, secret_name in ctx.properties.secrets:
                     dependency_grah.add_vertex(secret_name, ctx.name)
 
-        await self.channel_broker.publish(
+        await self.channel_registry.publish(
             "TaskManager", (TaskManagerCommand.CREATE, ctx)
         )
         self._name_to_context[ctx.name] = ctx
@@ -119,7 +119,7 @@ class EntityManager(Service):
             dependency_grah.remove(ctx.name)
             ctx_node = self._name_to_context.get(ctx.name)
             if ctx_node is not None:
-                await self.channel_broker.publish(
+                await self.channel_registry.publish(
                     "TaskManager", (TaskManagerCommand.DELETE, ctx_node)
                 )
                 await self._destroy_entity(ctx_node)
@@ -134,7 +134,7 @@ class EntityManager(Service):
             for node in removed_nodes:
                 ctx_node = self._name_to_context.get(node)
                 if ctx_node is not None:
-                    await self.channel_broker.publish(
+                    await self.channel_registry.publish(
                         "TaskManager", (TaskManagerCommand.DELETE, ctx_node)
                     )
                     await self._destroy_entity(ctx_node)

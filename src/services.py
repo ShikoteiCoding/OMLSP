@@ -10,11 +10,11 @@ from loguru import logger
 
 from typing import Any, TYPE_CHECKING
 
-from channel.registry import _get_channel_broker
+from channel.registry import _get_channel_registry
 
 if TYPE_CHECKING:
     from channel.consumer import Consumer
-    from channel.registry import ChannelBroker
+    from channel.registry import ChannelRegistry
 
 __all__ = ["Service"]
 
@@ -157,7 +157,7 @@ class Service(ServiceCallbacks):
         "_stopped",
         "_shutdown",
         "_dependencies",
-        "channel_broker",
+        "channel_registry",
         "inbox",
     )
 
@@ -183,7 +183,7 @@ class Service(ServiceCallbacks):
     _dependencies: list[Service]
 
     #: Channel broker for intra-service mailing
-    channel_broker: ChannelBroker
+    channel_registry: ChannelRegistry
 
     #: Inbox of received messages
     inbox: Consumer
@@ -197,8 +197,8 @@ class Service(ServiceCallbacks):
         self._shutdown = trio.Event()
         self._dependencies = []
 
-        self.channel_broker = _get_channel_broker()
-        self.inbox = self.channel_broker.consumer(self.name)
+        self.channel_registry = _get_channel_registry()
+        self.inbox = self.channel_registry.consumer(self.name)
 
         # TODO: Not implemented yet
         # self._polling_started = False

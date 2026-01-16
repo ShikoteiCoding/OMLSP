@@ -13,7 +13,7 @@ from channel.producer import Producer
 T = TypeVar("T")
 
 
-class ChannelBroker:
+class ChannelRegistry:
     """
     Global singleton ChannekBroker.
 
@@ -26,7 +26,7 @@ class ChannelBroker:
     _instanciated: bool = False
 
     #: Singleton instance
-    _instance: ChannelBroker
+    _instance: ChannelRegistry
 
     #: Consumers (unique per address)
     _consumers: dict[Address, Consumer] = {}
@@ -48,7 +48,7 @@ class ChannelBroker:
         pass
 
     @classmethod
-    def get_instance(cls) -> ChannelBroker:
+    def get_instance(cls) -> ChannelRegistry:
         if cls._instanciated:
             logger.info("Instance already exist.")
             return cls._instance
@@ -130,5 +130,5 @@ class ChannelBroker:
         raise NotImplementedError("Not the most useful for now.")
 
 
-def _get_channel_broker() -> ChannelBroker:
-    return ChannelBroker.get_instance()
+def _get_channel_registry() -> ChannelRegistry:
+    return ChannelRegistry.get_instance()

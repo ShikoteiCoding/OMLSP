@@ -8,7 +8,7 @@ import trio
 from duckdb import DuckDBPyConnection
 from loguru import logger
 
-from channel.registry import _get_channel_broker, ChannelBroker
+from channel.registry import _get_channel_registry, ChannelRegistry
 from services import Service
 
 ClientId = str
@@ -22,13 +22,13 @@ class ClientManager(Service):
     _conn: DuckDBPyConnection
 
     #: ChannelBroker ref
-    _channel_broker: ChannelBroker
+    _channel_registry: ChannelRegistry
 
     def __init__(self, conn: DuckDBPyConnection):
         super().__init__(name="ClientManager")
         self._conn = conn
 
-        self._channel_broker = _get_channel_broker()
+        self._channel_registry = _get_channel_registry()
 
     async def on_start(self):
         self._listeners = await self._nursery.start(
@@ -91,12 +91,10 @@ class ClientManager(Service):
 
     async def _process_query(self, sql_content: str, client_id: str) -> str:
         try:
-            await self._channel_broker.publish(
-                "client.sql.requests", (client_id, sql_content)
-            )
+            await self._channel_registry.publish("App", (client_id, sql_content))
             output_messages = []
 
-            response = await self._channel_broker.consumer(client_id).consume()
+            response = await self._channel_registry.consumer(client_id).consume()
 
             output_messages.append(response)
 

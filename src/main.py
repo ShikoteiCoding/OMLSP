@@ -8,7 +8,7 @@ from loguru import logger
 from pathlib import Path
 
 from app import App
-from channel.registry import _get_channel_broker
+from channel.registry import _get_channel_registry
 from entity.entity_manager import EntityManager
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
@@ -44,13 +44,13 @@ async def main():
     entity_manager.add_dependency(task_manager)
     task_manager.add_dependency(scheduler)
 
-    channel_broker = _get_channel_broker()
+    channel_registry = _get_channel_registry()
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(app.start, nursery)
 
         for sql in iter_sql_statements(entrypoint):
-            await channel_broker.publish(app.name, (app.name, sql))
+            await channel_registry.publish(app.name, (app.name, sql))
 
         try:
             await app.wait_until_stopped()
