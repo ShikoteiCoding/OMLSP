@@ -10,7 +10,7 @@ from loguru import logger
 
 from typing import Any, TYPE_CHECKING
 
-from channel.registry import _get_channel_registry
+from channel.registry import channel_registry
 
 if TYPE_CHECKING:
     from channel.consumer import Consumer
@@ -197,7 +197,7 @@ class Service(ServiceCallbacks):
         self._shutdown = trio.Event()
         self._dependencies = []
 
-        self.channel_registry = _get_channel_registry()
+        self.channel_registry = channel_registry
         self.inbox = self.channel_registry.consumer(self.name)
 
         # TODO: Not implemented yet

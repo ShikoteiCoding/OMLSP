@@ -130,5 +130,4 @@ class ChannelRegistry:
         raise NotImplementedError("Not the most useful for now.")
 
 
-def _get_channel_registry() -> ChannelRegistry:
-    return ChannelRegistry.get_instance()
+channel_registry = ChannelRegistry.get_instance()

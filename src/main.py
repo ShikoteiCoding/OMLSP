@@ -8,7 +8,7 @@ from loguru import logger
 from pathlib import Path
 
 from app import App
-from channel.registry import _get_channel_registry
+from channel.registry import channel_registry
 from entity.entity_manager import EntityManager
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
@@ -43,8 +43,6 @@ async def main():
     app.add_dependency(entity_manager)
     entity_manager.add_dependency(task_manager)
     task_manager.add_dependency(scheduler)
-
-    channel_registry = _get_channel_registry()
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(app.start, nursery)

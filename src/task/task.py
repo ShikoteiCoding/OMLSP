@@ -6,16 +6,17 @@ import trio
 
 from loguru import logger
 
+from channel.channel import BroadcastChannel, Channel
 from scheduler.types import SchedulerCommand
 from services import Service
+from task.types import T
 
 if TYPE_CHECKING:
     from apscheduler.triggers.cron import CronTrigger
-    from channel.channel import BroadcastChannel, Channel
     from channel.types import _Msg
     from duckdb import DuckDBPyConnection
 
-    from task.types import TaskId, T
+    from task.types import TaskId
 
 
 DEFAULT_CAPACITY = 100
