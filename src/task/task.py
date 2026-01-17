@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+from typing import Any, AsyncGenerator, Awaitable, Callable, Generic, TYPE_CHECKING
+
 import trio
 
-from duckdb import DuckDBPyConnection
-from typing import Any, AsyncGenerator, Awaitable, Callable, Generic
-from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
-from services import Service
 
-from channel.broker import ChannelBroker, _get_channel_broker
 from channel.channel import BroadcastChannel, Channel
-from channel.producer import Producer
-from channel.types import _Msg
-
 from scheduler.types import SchedulerCommand
-from task.types import TaskId, T
+from services import Service
+from task.types import T
+
+if TYPE_CHECKING:
+    from apscheduler.triggers.cron import CronTrigger
+    from channel.types import _Msg
+    from duckdb import DuckDBPyConnection
+
+    from task.types import TaskId
+
 
 DEFAULT_CAPACITY = 100
 
@@ -52,13 +55,13 @@ class BaseTask(Service, Generic[T]):
 
         async def _task_runner():
             with self._cancel_scope:
-                await self.run()
+                await self._scoped_runner()
 
         # Start the real task inside the cancel scope
         self._nursery.start_soon(_task_runner)
 
-    async def run(self) -> None:
-        """Override in subclasses."""
+    async def _scoped_runner(self) -> None:
+        """Override in subclasses. This is a wrapper for cancellable runners."""
         await self._executable()
 
 
@@ -121,12 +124,6 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
     #: Trigger for Scheduler
     trigger: CronTrigger
 
-    #: ChannelBroker ref
-    _channel_broker: ChannelBroker
-
-    #: Tasks to be scheduled to Scheduler
-    _scheduler_commands_producer: Producer
-
     def __init__(
         self,
         task_id: TaskId,
@@ -135,10 +132,6 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
     ):
         super().__init__(task_id, conn)
         self.trigger = trigger
-        self._channel_broker = _get_channel_broker()
-        self._scheduler_commands_producer = self._channel_broker.producer(
-            "scheduler.commands"
-        )
 
     async def on_start(self) -> None:
         logger.info(f"[Task{{{self.task_id}}}] task running")
@@ -149,8 +142,12 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         async def _task_runner():
             with self._cancel_scope:
                 try:
-                    await self._scheduler_commands_producer.produce(
-                        (SchedulerCommand.ADD, (self.task_id, self.trigger, self.run))
+                    await self.channel_registry.publish(
+                        "TrioScheduler",
+                        (
+                            SchedulerCommand.ADD,
+                            (self.task_id, self.trigger, self._scoped_runner),
+                        ),
                     )
                 except trio.Cancelled:
                     pass
@@ -164,7 +161,7 @@ class ScheduledSourceTask(BaseTaskSender, Generic[T]):
         self._executable = executable
         return self
 
-    async def run(self):
+    async def _scoped_runner(self):
         if not self._cancel_event.is_set():
             result = await self._executable(task_id=self.task_id, conn=self.conn)
 
@@ -190,7 +187,7 @@ class ContinuousSourceTask(BaseTaskSender, Generic[T]):
         self._executable = executable  # type: ignore
         return self
 
-    async def run(self):
+    async def _scoped_runner(self):
         async for result in self._executable(  # type: ignore
             task_id=self.task_id,
             conn=self.conn,
@@ -204,7 +201,7 @@ class SinkTask(BaseTaskReceiver, Generic[T]):
     def __init__(self, task_id: str, conn: DuckDBPyConnection):
         super().__init__(task_id, conn)
 
-    async def run(self):
+    async def _scoped_runner(self):
         # TODO: receive many upstreams
         receiver: Channel[_Msg[T]] = self._from[0]
         async for msg in receiver:
@@ -228,7 +225,7 @@ class TransformTask(BaseTaskSender, BaseTaskReceiver, Generic[T]):
         for callback in self._callbacks:
             callback()
 
-    async def run(self):
+    async def _scoped_runner(self):
         receiver: Channel[_Msg[T]] = self._from[0]
         async for msg in receiver:
             df = msg.payload

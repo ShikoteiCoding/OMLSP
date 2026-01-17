@@ -1,6 +1,10 @@
 FOLDER="examples"
 
-ARG="$1"
-FILENAME=${ARG:-"basic"}
+FILENAME="$1"
 
-PYTHONPATH=src/ uv run --active src/main.py $FOLDER/$FILENAME.sql
+if [[ -z $FILENAME ]]; then
+    PYTHONPATH=src/ uv run --active src/main.py
+    
+else
+    PYTHONPATH=src/ uv run --active src/main.py --entrypoint $FOLDER/$FILENAME.sql
+fi

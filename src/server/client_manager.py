@@ -2,14 +2,19 @@
 Client Manager handling TCP SQL requests.
 """
 
-from functools import partial
+from __future__ import annotations
 
-import trio
-from duckdb import DuckDBPyConnection
+from typing import TYPE_CHECKING
+
+from functools import partial
 from loguru import logger
 
-from channel.broker import _get_channel_broker, ChannelBroker
+import trio
+
 from services import Service
+
+if TYPE_CHECKING:
+    from duckdb import DuckDBPyConnection
 
 ClientId = str
 
@@ -21,14 +26,9 @@ class ClientManager(Service):
     #: Duckdb connection
     _conn: DuckDBPyConnection
 
-    #: ChannelBroker ref
-    _channel_broker: ChannelBroker
-
     def __init__(self, conn: DuckDBPyConnection):
         super().__init__(name="ClientManager")
         self._conn = conn
-
-        self._channel_broker = _get_channel_broker()
 
     async def on_start(self):
         self._listeners = await self._nursery.start(
@@ -91,12 +91,10 @@ class ClientManager(Service):
 
     async def _process_query(self, sql_content: str, client_id: str) -> str:
         try:
-            await self._channel_broker.publish(
-                "client.sql.requests", (client_id, sql_content)
-            )
+            await self.channel_registry.publish("App", (client_id, sql_content))
             output_messages = []
 
-            response = await self._channel_broker.consumer(client_id).consume()
+            response = await self.channel_registry.consumer(client_id).consume()
 
             output_messages.append(response)
 

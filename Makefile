@@ -10,9 +10,9 @@ sync:
 	uv sync --active
 
 # Run from shell as
-# make run
-# make run f=websocket
-run:
+# make server
+# make server f=websocket
+server:
 	sh run.sh $(f)
 
 client:

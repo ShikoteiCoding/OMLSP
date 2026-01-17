@@ -3,14 +3,16 @@ from __future__ import annotations
 import polars as pl
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Type
-from apscheduler.triggers.cron import CronTrigger
-from sql.types import (
-    Properties,
-    SourceHttpProperties,
-    SourceWSProperties,
-    SinkProperties,
-)
+from typing import Any, Callable, Type, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from apscheduler.triggers.cron import CronTrigger
+    from sql.types import (
+        Properties,
+        SourceHttpProperties,
+        SourceWSProperties,
+        SinkProperties,
+    )
 
 
 class ValidContext:
@@ -60,7 +62,7 @@ class CreateWSTableContext(CreateTableContext):
     query: str
     column_types: dict[str, str]
     generated_columns: dict[str, Callable]
-    on_start_query: str
+    on_start_query: str | None
     has_data = True
     lookup: bool = False
     source: bool = False

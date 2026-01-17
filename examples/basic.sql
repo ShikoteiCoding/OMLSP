@@ -1,5 +1,5 @@
 -- Get all tickers from kucoin
-CREATE TABLE all_tickers (
+CREATE SOURCE all_tickers (
     symbol STRING,
     symbolName STRING,
     buy FLOAT,

@@ -8,11 +8,12 @@ from loguru import logger
 from pathlib import Path
 
 from app import App
+from channel.registry import channel_registry
 from entity.entity_manager import EntityManager
 from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
-from task.manager import TaskManager
+from task.task_manager import TaskManager
 
 PROPERTIES_SCHEMA = json.loads(
     open(Path("src/properties.schema.json"), "rb").read().decode("utf-8")
@@ -23,9 +24,9 @@ async def main():
     # TODO: expose as configuration available in SET
     pl.Config.set_fmt_str_lengths(900)
     parser = argparse.ArgumentParser("Run a SQL file")
-    parser.add_argument("file")
+    parser.add_argument("--entrypoint", dest="entrypoint", default=None, required=False)
     args = parser.parse_args()
-    sql_filepath = Path(args.file)
+    entrypoint = Path(args.entrypoint) if args.entrypoint else None
 
     # For now we manage state with the backend
     # To be ultimately changed for obvious reasons
@@ -45,8 +46,9 @@ async def main():
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(app.start, nursery)
-        for sql in iter_sql_statements(sql_filepath):
-            await app.submit(sql)
+
+        for sql in iter_sql_statements(entrypoint):
+            await channel_registry.publish(app.name, (app.name, sql))
 
         try:
             await app.wait_until_stopped()
