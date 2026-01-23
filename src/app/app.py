@@ -151,36 +151,28 @@ class App(Service):
 
             return "DROP"
 
+    async def send_client(self, client_id: ClientId, message: str) -> None:
+        if client_id != self.name:
+            await self.channel_registry.publish(client_id, message)
+
     async def on_receive(self, client_id: ClientId, sql: SQL) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
 
         unresolved_sql = Parser.parse(sql)
         if not unresolved_sql:
-            logger.warning("[{}] Parse error: {}", self.name, unresolved_sql)
-            if client_id != self.name:
-                await self.channel_registry.publish(client_id, str(unresolved_sql))
+            await self.send_client(client_id, str(unresolved_sql))
             return
 
         ctx = extract_one_query_context(unresolved_sql, self._properties_schema)
 
         if isinstance(ctx, InvalidContext):
-            result = str(ctx.reason)
-            logger.warning(
-                "[{}] Invalid SQL received: {} - reason: {}",
-                self.name,
-                sql,
-                result,
-            )
-            if client_id != self.name:
-                await self.channel_registry.publish(client_id, result)
+            await self.send_client(client_id, ctx.reason)
             return
 
-        if not Resolver.resolve(ctx, self._catalog_reader):
-            reason = f"Catalog resolution failed for query: {sql}. Tables or upstreams missing."
-            logger.warning("[{}] {}", self.name, reason)
-            if client_id != self.name:
-                await self.channel_registry.publish(client_id, reason)
+        resolution_error = Resolver.resolve(ctx, self._catalog_reader)
+        if resolution_error:
+            await self.send_client(client_id, resolution_error)
             return
 
         # Handle context with on_start eval conditions
@@ -191,8 +183,7 @@ class App(Service):
                     f"Response from '{ctx.on_start_query}' is empty. Cannot proceed."
                 )
                 logger.warning("[{}] {}", self.name, reason)
-                if client_id != self.name:
-                    await self.channel_registry.publish(client_id, reason)
+                await self.send_client(client_id, reason)
                 return
 
         result = ""
@@ -201,12 +192,11 @@ class App(Service):
             self._register_ddl(ctx, sql)
             await self.channel_registry.publish("EntityManager", ctx)
             result = "Success"
-        
+
         if isinstance(ctx, EvaluableContext):
             result = await self._eval_ctx(ctx)
 
-        if client_id != self.name:
-            await self.channel_registry.publish(client_id, result)
+        await self.send_client(client_id, result)
 
     async def _eval_ctx(self, ctx: EvaluableContext) -> str:
         """

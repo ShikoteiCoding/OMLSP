@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from loguru import logger
 from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError
 
 from sql.dialect import OmlspDialect
+
+if TYPE_CHECKING:
+    from sql.types import SQL
 
 
 class Parser:
@@ -13,14 +18,14 @@ class Parser:
     """
 
     @staticmethod
-    def parse(query: str) -> exp.Expression | None:
+    def parse(sql: SQL) -> exp.Expression | None:
         try:
-            parsed_statement = parse_one(query, dialect=OmlspDialect)
+            parsed_statement = parse_one(sql, dialect=OmlspDialect)
             if parsed_statement:
                 Parser._validate(parsed_statement)
             return parsed_statement
         except (ParseError, ValueError) as e:
-            logger.error(e)
+            logger.error("[Parser] Not able to parse sql {} - Error {}", sql, e)
             return
 
     @staticmethod

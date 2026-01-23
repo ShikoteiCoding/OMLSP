@@ -19,25 +19,27 @@ class Resolver:
     """
 
     @staticmethod
-    def resolve(ctx: ValidContext, catalog_reader: CatalogReader) -> bool:
+    def resolve(ctx: ValidContext, catalog_reader: CatalogReader) -> str | None:
         if isinstance(ctx, SelectContext):
+            table = ctx.table
             if (
-                not catalog_reader.get_table(ctx.table)
-                and not catalog_reader.get_view(ctx.table)
-                and not catalog_reader.get_source(ctx.table)
+                not catalog_reader.get_table(table)
+                and not catalog_reader.get_view(table)
+                and not catalog_reader.get_source(table)
             ):
-                if ctx.table not in (
+                if table not in (
                     "information_schema.tables",
                     "information_schema.columns",
                 ):  # Basic allowlist for reflection
-                    return False
+                    return f"Table '{table}' not found in catalog"
+
             for join_table in ctx.joins.keys():
                 if (
                     not catalog_reader.get_table(join_table)
                     and not catalog_reader.get_view(join_table)
                     and not catalog_reader.get_source(join_table)
                 ):
-                    return False
+                    return f"Table, View or Source '{join_table}' not found in catalog"
 
         elif isinstance(ctx, (CreateViewContext, CreateSinkContext)):
             for upstream in ctx.upstreams:
@@ -46,6 +48,6 @@ class Resolver:
                     and not catalog_reader.get_view(upstream)
                     and not catalog_reader.get_source(upstream)
                 ):
-                    return False
+                    return f"Table, View or Source '{upstream}' not found in catalog"
 
-        return True
+        return

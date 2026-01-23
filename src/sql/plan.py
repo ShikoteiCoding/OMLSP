@@ -802,6 +802,8 @@ def extract_one_query_context(
     elif isinstance(parsed_statement, ParseError):
         return InvalidContext(reason=f"Parsing error: {parsed_statement}")
 
+    reason = f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
+    logger.error("Invalid SQL received: {} - {}", parsed_statement, reason)
     return InvalidContext(
         reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
     )
