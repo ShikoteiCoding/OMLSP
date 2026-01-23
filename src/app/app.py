@@ -27,7 +27,7 @@ from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from services import Service
 from sql.parser import Parser
 from sql.plan import extract_one_query_context
-from sql.resolver import Resolver
+from sql.resolver import CatalogResolver
 from store import (
     init_metadata_store,
 )
@@ -151,6 +151,14 @@ class App(Service):
 
             return "DROP"
 
+    def run_on_start_query(self, sql: SQL) -> str | None:
+        on_start_result = duckdb_to_dicts(self._conn, sql)
+        if len(on_start_result) == 0:
+            reason = f"Response from '{sql}' is empty. Cannot proceed."
+            logger.warning("[{}] {}", self.name, reason)
+            return reason
+        return
+
     async def send_client(self, client_id: ClientId, message: str) -> None:
         if client_id != self.name:
             await self.channel_registry.publish(client_id, message)
@@ -170,19 +178,14 @@ class App(Service):
             await self.send_client(client_id, ctx.reason)
             return
 
-        resolution_error = Resolver.resolve(ctx, self._catalog_reader)
+        resolution_error = CatalogResolver.resolve(ctx, self._catalog_reader)
         if resolution_error:
             await self.send_client(client_id, resolution_error)
             return
 
         # Handle context with on_start eval conditions
         if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query:
-            on_start_result = duckdb_to_dicts(self._conn, ctx.on_start_query)
-            if len(on_start_result) == 0:
-                reason = (
-                    f"Response from '{ctx.on_start_query}' is empty. Cannot proceed."
-                )
-                logger.warning("[{}] {}", self.name, reason)
+            if reason := self.run_on_start_query(ctx.on_start_query):
                 await self.send_client(client_id, reason)
                 return
 

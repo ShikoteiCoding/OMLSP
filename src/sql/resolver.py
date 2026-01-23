@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from catalog.catalog import CatalogReader
 
 
-class Resolver:
+class CatalogResolver:
     """
     Resolver for validating context against catalog.
     """
