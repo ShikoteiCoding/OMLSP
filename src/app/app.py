@@ -26,8 +26,7 @@ from context.context import (
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from services import Service
 from sql.parser import Parser
-from sql.plan import extract_one_query_context
-from sql.resolver import CatalogResolver
+from sql.binder import Binder
 from store import (
     init_metadata_store,
 )
@@ -56,6 +55,9 @@ class App(Service):
     #: Catalog write access for registering DDL
     _catalog_writer: CatalogWriter
 
+    #: Binder to perform AST checks against Catalog
+    _binder: Binder
+
     def __init__(
         self,
         conn: DuckDBPyConnection,
@@ -68,6 +70,8 @@ class App(Service):
         self._properties_schema = properties_schema
         self._catalog_reader = catalog_reader
         self._catalog_writer = catalog_writer
+
+        self._binder = Binder(catalog_reader, properties_schema)
 
     async def on_start(self):
         """
@@ -166,28 +170,19 @@ class App(Service):
     async def on_receive(self, client_id: ClientId, sql: SQL) -> None:
         # Process SQL commands from clients, evaluate them, and dispatch results.
         # SQL comes from TCP clients or internal sql file entrypoint
+        ast = Parser.parse(sql)
+        if not ast:
+            return await self.send_client(client_id, f"Syntax Error: {str(ast)}")
 
-        unresolved_sql = Parser.parse(sql)
-        if not unresolved_sql:
-            await self.send_client(client_id, str(unresolved_sql))
-            return
-
-        ctx = extract_one_query_context(unresolved_sql, self._properties_schema)
+        ctx = self._binder.bind(ast)
 
         if isinstance(ctx, InvalidContext):
-            await self.send_client(client_id, ctx.reason)
-            return
-
-        resolution_error = CatalogResolver.resolve(ctx, self._catalog_reader)
-        if resolution_error:
-            await self.send_client(client_id, resolution_error)
-            return
+            return await self.send_client(client_id, ctx.reason)
 
         # Handle context with on_start eval conditions
         if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query:
             if reason := self.run_on_start_query(ctx.on_start_query):
-                await self.send_client(client_id, reason)
-                return
+                return await self.send_client(client_id, reason)
 
         result = ""
 
