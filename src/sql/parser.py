@@ -7,6 +7,7 @@ from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError
 
 from sql.dialect import OmlspDialect
+from sql.errors import SqlSyntaxError
 
 if TYPE_CHECKING:
     from sql.types import SQL
@@ -18,7 +19,13 @@ class Parser:
     """
 
     @staticmethod
-    def parse(sql: SQL) -> exp.Expression | None:
+    def parse(sql: SQL) -> exp.Expression:
+        """
+        Parse SQL string into AST.
+
+        Raises:
+            SqlSyntaxError: When SQL cannot be parsed.
+        """
         try:
             parsed_statement = parse_one(sql, dialect=OmlspDialect)
             if parsed_statement:
@@ -26,7 +33,7 @@ class Parser:
             return parsed_statement
         except (ParseError, ValueError) as e:
             logger.error("[Parser] Not able to parse sql {} - Error {}", sql, e)
-            return
+            raise SqlSyntaxError(f"Syntax Error: {e}")
 
     @staticmethod
     def _validate(expression: exp.Expression) -> None:

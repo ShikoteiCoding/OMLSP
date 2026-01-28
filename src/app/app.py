@@ -5,6 +5,7 @@ from duckdb import DuckDBPyConnection
 from loguru import logger
 
 from catalog.catalog import CatalogReader, CatalogWriter
+from catalog.errors import CatalogError
 from catalog.table_catalog import TableCatalog
 from catalog.view_catalog import ViewCatalog
 from catalog.source_catalog import SourceCatalog
@@ -13,20 +14,22 @@ from catalog.secret_catalog import SecretCatalog
 
 from context.context import (
     CreateContext,
+    CreateWSTableContext,
+    DropContext,
     CreateSecretContext,
     CreateSinkContext,
     CreateSourceContext,
     CreateTableContext,
     CreateViewContext,
     EvaluableContext,
-    InvalidContext,
-    CreateWSTableContext,
-    DropContext,
 )
+
+
 from engine.engine import duckdb_to_dicts, EVALUABLE_QUERY_DISPATCH
 from services import Service
+from sql.binder.binder import Binder
+from sql.errors import PlanError, SqlSyntaxError
 from sql.parser import Parser
-from sql.binder import Binder
 from store import (
     init_metadata_store,
 )
@@ -85,6 +88,62 @@ class App(Service):
         Callaback for parent Service class during :meth:`App.stop`.
         """
         logger.success("[{}] stopping.", self.name)
+
+    def run_on_start_query(self, sql: SQL) -> str | None:
+        on_start_result = duckdb_to_dicts(self._conn, sql)
+        if len(on_start_result) == 0:
+            reason = f"Response from '{sql}' is empty. Cannot proceed."
+            logger.warning("[{}] {}", self.name, reason)
+            return reason
+        return
+
+    async def send_client(self, client_id: ClientId, message: str) -> None:
+        if client_id != self.name:
+            await self.channel_registry.publish(client_id, message)
+
+    async def on_receive(self, client_id: ClientId, sql: SQL) -> None:
+        # Process SQL commands from clients, evaluate them, and dispatch results.
+        # SQL comes from TCP clients or internal sql file entrypoint
+        try:
+            ast = Parser.parse(sql)
+        except SqlSyntaxError as e:
+            return await self.send_client(client_id, str(e))
+
+        try:
+            ctx = self._binder.bind(ast)
+        except (CatalogError, PlanError) as e:
+            return await self.send_client(client_id, str(e))
+
+        # Handle context with on_start eval conditions
+        if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query:
+            if reason := self.run_on_start_query(ctx.on_start_query):
+                return await self.send_client(client_id, reason)
+
+        result = ""
+
+        if isinstance(ctx, (CreateContext, DropContext)):
+            self._register_ddl(ctx, sql)
+            await self.channel_registry.publish("EntityManager", ctx)
+            result = "Success"
+
+        if isinstance(ctx, EvaluableContext):
+            result = await self._eval_ctx(ctx)
+
+        await self.send_client(client_id, result)
+
+    async def _eval_ctx(self, ctx: EvaluableContext) -> str:
+        """
+        TODO: Run eval_ctx in background to avoid thread blocking.
+        This is currently a blocking operation in _handle_messages.
+        Client terminal gets "blocked" till response is received,
+        so it is safe to assume we can queue per client and defer
+        results to keep ordering per client
+        """
+        try:
+            return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
+        except Exception as e:
+            logger.error("Error evaluating context type '{}': {}", type(ctx), ctx)
+            return f"Error evaluating context type '{ctx}': {e}"
 
     def _register_ddl(self, ctx: CreateContext | DropContext, original_sql: str) -> str:
         if isinstance(ctx, CreateContext):
@@ -154,58 +213,3 @@ class App(Service):
                 self._catalog_writer.drop_secret(ctx.name)
 
             return "DROP"
-
-    def run_on_start_query(self, sql: SQL) -> str | None:
-        on_start_result = duckdb_to_dicts(self._conn, sql)
-        if len(on_start_result) == 0:
-            reason = f"Response from '{sql}' is empty. Cannot proceed."
-            logger.warning("[{}] {}", self.name, reason)
-            return reason
-        return
-
-    async def send_client(self, client_id: ClientId, message: str) -> None:
-        if client_id != self.name:
-            await self.channel_registry.publish(client_id, message)
-
-    async def on_receive(self, client_id: ClientId, sql: SQL) -> None:
-        # Process SQL commands from clients, evaluate them, and dispatch results.
-        # SQL comes from TCP clients or internal sql file entrypoint
-        ast = Parser.parse(sql)
-        if not ast:
-            return await self.send_client(client_id, f"Syntax Error: {str(ast)}")
-
-        ctx = self._binder.bind(ast)
-
-        if isinstance(ctx, InvalidContext):
-            return await self.send_client(client_id, ctx.reason)
-
-        # Handle context with on_start eval conditions
-        if isinstance(ctx, CreateWSTableContext) and ctx.on_start_query:
-            if reason := self.run_on_start_query(ctx.on_start_query):
-                return await self.send_client(client_id, reason)
-
-        result = ""
-
-        if isinstance(ctx, (CreateContext, DropContext)):
-            self._register_ddl(ctx, sql)
-            await self.channel_registry.publish("EntityManager", ctx)
-            result = "Success"
-
-        if isinstance(ctx, EvaluableContext):
-            result = await self._eval_ctx(ctx)
-
-        await self.send_client(client_id, result)
-
-    async def _eval_ctx(self, ctx: EvaluableContext) -> str:
-        """
-        TODO: Run eval_ctx in background to avoid thread blocking.
-        This is currently a blocking operation in _handle_messages.
-        Client terminal gets "blocked" till response is received,
-        so it is safe to assume we can queue per client and defer
-        results to keep ordering per client
-        """
-        try:
-            return await EVALUABLE_QUERY_DISPATCH[type(ctx)](self._conn, ctx)
-        except Exception as e:
-            logger.error("Error evaluating context type '{}': {}", type(ctx), ctx)
-            return f"Error evaluating context type '{ctx}': {e}"

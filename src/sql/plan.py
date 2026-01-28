@@ -22,7 +22,6 @@ from context.context import (
     CreateSinkContext,
     CreateViewContext,
     CreateSecretContext,
-    InvalidContext,
     ValidContext,
     SelectContext,
     SetContext,
@@ -39,6 +38,7 @@ from store.db import (
     METADATA_SOURCE_TABLE_NAME,
 )
 from sql.dialect import OmlspDialect, GENERATED_COLUMN_FUNCTION_DISPATCH
+from sql.errors import PlanError
 from sql.types import (
     SourceHttpProperties,
     SourceWSProperties,
@@ -493,16 +493,22 @@ def build_sink_properties(properties: dict[str, str]) -> SinkProperties:
 
 def build_create_sink_context(
     statement: exp.Create, properties_schema: dict[str, Any]
-) -> CreateSinkContext | InvalidContext:
+) -> CreateSinkContext:
+    """
+    Build sink context from CREATE SINK statement.
+
+    Raises:
+        PlanError: When properties validation fails or sink query is unsupported.
+    """
     # extract list of exp.Property
     # declared behind sql WITH statement
     properties = extract_create_properties(statement)
 
     # validate properties against schema
-    # if not ok, return invalid context
+    # if not ok, raise error
     nok = validate_create_properties(properties, properties_schema)
     if nok:
-        return InvalidContext(reason=nok)
+        raise PlanError(nok)
 
     # avoid side effect, leverage sqlglot ast copy
     statement = statement.copy()
@@ -510,10 +516,7 @@ def build_create_sink_context(
 
     # TODO: support multiple upstreams merged/unioned
     ctx = extract_select_context(expr)
-    if isinstance(ctx, SelectContext):
-        upstreams = [ctx.table]
-    else:
-        return InvalidContext(reason=f"Unsupported sink query: {expr}")
+    upstreams = [ctx.table]
 
     return CreateSinkContext(
         name=statement.this.name,
@@ -525,12 +528,16 @@ def build_create_sink_context(
 
 def build_create_view_context(
     statement: exp.Create,
-) -> CreateViewContext | InvalidContext:
+) -> CreateViewContext:
+    """
+    Build view context from CREATE VIEW statement.
+
+    Raises:
+        PlanError: When select context extraction fails.
+    """
     name = statement.this.name
 
     ctx = extract_select_context(statement.expression)
-    if isinstance(ctx, InvalidContext):
-        return ctx
 
     # TODO: support multiple upstreams merged/unioned
     # TODO: add where clause
@@ -569,17 +576,22 @@ def build_generic_create_table_or_source_context(
     | CreateHTTPLookupTableContext
     | CreateWSSourceContext
     | CreateWSTableContext
-    | InvalidContext
 ):
+    """
+    Build table or source context from CREATE TABLE/SOURCE statement.
+
+    Raises:
+        PlanError: When properties validation fails or connector is unknown.
+    """
     # extract list of exp.Property
     # declared behind sql WITH statement
     properties = extract_create_properties(statement)
 
     # validate properties against schema
-    # if not ok, return invalid context
+    # if not ok, raise error
     nok = validate_create_properties(properties, properties_schema)
     if nok:
-        return InvalidContext(reason=f"Failed to validate properties: {nok}")
+        raise PlanError(f"Failed to validate properties: {nok}")
 
     connector = properties.pop("connector")
 
@@ -592,21 +604,25 @@ def build_generic_create_table_or_source_context(
     if connector == SourceConnectorKind.WS.value:
         return build_create_ws_table_context(statement, properties)
 
-    return InvalidContext(
-        reason=f"Connector from properties '{connector}' is unknown: {properties}"
-    )
+    raise PlanError(f"Connector from properties '{connector}' is unknown: {properties}")
 
 
 def build_create_secret_context(
     statement: exp.Create, properties_schema: dict
-) -> CreateSecretContext | InvalidContext:
+) -> CreateSecretContext:
+    """
+    Build secret context from CREATE SECRET statement.
+
+    Raises:
+        PlanError: When properties validation fails.
+    """
     properties = extract_create_properties(statement)
 
     # validate properties against schema
-    # if not ok, return invalid context
+    # if not ok, raise error
     nok = validate_create_properties(properties, properties_schema)
     if nok:
-        return InvalidContext(reason=nok)
+        raise PlanError(nok)
 
     value = str(statement.expression)
 
@@ -626,8 +642,13 @@ def extract_create_context(
     | CreateSinkContext
     | CreateViewContext
     | CreateSecretContext
-    | InvalidContext
 ):
+    """
+    Extract create context from CREATE statement.
+
+    Raises:
+        PlanError: When statement kind is not valid.
+    """
     if (
         str(statement.kind) == CreateKind.TABLE.value
         or str(statement.kind) == CreateKind.SOURCE.value
@@ -645,9 +666,7 @@ def extract_create_context(
     elif str(statement.kind) == CreateKind.SECRET.value:
         return build_create_secret_context(statement, properties_schema)
 
-    return InvalidContext(
-        reason=f"Query provided is not a valid statement: {statement.kind}"
-    )
+    raise PlanError(f"Query provided is not a valid statement: {statement.kind}")
 
 
 def parse_select(
@@ -686,18 +705,19 @@ def parse_select(
     return statement, columns, table_name, table_alias, where, join_tables
 
 
-def extract_select_context(statement: exp.Select) -> SelectContext | InvalidContext:
+def extract_select_context(statement: exp.Select) -> SelectContext:
     """
     Parse a SELECT query into a dictionary
+
+    Raises:
+        PlanError: When CTE or subquery is detected.
     """
     has_cte = statement.args.get("with") is not None
     has_subquery = any(
         isinstance(node, exp.Subquery) for node in statement.find_all(exp.Subquery)
     )
     if has_cte or has_subquery:
-        return InvalidContext(
-            reason="Detected invalid WITH statement or subquery usage."
-        )
+        raise PlanError("Detected invalid WITH statement or subquery usage.")
 
     updated_select_statement, columns, table, alias, where, joins = parse_select(
         statement
@@ -742,16 +762,22 @@ def extract_show_statement(statement: exp.Show) -> ShowContext:
     return ShowContext(user_query=sql, query=query)
 
 
-def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
+def extract_drop_statement(statement: exp.Drop) -> DropContext:
+    """
+    Extract drop context from DROP statement.
+
+    Raises:
+        PlanError: When drop type is unknown or statement is malformed.
+    """
     sql = statement.sql(dialect=OmlspDialect)
     drop_type = statement.kind
     if drop_type is None:
-        return InvalidContext(reason=f"Unknown drop type - {drop_type}")
+        raise PlanError(f"Unknown drop type - {drop_type}")
 
     sql_parts = sql.replace(";", "").split()
     # validate enough tokens exist
     if len(sql_parts) < 3:
-        return InvalidContext(reason=f"Malformed DROP statement - {sql}")
+        raise PlanError(f"Malformed DROP statement - {sql}")
 
     cascade = bool(statement.args.get("cascade", False))
 
@@ -769,7 +795,7 @@ def extract_drop_statement(statement: exp.Drop) -> DropContext | InvalidContext:
 
 def extract_command_context(
     statement: exp.Command,
-) -> CommandContext | InvalidContext:
+) -> CommandContext:
     sql_string = get_duckdb_sql(statement).strip().upper()
 
     return CommandContext(query=sql_string)
@@ -777,7 +803,13 @@ def extract_command_context(
 
 def extract_one_query_context(
     parsed_statement: exp.Expression | ParseError, properties_schema: dict
-) -> ValidContext | InvalidContext:
+) -> ValidContext:
+    """
+    Extract query context from parsed SQL statement.
+
+    Raises:
+        PlanError: When statement type is unsupported or parsing failed.
+    """
     if isinstance(parsed_statement, exp.Command):
         return extract_command_context(parsed_statement)
 
@@ -797,13 +829,11 @@ def extract_one_query_context(
         return extract_drop_statement(parsed_statement)
 
     elif isinstance(parsed_statement, exp.With):
-        return InvalidContext(reason="CTE statement (i.e WITH ...) is not accepted")
+        raise PlanError("CTE statement (i.e WITH ...) is not accepted")
 
     elif isinstance(parsed_statement, ParseError):
-        return InvalidContext(reason=f"Parsing error: {parsed_statement}")
+        raise PlanError(f"Parsing error: {parsed_statement}")
 
     reason = f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
     logger.error("Invalid SQL received: {} - {}", parsed_statement, reason)
-    return InvalidContext(
-        reason=f"Unknown statement {type(parsed_statement)} - {parsed_statement}"
-    )
+    raise PlanError(reason)
