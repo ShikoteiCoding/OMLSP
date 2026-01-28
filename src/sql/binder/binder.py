@@ -4,23 +4,18 @@ from typing import TYPE_CHECKING, Any
 
 from sqlglot import exp
 
-
+from catalog.errors import CatalogError
+from context.context import ValidContext
 from sql.plan import extract_one_query_context
 
 if TYPE_CHECKING:
     from catalog.catalog import CatalogReader
-    from context.context import InvalidContext, ValidContext
 
 
 class Binder:
-    """
-    Binder for validating AST against catalog and binding to Context.
-    """
-
     #: Catalog read access
     _catalog_reader: CatalogReader
-
-    #: JSONSchema for DDL propreties validation
+    #: JSONSchema for DDL properties validation
     _properties_schema: dict[str, Any]
 
     def __init__(
@@ -31,29 +26,36 @@ class Binder:
         self._catalog_reader = catalog_reader
         self._properties_schema = properties_schema
 
-    def bind(self, ast: exp.Expression) -> InvalidContext | ValidContext:
+    def bind(self, ast: exp.Expression) -> ValidContext:
         """
         Bind AST to Context after validating dependencies.
-        """
-        if validation_error := self._validate_dependencies(ast):
-            return InvalidContext(reason=validation_error)
 
+        Raises:
+            CatalogError: When dependency validation fails or context extraction fails.
+        """
+        self._validate_dependencies(ast)
         return extract_one_query_context(ast, self._properties_schema)
 
-    def _validate_dependencies(self, ast: exp.Expression) -> str | None:
-        if isinstance(ast, exp.Select):
-            return self._check_tables_exist(ast)
+    def _validate_dependencies(self, ast: exp.Expression) -> None:
+        """
+        Validate dependencies exist in catalog.
 
-        if isinstance(ast, exp.Create):
+        Raises:
+            CatalogError: When a referenced table/view/source is not found.
+        """
+        if isinstance(ast, exp.Select):
+            self._check_tables_exist(ast)
+        elif isinstance(ast, exp.Create):
             query = ast.expression
             if query and isinstance(query, exp.Select):
-                return self._check_tables_exist(query)
+                self._check_tables_exist(query)
 
-        return None
-
-    def _check_tables_exist(self, expression: exp.Expression) -> str | None:
+    def _check_tables_exist(self, expression: exp.Expression) -> None:
         """
         Traverse the expression to find all tables and verify they exist in the catalog.
+
+        Raises:
+            CatalogError: When a table is not found in the catalog.
         """
         for table_exp in expression.find_all(exp.Table):
             table_name = table_exp.name
@@ -68,6 +70,6 @@ class Binder:
                 and not self._catalog_reader.get_view(table_name)
                 and not self._catalog_reader.get_source(table_name)
             ):
-                return f"Table, View or Source '{table_name}' not found in catalog"
-
-        return None
+                raise CatalogError(
+                    f"Table, View or Source '{table_name}' not found in catalog"
+                )

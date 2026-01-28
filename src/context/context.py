@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 class ValidContext:
     # Valid context are valid statements according to OMLSP Dialect
-    # as opposed to InvalidContext
     pass
 
 
@@ -196,8 +195,3 @@ class DropSimpleContext(DropContext):
 @dataclass
 class CommandContext(EvaluableContext):
     query: str
-
-
-@dataclass
-class InvalidContext:
-    reason: str
