@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 type HttpMethod = Literal["GET", "POST"]
 type SourceConnectorName = Literal["http", "lookup-http", "ws"]
+type SQL = str
 
 
 class JQ(Protocol):

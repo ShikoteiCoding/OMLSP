@@ -14,6 +14,7 @@ from scheduler.scheduler import TrioScheduler
 from server import ClientManager
 from sql.file import iter_sql_statements
 from task.task_manager import TaskManager
+from catalog.catalog import Catalog, CatalogReader, CatalogWriter
 
 PROPERTIES_SCHEMA = json.loads(
     open(Path("src/properties.schema.json"), "rb").read().decode("utf-8")
@@ -33,7 +34,10 @@ async def main():
     backend_conn: DuckDBPyConnection = connect(database=":memory:")
     transform_conn: DuckDBPyConnection = backend_conn
 
-    app = App(backend_conn, PROPERTIES_SCHEMA)
+    catalog = Catalog()
+    catalog_reader = CatalogReader(catalog)
+    catalog_writer = CatalogWriter(catalog)
+    app = App(backend_conn, PROPERTIES_SCHEMA, catalog_reader, catalog_writer)
     client_manager = ClientManager(backend_conn)
     entity_manager = EntityManager(backend_conn)
     task_manager = TaskManager(backend_conn, transform_conn)
